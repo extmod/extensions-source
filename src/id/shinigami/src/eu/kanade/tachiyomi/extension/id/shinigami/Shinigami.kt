@@ -177,12 +177,14 @@ class Shinigami : HttpSource() {
     }
 
     override fun pageListParse(response: Response): List<Page> {
-        val result = response.parseAs<ShinigamiPageListDto>()
+    val result = response.parseAs<ShinigamiPageListDto>()
 
-        return result.pageList.chapterPage.pages.mapIndexed { index, imageName ->
-            Page(index = index, imageUrl = "$cdnUrl${result.pageList.chapterPage.path}$imageName")
-        }
+    return result.pageList.chapterPage.pages.mapIndexed { index, imageName ->
+        val original = "$cdnUrl${result.pageList.chapterPage.path}$imageName"
+        val wsrv = "https://images.weserv.nl/?w=300&q=70&url=$original"
+        Page(index = index, imageUrl = wsrv)
     }
+}
 
     override fun imageUrlParse(response: Response): String = ""
 
