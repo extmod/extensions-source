@@ -7,13 +7,12 @@ on:
   workflow_dispatch:
     inputs:
       extension:
-        description: "Nama modul Gradle ekstensi yang akan dibuild (e.g. extension-mihon atau mihon)"
-        required: false
-        default: ""
+        description: 'Nama modul Gradle ekstensi (contoh: extension-mihon atau mihon)'
+        required: true
+        default: 'extension-mihon'
 
 env:
-  # Jika mau auto-default saat push, ganti ini. Kosongkan untuk menuntut input manual.
-  EXT_MODULE: ""
+  ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
 
 jobs:
   build-debug:
@@ -30,25 +29,39 @@ jobs:
       - name: Determine extension to build
         id: set_ext
         run: |
-          # prefer workflow_dispatch input
           INPUT_EXT="${{ github.event.inputs.extension }}"
-          DEFAULT_EXT="${{ env.EXT_MODULE }}"
-
-          # choose input if non-empty else default
-          if [ -n "$INPUT_EXT" ]; then
-            CHOSEN="$INPUT_EXT"
-          elif [ -n "$DEFAULT_EXT" ]; then
-            CHOSEN="$DEFAULT_EXT"
-          else
-            echo "Error: tidak ada ekstensi yg ditentukan. Jalankan manual (Actions → Run workflow) dan isi 'extension', atau set env EXT_MODULE di YAML." >&2
-            exit 1
-          fi
-
-          # sanitize: remove leading/trailing colons and whitespace
-          CHOSEN="$(echo "$CHOSEN" | sed 's/^[:] *//; s/ *[:]$//; s/^[[:space:]]*//; s/[[:space:]]*$//')"
-
+          # sanitize remove surrounding colons/spaces
+          CHOSEN="$(echo "$INPUT_EXT" | sed 's/^[:] *//; s/ *[:]$//; s/^[[:space:]]*//; s/[[:space:]]*$//')"
           echo "Selected extension module: '$CHOSEN'"
           echo "EXT_MODULE=$CHOSEN" >> $GITHUB_ENV
+
+      - name: Validate extension exists
+        id: validate
+        run: |
+          set -e
+          # Try 2 checks: 1) folder exists, 2) settings.gradle references module
+          M=$EXT_MODULE
+          # allow module prefixed with colon like ":extension-mihon"
+          M_STRIPPED=$(echo "$M" | sed 's/^[:]//')
+          echo "Checking for module folder or include in settings for '$M' / '$M_STRIPPED'..."
+          FOUND=0
+          if [ -d "./$M_STRIPPED" ]; then
+            echo "Found directory ./$M_STRIPPED"
+            FOUND=1
+          fi
+          # check settings.gradle* for ':module' or "module" entry
+          if grep -R --line-number --fixed-strings ":$M_STRIPPED" settings.gradle* >/dev/null 2>&1; then
+            echo "Found include in settings.gradle for :$M_STRIPPED"
+            FOUND=1
+          fi
+          if grep -R --line-number --fixed-strings "$M_STRIPPED" settings.gradle* >/dev/null 2>&1; then
+            echo "Found mention of $M_STRIPPED in settings.gradle*"
+            FOUND=1
+          fi
+          if [ "$FOUND" -eq 0 ]; then
+            echo "ERROR: Modul '$M' tidak ditemukan (cek nama modul atau struktur repo)." >&2
+            exit 1
+          fi
 
       - name: Set up JDK 17 (Temurin)
         uses: actions/setup-java@v3
@@ -78,8 +91,10 @@ jobs:
       - name: Build debug APK (assembleDebug)
         id: gradle_build
         run: |
-          echo "Building debug APK for module: $EXT_MODULE"
-          ./gradlew --no-daemon :${EXT_MODULE}:assembleDebug
+          # Use sanitized module (strip leading colon if present)
+          M="${EXT_MODULE#':'}"
+          echo "Running ./gradlew :$M:assembleDebug"
+          ./gradlew --no-daemon :$M:assembleDebug
 
       - name: Locate produced debug APK(s)
         id: find_apk
@@ -96,34 +111,6 @@ jobs:
             echo "No debug APK found!" >&2
             exit 1
           fi
-
-      # Optional: decode keystore if you want to sign the debug APK (biasanya tidak perlu)
-      - name: Decode signing keystore (optional)
-        if: ${{ secrets.SIGNING_KEY_BASE64 != '' }}
-        run: |
-          echo "${{ secrets.SIGNING_KEY_BASE64 }}" | base64 --decode > debug-keystore.jks
-          ls -l debug-keystore.jks
-
-      - name: Sign debug APK with apksigner (optional)
-        if: ${{ secrets.SIGNING_KEY_BASE64 != '' }}
-        run: |
-          APK="${{ steps.find_apk.outputs.apk_path }}"
-          if [ -z "$APK" ]; then
-            echo "APK path not found, aborting signing." >&2
-            exit 1
-          fi
-          BUILD_TOOLS=$(ls $ANDROID_SDK_ROOT/build-tools | sort -V | tail -n1)
-          APKSIGNER="$ANDROID_SDK_ROOT/build-tools/$BUILD_TOOLS/apksigner"
-          if [ ! -x "$APKSIGNER" ]; then
-            echo "apksigner not found at $APKSIGNER" >&2
-            exit 1
-          fi
-          "$APKSIGNER" sign --ks debug-keystore.jks \
-            --ks-key-alias "${{ secrets.SIGNING_KEY_ALIAS }}" \
-            --ks-pass pass:"${{ secrets.SIGNING_KEYSTORE_PASSWORD }}" \
-            --key-pass pass:"${{ secrets.SIGNING_KEY_PASSWORD }}" \
-            "$APK"
-          "$APKSIGNER" verify "$APK" || (echo "apksigner verify failed" >&2; exit 1)
 
       - name: Upload debug APK artifact
         uses: actions/upload-artifact@v4
