@@ -27,7 +27,7 @@ class Shinigami : HttpSource() {
 
     private val apiUrl = "https://api.shngm.io"
 
-    private val cdnUrl = "https://storage.shngm.id"
+    private val cdnUrl = "https://delivery.shngm.id"
 
     override val lang = "id"
 
