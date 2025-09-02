@@ -3,6 +3,8 @@ package eu.kanade.tachiyomi.extension.id.komikstation
 import eu.kanade.tachiyomi.multisrc.mangathemesia.MangaThemesia
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
 import okhttp3.OkHttpClient
+import java.text.SimpleDateFormat
+import java.util.Locale
 
 class KomikStation : MangaThemesia("Komik Station", "https://Komikstation.org", "id", dateFormat = SimpleDateFormat("MMMM dd, yyyy", Locale("id"))) {
     // Formerly "Komik Station (WP Manga Stream)"
