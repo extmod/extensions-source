@@ -1,15 +1,15 @@
 package eu.kanade.tachiyomi.extension.id.komikstation
 
 import android.app.Application
-import eu.kanade.tachiyomi.multisrc.mangathemesia.MangaThemesia
 import androidx.preference.EditTextPreference
 import androidx.preference.PreferenceScreen
+import eu.kanade.tachiyomi.multisrc.mangathemesia.MangaThemesia
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
 import eu.kanade.tachiyomi.source.ConfigurableSource
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SManga
+import eu.kanade.tachiyomi.util.asJsoup
 import okhttp3.OkHttpClient
-import okhttp3.ResponseBody.Companion.toResponseBody
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import uy.kohesive.injekt.Injekt
@@ -32,12 +32,13 @@ class KomikStation : MangaThemesia(
     }
 
     private fun resizeImageUrl(originalUrl: String): String {
-        return "LayananGambar$originalUrl"
+        val rp = getResizeServiceUrl().orEmpty()
+        return if (rp.isEmpty()) originalUrl else rp + originalUrl
     }
 
-    override var baseUrl = preferences.getString(BASE_URL_PREF, super.baseUrl)!!
+    override var baseUrl = preferences.getString("overrideBaseUrl", super.baseUrl)!!
 
-    override val client = super.client.newBuilder()
+    override val client: OkHttpClient = super.client.newBuilder()
         .rateLimit(4)
         .build()
 
@@ -45,7 +46,6 @@ class KomikStation : MangaThemesia(
         return SManga.create().apply {
             val originalThumbnailUrl = element.select("img").imgAttr()
             thumbnail_url = resizeImageUrl(originalThumbnailUrl)
-
         }
     }
 
@@ -53,50 +53,42 @@ class KomikStation : MangaThemesia(
         val seriesDetails = document.select(seriesThumbnailSelector)
         val originalThumbnailUrl = seriesDetails.imgAttr()
         thumbnail_url = resizeImageUrl(originalThumbnailUrl)
-
     }
 
     override fun pageListParse(response: okhttp3.Response): List<Page> {
     val doc = response.asJsoup()
-    val rp = getResizeServiceUrl().orEmpty()
-
     return doc.select(pageSelector)
-        .mapNotNull { it.imgAttr().trim().takeIf { it.isNotEmpty() } }
+        .mapNotNull { it.imgAttr().trim().takeIf { url -> url.isNotEmpty() } }
         .distinct()
-        .mapIndexed { i, u -> Page(i, "", if (rp.isEmpty()) u else rp + u) }
+        .mapIndexed { i, url -> Page(i, "", resizeImageUrl(url)) }
 }
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
         val resizeServicePref = EditTextPreference(screen.context).apply {
             key = "resize_service_url"
             title = "Resize Service URL"
-            summary = "Masukkan URL layanan resize gambar."
+            summary = "Masukkan URL layanan resize gambar"
             setDefaultValue(null)
             dialogTitle = "Resize Service URL"
         }
         screen.addPreference(resizeServicePref)
 
-        // Preference untuk mengubah base URL
         val baseUrlPref = EditTextPreference(screen.context).apply {
-            key = BASE_URL_PREF
+            key = "overrideBaseUrl"
             title = "Ubah Domain"
             summary = "Update domain untuk ekstensi ini"
             setDefaultValue(baseUrl)
-            dialogTitle = BASE_URL_PREF_TITLE
+            dialogTitle = "Ubah Domain"
             dialogMessage = "Original: $baseUrl"
 
             setOnPreferenceChangeListener { _, newValue ->
                 val newUrl = newValue as String
                 baseUrl = newUrl
-                preferences.edit().putString(BASE_URL_PREF, newUrl).apply()
-                summary = "Current domain: $newUrl" // Update summary untuk domain yang baru
+                preferences.edit().putString("overrideBaseUrl", newUrl).apply()
+                summary = "Current domain: $newUrl"
                 true
             }
         }
         screen.addPreference(baseUrlPref)
-    }
-
-    companion object {
-        private const val BASE_URL_PREF = "overrideBaseUrl"
     }
 }
