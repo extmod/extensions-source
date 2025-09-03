@@ -41,19 +41,24 @@ class KomikStation : MangaThemesia(
 
     override fun searchMangaFromElement(element: Element): SManga {
     return super.searchMangaFromElement(element).apply {
-        thumbnail_url = resizeCover
+        val img = element.select("img").firstOrNull()
+        if (img != null) {
+            val originalUrl = img.attr("src").trim()
+            thumbnail_url = "$resizeCover$originalUrl"
+        }
     }
 }
 
-    override fun mangaDetailsParse(document: Document): SManga {
+override fun mangaDetailsParse(document: Document): SManga {
     val manga = super.mangaDetailsParse(document)
 
     val img = document.select(seriesThumbnailSelector).firstOrNull()
     if (img != null) {
-        manga.thumbnail_url = resizeCover
+        val originalUrl = img.attr("src").trim()
+        manga.thumbnail_url = "$resizeCover$originalUrl"
         manga.title = img.attr("alt").trim()
     }
-    
+
     return manga
 }
 
