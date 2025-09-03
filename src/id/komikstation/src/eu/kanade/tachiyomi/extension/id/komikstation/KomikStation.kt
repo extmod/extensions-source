@@ -50,7 +50,7 @@ class KomikStation : MangaThemesia(
 
     val img = document.select(seriesThumbnailSelector).firstOrNull()
     if (img != null) {
-        manga.thumbnail_url = coverServiceBase
+        manga.thumbnail_url = resizeCover
         manga.title = img.attr("alt").trim()
     }
     
