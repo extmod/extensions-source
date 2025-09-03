@@ -27,35 +27,29 @@ class KomikStation : MangaThemesia(
 
     private val preferences = Injekt.get<Application>().getSharedPreferences("source_$id", 0x0000)
 
-    private fun ResizePage(): String? {
-        return preferences.getString("resize_service_url", null)
-    }
+    private val resizeCover = "https://LayananGambar"
 
-    private fun ResizeCover(originalUrl: String): String {
-        return "LayananGambar$originalUrl"
+    private fun resizePage(): String? {
+        return preferences.getString("resize_service_url", null)?.takeIf { it.isNotBlank() }
     }
 
     override var baseUrl = preferences.getString("overrideBaseUrl", super.baseUrl)!!
 
-    override val client = super.client.newBuilder()
+    override val client: OkHttpClient = super.client.newBuilder()
         .rateLimit(4)
         .build()
 
     override fun searchMangaFromElement(element: Element): SManga {
-    return super.searchMangaFromElement(element).apply {
-        thumbnail_url = thumbnail_url?.let { ResizeCover(it) }
+        return super.searchMangaFromElement(element).apply {
+            thumbnail_url = resizeCover
+        }
     }
-}
 
     override fun mangaDetailsParse(document: Document): SManga {
         return SManga.create().apply {
             val img = document.select(seriesThumbnailSelector).firstOrNull()
-
             if (img != null) {
-                val original = img.attr("src").trim()
-                if (original.isNotEmpty()) {
-                    thumbnail_url = ResizeCover(original)
-                }
+                thumbnail_url = resizeCover
                 title = img.attr("alt").trim()
             }
         }
@@ -63,26 +57,24 @@ class KomikStation : MangaThemesia(
 
     override fun pageListParse(response: okhttp3.Response): List<Page> {
         val doc = response.asJsoup()
+        val service = resizePage()
 
-        val service = preferences.getString("resize_service_url", null)
-            ?.takeIf { it.isNotBlank() }
-            ?: throw Exception("Harap isi Resize Service URL di pengaturan")
-
-        return doc.select(pageSelector)
-            .mapNotNull { element: Element ->
-                element.selectFirst("#readerarea img")?.attr("src")?.trim()?.takeIf { it.isNotEmpty() }
+        return doc.select("#readerarea img").mapIndexed { i, img ->
+            val src = img.attr("src").trim()
+            val finalUrl = if (service != null) {
+                "$service$src"
+            } else {
+                src
             }
-            .distinct()
-            .mapIndexed { i: Int, url: String ->
-                Page(i, "", ResizePage(url))
-            }
+            Page(i, "", finalUrl)
+        }
     }
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
         val resizeServicePref = EditTextPreference(screen.context).apply {
             key = "resize_service_url"
-            title = "Resize Service URL"
-            summary = "Masukkan URL layanan resize gambar."
+            title = "Resize Service URL (Pages)"
+            summary = "Masukkan URL layanan resize gambar untuk halaman (page list)."
             setDefaultValue(null)
             dialogTitle = "Resize Service URL"
         }
