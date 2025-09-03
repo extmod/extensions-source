@@ -52,16 +52,13 @@ class KomikStation : MangaThemesia(
     }
 }
 
-    override fun mangaDetailsParse(document: Document): SManga {
-    return SManga.create().apply {
-        val img = document.select("img").firstOrNull()
+    override fun mangaDetailsParse(document: Document) = super.mangaDetailsParse(document).apply {
+        val seriesDetails = document.select(seriesThumbnailSelector)
+        val originalThumbnailUrl = seriesDetails.imgAttr()
+        thumbnail_url = resizeImageUrl(originalThumbnailUrl)
 
-        if (img != null) {
-            thumbnail_url = resizeImageUrl(img.attr("src").trim())
-            title = img.attr("alt").trim()
-        }
+        title = document.selectFirst(seriesThumbnailSelector)!!.attr("title")
     }
-}
 
     override fun pageListParse(response: okhttp3.Response): List<Page> {
     val doc = response.asJsoup()
