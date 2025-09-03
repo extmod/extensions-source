@@ -62,14 +62,17 @@ class KomikStation : MangaThemesia(
     }
 
     override fun pageListParse(response: okhttp3.Response): List<Page> {
-        val doc = response.asJsoup()
-        return doc.select(pageSelector)
-            .mapNotNull { it.imgAttr().trim().takeIf { url -> url.isNotEmpty() } }
-            .distinct()
-            .mapIndexed { i, url ->
-                Page(i, "", ResizePage() ?: url)
-            }
-    }
+    val doc = response.asJsoup()
+    val resizeService = getResizeServiceUrl()
+        ?: throw Exception("Harap isi Resize Service URL di pengaturan")
+
+    return doc.select(pageSelector)
+        .mapNotNull { it.imgAttr().trim().takeIf { url -> url.isNotEmpty() } }
+        .distinct()
+        .mapIndexed { i, url ->
+            Page(i, "", "$ResizePage$url")
+        }
+}
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
         val resizeServicePref = EditTextPreference(screen.context).apply {
