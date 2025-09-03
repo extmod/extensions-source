@@ -32,10 +32,8 @@ class KomikStation : MangaThemesia(
     }
 
     private fun resizeImageUrl(originalUrl: String): String {
-    val rp = getResizeServiceUrl()
-        ?: "https://wsrv.nl/?w=110&h150&url="
-    return rp + originalUrl
-}
+        return "https://wsrv.nl/?w=10&h150&url=$originalUrl"
+    }
 
     override var baseUrl = preferences.getString("overrideBaseUrl", super.baseUrl)!!
 
