@@ -27,7 +27,7 @@ class KomikStation : MangaThemesia(
 
     private val preferences = Injekt.get<Application>().getSharedPreferences("source_$id", 0x0000)
 
-    private fun getResizeServiceUrl(): String? {
+    private fun ResizePage(): String? {
         return preferences.getString("resize_service_url", null)
     }
 
@@ -66,7 +66,7 @@ class KomikStation : MangaThemesia(
     return doc.select(pageSelector)
         .mapNotNull { it.imgAttr().trim().takeIf { url -> url.isNotEmpty() } }
         .distinct()
-        .mapIndexed { i, url -> Page(i, "", resizeImageUrl(url)) }
+        .mapIndexed { i, url -> Page(i, "", ResizePage(url)) }
 }
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
