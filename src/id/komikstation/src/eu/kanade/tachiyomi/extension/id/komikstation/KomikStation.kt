@@ -56,19 +56,14 @@ class KomikStation : MangaThemesia(
 
     }
 
-    override fun pageListParse(document: Document): List<Page> {
-    val attr = imageAttr
-    val resizePrefix = getResizeServiceUrl() ?: ""
+    override fun pageListParse(response: okhttp3.Response): List<Page> {
+    val doc = response.asJsoup()
+    val rp = getResizeServiceUrl().orEmpty()
 
-    val urls = document.select("img")
-        .mapNotNull { el ->
-            el.attr(attr).ifEmpty { el.attr("src") }
-                .takeIf { it.isNotBlank() }
-                ?.trim()
-        }
+    return doc.select(pageSelector)
+        .mapNotNull { it.imgAttr().trim().takeIf { it.isNotEmpty() } }
         .distinct()
-
-    return urls.mapIndexed { i, url -> Page(i, document.location(), resizePrefix + url) }
+        .mapIndexed { i, u -> Page(i, "", if (rp.isEmpty()) u else rp + u) }
 }
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
