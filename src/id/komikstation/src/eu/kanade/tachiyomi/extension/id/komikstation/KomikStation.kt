@@ -14,6 +14,14 @@ class KomikStation : MangaThemesia("Komik Station", "https://Komikstation.org", 
         .rateLimit(4)
         .build()
 
+    override fun searchMangaFromElement(element: Element): SManga {
+    return SManga.create().apply {
+        thumbnail_url = element.select("img").attr("src").trim().let {
+            if (it.isEmpty()) "" else "https://images.weserv.nl/?w=800&q=75&url=$it"
+        }
+    }
+}
+
     override val projectPageString = "/project-list"
 
     override val hasProjectPage = true
