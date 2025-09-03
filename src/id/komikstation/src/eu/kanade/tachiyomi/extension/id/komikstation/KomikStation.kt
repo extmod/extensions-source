@@ -27,47 +27,49 @@ class KomikStation : MangaThemesia(
 
     private val preferences = Injekt.get<Application>().getSharedPreferences("source_$id", 0x0000)
 
-    private fun ResizePage(): String? {
-        return preferences.getString("resize_service_url", null)
+    private fun ResizeCover(originalUrl: String): String {
+        return "https://wsrv.nl/?w=10&h150&url=$originalUrl"
     }
 
-    private fun resizeImageUrl(originalUrl: String): String {
-        return "https://wsrv.nl/?w=10&h150&url=$originalUrl"
+    private fun ResizePage(): String? {
+        return preferences.getString("resize_service_url", null)
     }
 
     override var baseUrl = preferences.getString("overrideBaseUrl", super.baseUrl)!!
 
     override val client: OkHttpClient = super.client.newBuilder()
-        .rateLimit(4)
+        .rateLimit(1)
         .build()
 
     override fun searchMangaFromElement(element: Element): SManga {
-    return super.searchMangaFromElement(element).apply {
-        val rawThumb = element.select("img").attr("src")
-        if (rawThumb.isNotEmpty()) {
-            thumbnail_url = resizeImageUrl(rawThumb)
+        return super.searchMangaFromElement(element).apply {
+            val rawThumb = element.select("img").attr("src")
+            if (rawThumb.isNotEmpty()) {
+                thumbnail_url = ResizeCover(rawThumb)
+            }
         }
     }
-}
 
     override fun mangaDetailsParse(document: Document): SManga {
-    return SManga.create().apply {
-        val img = document.select("div.thumb img").firstOrNull()
+        return SManga.create().apply {
+            val img = document.select("div.thumb img").firstOrNull()
 
-        if (img != null) {
-            thumbnail_url = resizeImageUrl(img.attr("src").trim())
-            title = img.attr("alt").trim()
+            if (img != null) {
+                thumbnail_url = ResizeCover(img.attr("src").trim())
+                title = img.attr("alt").trim()
+            }
         }
     }
-}
 
     override fun pageListParse(response: okhttp3.Response): List<Page> {
-    val doc = response.asJsoup()
-    return doc.select(pageSelector)
-        .mapNotNull { it.imgAttr().trim().takeIf { url -> url.isNotEmpty() } }
-        .distinct()
-        .mapIndexed { i, url -> Page(i, "", ResizePage(url)) }
-}
+        val doc = response.asJsoup()
+        return doc.select(pageSelector)
+            .mapNotNull { it.imgAttr().trim().takeIf { url -> url.isNotEmpty() } }
+            .distinct()
+            .mapIndexed { i, url ->
+                Page(i, "", ResizePage() ?: url)
+            }
+    }
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
         val resizeServicePref = EditTextPreference(screen.context).apply {
