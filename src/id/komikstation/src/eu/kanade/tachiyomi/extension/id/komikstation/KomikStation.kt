@@ -51,10 +51,11 @@ class KomikStation : MangaThemesia(
     }
 }
 
-    override fun mangaDetailsParse(document: Document) = super.mangaDetailsParse(document).apply {
-        val seriesDetails = document.select(seriesThumbnailSelector)
-        val originalThumbnailUrl = seriesDetails.imgAttr()
-        thumbnail_url = resizeImageUrl(originalThumbnailUrl)
+    override fun mangaDetailsParse(document: Document) =
+    super.mangaDetailsParse(document).apply {
+        if (!thumbnail_url.isNullOrEmpty()) {
+            thumbnail_url = resizeImageUrl(thumbnail_url!!)
+        }
     }
 
     override fun pageListParse(response: okhttp3.Response): List<Page> {
