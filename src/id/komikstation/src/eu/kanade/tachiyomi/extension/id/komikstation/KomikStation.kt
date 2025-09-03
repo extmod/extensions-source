@@ -11,6 +11,7 @@ import eu.kanade.tachiyomi.source.model.SManga
 import okhttp3.OkHttpClient
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+import eu.kanade.tachiyomi.util.asJsoup
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.text.SimpleDateFormat
@@ -31,7 +32,7 @@ class KomikStation : MangaThemesia(
     }
 
     private fun ResizeCover(originalUrl: String): String {
-        return "https://wsrv.nl/?w=10&h=150&url=$originalUrl"
+        return "LayananGambar$originalUrl"
     }
 
     override var baseUrl = preferences.getString("overrideBaseUrl", super.baseUrl)!!
@@ -41,21 +42,23 @@ class KomikStation : MangaThemesia(
         .build()
 
     override fun searchMangaFromElement(element: Element): SManga {
-        return SManga.create().apply {
-            val originalThumbnailUrl = element.select("img").imgAttr()
-            thumbnail_url = ResizeCover(originalThumbnailUrl)
-
-            title = element.select("a").attr("title")
-            setUrlWithoutDomain(element.select("a").attr("href"))
-        }
+    return super.searchMangaFromElement(element).apply {
+        thumbnail_url = thumbnail_url?.let { ResizeCover(it) }
     }
+}
 
-    override fun mangaDetailsParse(document: Document) = super.mangaDetailsParse(document).apply {
-        val seriesDetails = document.select(seriesThumbnailSelector)
-        val originalThumbnailUrl = seriesDetails.imgAttr()
-        thumbnail_url = ResizeCover(originalThumbnailUrl)
+    override fun mangaDetailsParse(document: Document): SManga {
+        return SManga.create().apply {
+            val img = document.select(seriesThumbnailSelector).firstOrNull()
 
-        title = document.selectFirst(seriesThumbnailSelector)!!.attr("title")
+            if (img != null) {
+                val original = img.attr("src").trim()
+                if (original.isNotEmpty()) {
+                    thumbnail_url = ResizeCover(original)
+                }
+                title = img.attr("alt").trim()
+            }
+        }
     }
 
     override fun pageListParse(response: okhttp3.Response): List<Page> {
@@ -66,13 +69,13 @@ class KomikStation : MangaThemesia(
             ?: throw Exception("Harap isi Resize Service URL di pengaturan")
 
         return doc.select(pageSelector)
-            .mapNotNull { element ->
+            .mapNotNull { element: Element ->
                 element.selectFirst("#readerarea img")?.attr("src")?.trim()?.takeIf { it.isNotEmpty() }
             }
             .distinct()
-            .mapIndexed { i, url ->
+            .mapIndexed { i: Int, url: String ->
                 Page(i, "", ResizePage(url))
-        }
+            }
     }
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
@@ -96,7 +99,7 @@ class KomikStation : MangaThemesia(
             setOnPreferenceChangeListener { _, newValue ->
                 val newUrl = newValue as String
                 baseUrl = newUrl
-                preferences.edit().putString(BASE_URL_PREF, newUrl).apply()
+                preferences.edit().putString("overrideBaseUrl", newUrl).apply()
                 summary = "Current domain: $newUrl"
                 true
             }
