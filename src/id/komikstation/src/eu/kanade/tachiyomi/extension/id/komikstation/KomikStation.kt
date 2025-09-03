@@ -27,7 +27,7 @@ class KomikStation : MangaThemesia(
 
     private val preferences = Injekt.get<Application>().getSharedPreferences("source_$id", 0x0000)
 
-    private val resizeCover = "https://LayananGambar"
+    private val resizeCover = "https://wsrv.nl/?w=110&h=150&url="
 
     private fun resizePage(): String? {
         return preferences.getString("resize_service_url", null)?.takeIf { it.isNotBlank() }
@@ -40,10 +40,10 @@ class KomikStation : MangaThemesia(
         .build()
 
     override fun searchMangaFromElement(element: Element): SManga {
-        return super.searchMangaFromElement(element).apply {
-            thumbnail_url = resizeCover
-        }
+    return super.searchMangaFromElement(element).apply {
+        thumbnail_url = resizeCover
     }
+}
 
     override fun mangaDetailsParse(document: Document): SManga {
     val manga = super.mangaDetailsParse(document)
