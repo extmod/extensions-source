@@ -31,8 +31,10 @@ class KomikStation : MangaThemesia(
         return "https://wsrv.nl/?w=10&h150&url=$originalUrl"
     }
 
-    private fun ResizePage(): String? {
-        return preferences.getString("resize_service_url", null)
+    private fun ResizePage(originalUrl: String): String {
+        val service = preferences.getString("resize_service_url", null)
+            ?: throw Exception("Harap isi Resize Service URL di pengaturan")
+        return "$service$originalUrl"
     }
 
     override var baseUrl = preferences.getString("overrideBaseUrl", super.baseUrl)!!
@@ -53,7 +55,6 @@ class KomikStation : MangaThemesia(
     override fun mangaDetailsParse(document: Document): SManga {
         return SManga.create().apply {
             val img = document.select("div.thumb img").firstOrNull()
-
             if (img != null) {
                 thumbnail_url = ResizeCover(img.attr("src").trim())
                 title = img.attr("alt").trim()
@@ -62,17 +63,12 @@ class KomikStation : MangaThemesia(
     }
 
     override fun pageListParse(response: okhttp3.Response): List<Page> {
-    val doc = response.asJsoup()
-    val resizeService = getResizeServiceUrl()
-        ?: throw Exception("Harap isi Resize Service URL di pengaturan")
-
-    return doc.select(pageSelector)
-        .mapNotNull { it.imgAttr().trim().takeIf { url -> url.isNotEmpty() } }
-        .distinct()
-        .mapIndexed { i, url ->
-            Page(i, "", "$ResizePage$url")
-        }
-}
+        val doc = response.asJsoup()
+        return doc.select(pageSelector)
+            .mapNotNull { it.imgAttr().trim().takeIf { url -> url.isNotEmpty() } }
+            .distinct()
+            .mapIndexed { i, url -> Page(i, "", ResizePage(url)) }
+    }
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
         val resizeServicePref = EditTextPreference(screen.context).apply {
