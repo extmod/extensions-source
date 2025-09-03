@@ -2,6 +2,8 @@ package eu.kanade.tachiyomi.extension.id.komikstation
 
 import eu.kanade.tachiyomi.multisrc.mangathemesia.MangaThemesia
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
+import org.jsoup.nodes.Element
+import eu.kanade.tachiyomi.source.model.SManga
 import okhttp3.OkHttpClient
 import java.text.SimpleDateFormat
 import java.util.Locale
