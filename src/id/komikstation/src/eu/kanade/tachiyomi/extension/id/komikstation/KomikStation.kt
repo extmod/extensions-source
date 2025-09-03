@@ -32,9 +32,10 @@ class KomikStation : MangaThemesia(
     }
 
     private fun resizeImageUrl(originalUrl: String): String {
-        val rp = getResizeServiceUrl().orEmpty()
-        return if (rp.isEmpty()) originalUrl else rp + originalUrl
-    }
+    val rp = getResizeServiceUrl()
+        ?: "https://wsrv.nl/?w=110&h150&url="
+    return rp + originalUrl
+}
 
     override var baseUrl = preferences.getString("overrideBaseUrl", super.baseUrl)!!
 
@@ -43,11 +44,12 @@ class KomikStation : MangaThemesia(
         .build()
 
     override fun searchMangaFromElement(element: Element): SManga {
-        return SManga.create().apply {
-            val originalThumbnailUrl = element.select("img").imgAttr()
-            thumbnail_url = resizeImageUrl(originalThumbnailUrl)
+    return super.searchMangaFromElement(element).apply {
+        if (!thumbnail_url.isNullOrEmpty()) {
+            thumbnail_url = resizeImageUrl(thumbnail_url!!)
         }
     }
+}
 
     override fun mangaDetailsParse(document: Document) = super.mangaDetailsParse(document).apply {
         val seriesDetails = document.select(seriesThumbnailSelector)
