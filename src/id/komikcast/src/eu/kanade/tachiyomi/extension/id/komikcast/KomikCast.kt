@@ -1,12 +1,17 @@
 package eu.kanade.tachiyomi.extension.id.komikcast
 
-import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.source.online.ParsedHttpSource
-import okhttp3.*
+import eu.kanade.tachiyomi.source.model.SManga
+import eu.kanade.tachiyomi.source.model.SChapter
+import eu.kanade.tachiyomi.source.model.Page
+import eu.kanade.tachiyomi.source.model.Filter
+import eu.kanade.tachiyomi.source.model.FilterList
+import okhttp3.Request
+import okhttp3.Headers
+import okhttp3.HttpUrl
+import okhttp3.OkHttpClient
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
-import eu.kanade.tachiyomi.source.model.*
-import java.util.*
+import java.util.Calendar
 
 class KomikCast : ParsedHttpSource() {
 
