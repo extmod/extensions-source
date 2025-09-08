@@ -10,7 +10,7 @@ import java.util.*
 
 class KomikCast : ParsedHttpSource() {
 
-    override val name = "Komikcast"
+    override val name = "Komik Cast"
     override val baseUrl = "https://komikcast.com"
     override val lang = "id"
     override val supportsLatest = true
