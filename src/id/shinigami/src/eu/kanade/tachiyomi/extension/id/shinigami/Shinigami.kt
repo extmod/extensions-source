@@ -32,10 +32,6 @@ class Shinigami : HttpSource(), ConfigurableSource {
 
     private val resizeCover = "https://wsrv.nl/?w=110&h=150&url="
 
-    private fun resizePage(): String? {
-        return preferences.getString("resize_service_url", null)?.takeIf { it.isNotBlank() }
-    }
-
     override val baseUrl: String
         get() = preferences.getString("overrideBaseUrl", "https://app.shinigami.asia")!!
 
@@ -175,22 +171,12 @@ class Shinigami : HttpSource(), ConfigurableSource {
 
     override fun pageListParse(response: Response): List<Page> {
     val result = response.parseAs<ShinigamiPageListDto>()
-
-    // ambil dari preference
-    val resizeTemplate = resizePage()
+    val resizeTemplate = preferences.getString("resize_service_url", null)?.takeIf { it.isNotBlank() }
 
     return result.pageList.chapterPage.pages.mapIndexed { index, imageName ->
         val original = "$cdnUrl${result.pageList.chapterPage.path}$imageName"
-
-        val wsrv = if (resizeTemplate.isNullOrBlank()) {
-            // jika tidak ada layanan, pakai original
-            original
-        } else {
-            // jika ada layanan, gabungkan dengan original
-            resizeTemplate + original
-        }
-
-        Page(index = index, imageUrl = wsrv)
+        val wsrv = resizeTemplate?.plus(original) ?: original
+        Page(index, wsrv)
     }
 }
 
