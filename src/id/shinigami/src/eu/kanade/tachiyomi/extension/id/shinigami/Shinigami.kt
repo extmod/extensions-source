@@ -174,13 +174,25 @@ class Shinigami : HttpSource(), ConfigurableSource {
     }
 
     override fun pageListParse(response: Response): List<Page> {
-        val result = response.parseAs<ShinigamiPageListDto>()
-        return result.pageList.chapterPage.pages.mapIndexed { index, imageName ->
-            val original = "$cdnUrl${result.pageList.chapterPage.path}$imageName"
-            val wsrv = "https://images.weserv.nl/?w=300&q=70&url=$original"
-            Page(index = index, imageUrl = wsrv)
+    val result = response.parseAs<ShinigamiPageListDto>()
+
+    // ambil dari preference
+    val resizeTemplate = resizePage()
+
+    return result.pageList.chapterPage.pages.mapIndexed { index, imageName ->
+        val original = "$cdnUrl${result.pageList.chapterPage.path}$imageName"
+
+        val wsrv = if (resizeTemplate.isNullOrBlank()) {
+            // jika tidak ada layanan, pakai original
+            original
+        } else {
+            // jika ada layanan, gabungkan dengan original
+            resizeTemplate + original
         }
+
+        Page(index = index, imageUrl = wsrv)
     }
+}
 
     override fun imageUrlParse(response: Response): String = ""
 
