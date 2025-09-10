@@ -170,15 +170,19 @@ class Shinigami : HttpSource(), ConfigurableSource {
     }
 
     override fun pageListParse(response: Response): List<Page> {
-    val result = response.parseAs<ShinigamiPageListDto>()
-    val resizeTemplate = preferences.getString("resize_service_url", null)?.takeIf { it.isNotBlank() }
+        val result = response.parseAs<ShinigamiPageListDto>()
+        val resizeServiceUrl = preferences.getString("resize_service_url", null)
 
-    return result.pageList.chapterPage.pages.mapIndexed { index, imageName ->
-        val original = "$cdnUrl${result.pageList.chapterPage.path}$imageName"
-        val wsrv = resizeTemplate?.plus(original) ?: original
-        Page(index, wsrv)
+        return result.pageList.chapterPage.pages.mapIndexed { index, imageName ->
+            val originalImageUrl = "$cdnUrl${result.pageList.chapterPage.path}$imageName"
+            val finalImageUrl = if (!resizeServiceUrl.isNullOrBlank()) {
+                "$resizeServiceUrl$originalImageUrl"
+            } else {
+                originalImageUrl
+            }
+            Page(index = index, imageUrl = finalImageUrl)
+        }
     }
-}
 
     override fun imageUrlParse(response: Response): String = ""
 
@@ -197,9 +201,10 @@ class Shinigami : HttpSource(), ConfigurableSource {
         val resizeServicePref = EditTextPreference(screen.context).apply {
             key = "resize_service_url"
             title = "Resize Service URL (Pages)"
-            summary = "Masukkan URL layanan resize gambar untuk halaman (page list)."
+            summary = "Masukkan URL layanan resize gambar untuk halaman (page list). Contoh: https://wsrv.nl/?url="
             setDefaultValue(null)
             dialogTitle = "Resize Service URL"
+            dialogMessage = "URL akan digabungkan dengan URL gambar asli. Pastikan format URL benar."
         }
         screen.addPreference(resizeServicePref)
 
