@@ -1,11 +1,12 @@
 package eu.kanade.tachiyomi.extension.id.shinigami
 
 import android.app.Application
+import android.content.SharedPreferences
 import androidx.preference.EditTextPreference
 import androidx.preference.PreferenceScreen
-import eu.kanade.tachiyomi.source.ConfigurableSource
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
+import eu.kanade.tachiyomi.source.ConfigurableSource
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.model.Page
@@ -24,31 +25,27 @@ import java.text.SimpleDateFormat
 import java.util.Locale
 
 class Shinigami : HttpSource(), ConfigurableSource {
-    // existing fields...
+
     private val preferences: SharedPreferences by lazy {
         Injekt.get<Application>().getSharedPreferences("source_$id", 0)
     }
-    
+
     private val resizeCover = "https://wsrv.nl/?w=110&h=150&url="
 
     private fun resizePage(): String? {
         return preferences.getString("resize_service_url", null)?.takeIf { it.isNotBlank() }
     }
 
-    override var baseUrl = preferences.getString("overrideBaseUrl", super.baseUrl)!!
+    override val baseUrl: String
+        get() = preferences.getString("overrideBaseUrl", "https://app.shinigami.asia")!!
 
     override val id = 3411809758861089969
-
     override val name = "Shinigami"
 
-    override val baseUrl = "https://app.shinigami.asia"
-
     private val apiUrl = "https://api.shngm.io"
-
     private val cdnUrl = "https://delivery.shngm.id"
 
     override val lang = "id"
-
     override val supportsLatest = true
 
     private val apiHeaders: Headers by lazy { apiHeadersBuilder().build() }
@@ -56,17 +53,14 @@ class Shinigami : HttpSource(), ConfigurableSource {
     override val client = network.cloudflareClient.newBuilder()
         .addInterceptor { chain ->
             val request = chain.request()
-            val headers = request.headers.newBuilder().apply {
-                removeAll("X-Requested-With")
-            }.build()
-
+            val headers = request.headers.newBuilder().apply { removeAll("X-Requested-With") }.build()
             chain.proceed(request.newBuilder().headers(headers).build())
         }
         .rateLimit(3)
         .build()
 
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
-        .add("X-Requested-With", randomString((1..20).random())) // added for webview, and removed in interceptor for normal use
+        .add("X-Requested-With", randomString((1..20).random()))
 
     private fun randomString(length: Int) = buildString {
         val charPool = ('a'..'z') + ('A'..'Z')
@@ -85,23 +79,20 @@ class Shinigami : HttpSource(), ConfigurableSource {
             .addQueryParameter("page_size", "30")
             .addQueryParameter("sort", "popularity")
             .build()
-
         return GET(url, apiHeaders)
     }
 
     override fun popularMangaParse(response: Response): MangasPage {
         val rootObject = response.parseAs<ShinigamiBrowseDto>()
         val projectList = rootObject.data.map(::popularMangaFromObject)
-
         val hasNextPage = rootObject.meta.page < rootObject.meta.totalPage
-
         return MangasPage(projectList, hasNextPage)
     }
 
     private fun popularMangaFromObject(obj: ShinigamiBrowseDataDto): SManga = SManga.create().apply {
-        title = obj.title!!
+        title = obj.title ?: ""
         thumbnail_url = obj.thumbnail
-        url = obj.mangaId!!
+        url = obj.mangaId ?: ""
     }
 
     override fun latestUpdatesRequest(page: Int): Request {
@@ -110,7 +101,6 @@ class Shinigami : HttpSource(), ConfigurableSource {
             .addQueryParameter("page_size", "30")
             .addQueryParameter("sort", "latest")
             .build()
-
         return GET(url, apiHeaders)
     }
 
@@ -120,13 +110,9 @@ class Shinigami : HttpSource(), ConfigurableSource {
         val url = "$apiUrl/v1/manga/list".toHttpUrl().newBuilder()
             .addQueryParameter("page", page.toString())
             .addQueryParameter("page_size", "30")
-
         if (query.isNotEmpty()) {
             url.addQueryParameter("q", query)
         }
-
-        // TODO: search by tag/genre/status/etc
-
         return GET(url.build(), apiHeaders)
     }
 
@@ -137,24 +123,20 @@ class Shinigami : HttpSource(), ConfigurableSource {
     }
 
     override fun mangaDetailsRequest(manga: SManga): Request {
-        // Migration from old web urls to the new api based
         if (manga.url.startsWith("/series/")) {
             throw Exception("Migrate dari $name ke $name (ekstensi yang sama)")
         }
-
         return GET("$apiUrl/v1/manga/detail/${manga.url}", apiHeaders)
     }
 
     override fun mangaDetailsParse(response: Response): SManga {
         val mangaDetailsResponse = response.parseAs<ShinigamiMangaDetailDto>()
         val mangaDetails = mangaDetailsResponse.data
-
         return SManga.create().apply {
             author = mangaDetails.taxonomy["Author"]?.joinToString { it.name }.orEmpty()
             artist = mangaDetails.taxonomy["Artist"]?.joinToString { it.name }.orEmpty()
             status = mangaDetails.status.toStatus()
             description = mangaDetails.description
-
             val genres = mangaDetails.taxonomy["Genre"]?.joinToString { it.name }.orEmpty()
             val type = mangaDetails.taxonomy["Format"]?.joinToString { it.name }.orEmpty()
             genre = listOf(genres, type).filter { it.isNotBlank() }.joinToString()
@@ -175,34 +157,30 @@ class Shinigami : HttpSource(), ConfigurableSource {
 
     override fun chapterListParse(response: Response): List<SChapter> {
         val result = response.parseAs<ShinigamiChapterListDto>()
-
         return result.chapterList.map(::chapterFromObject)
     }
 
     private fun chapterFromObject(obj: ShinigamiChapterListDataDto): SChapter = SChapter.create().apply {
         date_upload = dateFormat.tryParse(obj.date)
-        name = "Chapter ${obj.name.toString().replace(".0","")} ${obj.title}"
+        name = "Chapter ${obj.name.toString().replace(".0", "")} ${obj.title}"
         url = obj.chapterId
     }
 
     override fun pageListRequest(chapter: SChapter): Request {
-        // Migration from old web urls to the new api based
         if (chapter.url.startsWith("/series/")) {
             throw Exception("Migrate dari $name ke $name (ekstensi yang sama)")
         }
-
         return GET("$apiUrl/v1/chapter/detail/${chapter.url}", apiHeaders)
     }
 
     override fun pageListParse(response: Response): List<Page> {
-    val result = response.parseAs<ShinigamiPageListDto>()
-
-    return result.pageList.chapterPage.pages.mapIndexed { index, imageName ->
-        val original = "$cdnUrl${result.pageList.chapterPage.path}$imageName"
-        val wsrv = "https://images.weserv.nl/?w=300&q=70&url=$original"
-        Page(index = index, imageUrl = wsrv)
+        val result = response.parseAs<ShinigamiPageListDto>()
+        return result.pageList.chapterPage.pages.mapIndexed { index, imageName ->
+            val original = "$cdnUrl${result.pageList.chapterPage.path}$imageName"
+            val wsrv = "https://images.weserv.nl/?w=300&q=70&url=$original"
+            Page(index = index, imageUrl = wsrv)
+        }
     }
-}
 
     override fun imageUrlParse(response: Response): String = ""
 
@@ -214,7 +192,6 @@ class Shinigami : HttpSource(), ConfigurableSource {
             .add("sec-fetch-dest", "empty")
             .add("Sec-GPC", "1")
             .build()
-
         return GET(page.imageUrl!!, newHeaders)
     }
 
@@ -234,13 +211,10 @@ class Shinigami : HttpSource(), ConfigurableSource {
             summary = "Update domain untuk ekstensi ini"
             setDefaultValue(baseUrl)
             dialogTitle = "Update domain untuk ekstensi ini"
-            dialogMessage = "Original: $baseUrl"
-
+            dialogMessage = "Original: https://app.shinigami.asia"
             setOnPreferenceChangeListener { _, newValue ->
                 val newUrl = newValue as String
-                baseUrl = newUrl
                 preferences.edit().putString("overrideBaseUrl", newUrl).apply()
-                summary = "Current domain: $newUrl"
                 true
             }
         }
