@@ -1,5 +1,9 @@
 package eu.kanade.tachiyomi.extension.id.shinigami
 
+import android.app.Application
+import androidx.preference.EditTextPreference
+import androidx.preference.PreferenceScreen
+import eu.kanade.tachiyomi.source.ConfigurableSource
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
 import eu.kanade.tachiyomi.source.model.FilterList
@@ -12,13 +16,27 @@ import keiyoushi.utils.parseAs
 import keiyoushi.utils.tryParse
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 import okhttp3.Request
 import okhttp3.Response
 import java.text.SimpleDateFormat
 import java.util.Locale
 
-class Shinigami : HttpSource() {
-    // moved from Reaper Scans (id) to Shinigami (id)
+class Shinigami : HttpSource(), ConfigurableSource {
+    // existing fields...
+    private val preferences: SharedPreferences by lazy {
+        Injekt.get<Application>().getSharedPreferences("source_$id", 0)
+    }
+    
+    private val resizeCover = "https://wsrv.nl/?w=110&h=150&url="
+
+    private fun resizePage(): String? {
+        return preferences.getString("resize_service_url", null)?.takeIf { it.isNotBlank() }
+    }
+
+    override var baseUrl = preferences.getString("overrideBaseUrl", super.baseUrl)!!
+
     override val id = 3411809758861089969
 
     override val name = "Shinigami"
@@ -198,6 +216,35 @@ class Shinigami : HttpSource() {
             .build()
 
         return GET(page.imageUrl!!, newHeaders)
+    }
+
+    override fun setupPreferenceScreen(screen: PreferenceScreen) {
+        val resizeServicePref = EditTextPreference(screen.context).apply {
+            key = "resize_service_url"
+            title = "Resize Service URL (Pages)"
+            summary = "Masukkan URL layanan resize gambar untuk halaman (page list)."
+            setDefaultValue(null)
+            dialogTitle = "Resize Service URL"
+        }
+        screen.addPreference(resizeServicePref)
+
+        val baseUrlPref = EditTextPreference(screen.context).apply {
+            key = "overrideBaseUrl"
+            title = "Ubah Domain"
+            summary = "Update domain untuk ekstensi ini"
+            setDefaultValue(baseUrl)
+            dialogTitle = "Update domain untuk ekstensi ini"
+            dialogMessage = "Original: $baseUrl"
+
+            setOnPreferenceChangeListener { _, newValue ->
+                val newUrl = newValue as String
+                baseUrl = newUrl
+                preferences.edit().putString("overrideBaseUrl", newUrl).apply()
+                summary = "Current domain: $newUrl"
+                true
+            }
+        }
+        screen.addPreference(baseUrlPref)
     }
 
     companion object {
