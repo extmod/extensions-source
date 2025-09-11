@@ -22,7 +22,12 @@ import uy.kohesive.injekt.api.get
 import java.util.Calendar
 import java.util.Locale
 
-class KomikCast : MangaThemesia("Komik Cast", "https://komikcast.li", "id", "/daftar-komik"), ConfigurableSource {
+class KomikCast : MangaThemesia(
+    "Komik Cast",
+    "https://komikcast.li",
+    "id",
+    "/manga"
+), ConfigurableSource {
 
     private val preferences = Injekt.get<Application>().getSharedPreferences("source_$id", 0x0000)
     
