@@ -3,7 +3,6 @@ package eu.kanade.tachiyomi.multisrc.mangathemesia
 import eu.kanade.tachiyomi.lib.i18n.Intl
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
-import eu.kanade.tachiyomi.source.ConfigurableSource
 import eu.kanade.tachiyomi.source.model.Filter
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
@@ -32,10 +31,6 @@ import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.Locale
 
-import android.content.SharedPreferences
-import androidx.preference.EditTextPreference
-import androidx.preference.PreferenceScreen
-
 // Formerly WPMangaStream & WPMangaReader -> MangaThemesia
 abstract class MangaThemesia(
     override val name: String,
@@ -43,7 +38,7 @@ abstract class MangaThemesia(
     final override val lang: String,
     val mangaUrlDirectory: String = "/manga",
     val dateFormat: SimpleDateFormat = SimpleDateFormat("MMMM dd, yyyy", Locale.US),
-) : ConfigurableSource, ParsedHttpSource() {
+) : ParsedHttpSource() {
 
     protected open val json: Json by injectLazy()
 
@@ -52,7 +47,7 @@ abstract class MangaThemesia(
     override val client = network.cloudflareClient
 
     override fun headersBuilder() = super.headersBuilder()
-        .set("Referer", "$prefBaseUrl/")
+        .set("Referer", "$baseUrl/")
 
     protected val intl = Intl(
         language = lang,
@@ -60,13 +55,6 @@ abstract class MangaThemesia(
         availableLanguages = setOf("en", "es"),
         classLoader = javaClass.classLoader!!,
     )
-
-    // preferences (injekt)
-    protected open val preferences: SharedPreferences by injectLazy()
-
-    // effective base url (mengembalikan override jika ada, atau baseUrl original)
-    protected val prefBaseUrl: String
-        get() = preferences.getString("overrideBaseUrl", baseUrl) ?: baseUrl
 
     open val projectPageString = "/project"
 
@@ -101,7 +89,7 @@ abstract class MangaThemesia(
     }
 
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
-        val url = prefBaseUrl.toHttpUrl().newBuilder()
+        val url = baseUrl.toHttpUrl().newBuilder()
             .addPathSegment(mangaUrlDirectory.substring(1))
             .addQueryParameter("title", query)
             .addQueryParameter("page", page.toString())
@@ -412,7 +400,7 @@ abstract class MangaThemesia(
             .set("Referer", document.location())
             .build()
 
-        return POST("$prefBaseUrl/wp-admin/admin-ajax.php", newHeaders, formBody)
+        return POST("$baseUrl/wp-admin/admin-ajax.php", newHeaders, formBody)
     }
 
     /**
@@ -584,7 +572,7 @@ abstract class MangaThemesia(
      * @returns Path of a manga, or null if none could be found
      */
     protected open fun mangaPathFromUrl(urlString: String): String? {
-        val baseMangaUrl = "$prefBaseUrl$mangaUrlDirectory".toHttpUrl()
+        val baseMangaUrl = "$baseUrl$mangaUrlDirectory".toHttpUrl()
         val url = urlString.toHttpUrlOrNull() ?: return null
 
         val isMangaUrl = (baseMangaUrl.host == url.host && pathLengthIs(url, 2) && url.pathSegments[0] == baseMangaUrl.pathSegments[0])
@@ -632,48 +620,6 @@ abstract class MangaThemesia(
     }
 
     protected open fun Elements.imgAttr(): String = this.first()!!.imgAttr()
-
-    // Preference screen (added)
-    override fun setupPreferenceScreen(screen: PreferenceScreen) {
-        val resizeServicePref = EditTextPreference(screen.context).apply {
-            key = "resize_service_url"
-            title = "Resize Service URL (Pages)"
-            summary = preferences.getString("resize_service_url", null) ?: "Masukkan URL layanan resize gambar untuk halaman (page list)."
-            setDefaultValue(null)
-            dialogTitle = "Resize Service URL"
-            dialogMessage = "Contoh: https://images.weserv.nl/?url="
-        }
-        resizeServicePref.setOnPreferenceChangeListener { _, newValue ->
-            val newUrl = (newValue as? String)?.trim().takeIf { it?.isNotEmpty() == true }
-            preferences.edit().putString("resize_service_url", newUrl).apply()
-            resizeServicePref.summary = newUrl ?: "Masukkan URL layanan resize gambar untuk halaman (page list)."
-            true
-        }
-        screen.addPreference(resizeServicePref)
-
-        val baseUrlPref = EditTextPreference(screen.context).apply {
-            key = "overrideBaseUrl"
-            title = "Ubah Domain"
-            summary = "Current domain: ${preferences.getString("overrideBaseUrl", baseUrl)}"
-            setDefaultValue(baseUrl)
-            dialogTitle = "Update domain untuk ekstensi ini"
-            dialogMessage = "Original: $baseUrl"
-        }
-
-        baseUrlPref.setOnPreferenceChangeListener { _, newValue ->
-            val newUrl = (newValue as? String)?.trim().orEmpty()
-            // simpan override (boleh kosong untuk mengembalikan ke baseUrl original)
-            if (newUrl.isEmpty()) {
-                preferences.edit().remove("overrideBaseUrl").apply()
-                baseUrlPref.summary = "Current domain: $baseUrl"
-            } else {
-                preferences.edit().putString("overrideBaseUrl", newUrl).apply()
-                baseUrlPref.summary = "Current domain: $newUrl"
-            }
-            true
-        }
-        screen.addPreference(baseUrlPref)
-    }
 
     // Unused
     override fun popularMangaSelector(): String = throw UnsupportedOperationException()
