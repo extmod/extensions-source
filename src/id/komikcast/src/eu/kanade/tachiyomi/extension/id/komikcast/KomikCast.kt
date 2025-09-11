@@ -32,6 +32,11 @@ class KomikCast : MangaThemesia(
     "/manga"
 ), ConfigurableSource {
 
+    companion object {
+        private const val MANGA_WHITELIST_PREF = "manga_whitelist"
+        private const val MANGA_WHITELIST_PREF_TITLE = "Whitelist Manga"
+    }
+
     // Formerly "Komik Cast (WP Manga Stream)"
     override val id = 972717448578983812
 
@@ -55,31 +60,31 @@ class KomikCast : MangaThemesia(
     
     // Parsing khusus untuk update terbaru
     override fun latestUpdatesParse(response: Response): MangasPage {
-    val document = response.asJsoup()
-    val rawList = preferences.getString(MANGA_WHITELIST_PREF, "")
-    val allowedManga = rawList
-        ?.split(",")
-        ?.map { it.trim() }
-        ?.filter { it.isNotEmpty() }
-        ?: emptyList()
+        val document = response.asJsoup()
+        val rawList = preferences.getString(MANGA_WHITELIST_PREF, "")
+        val allowedManga = rawList
+            ?.split(",")
+            ?.map { it.trim() }
+            ?.filter { it.isNotEmpty() }
+            ?: emptyList()
 
-    val mangas = document.select(latestUpdatesSelector()).mapNotNull { element ->
-        val typeText = element.selectFirst("span.type")?.text()?.trim() ?: return@mapNotNull null
-        when {
-            typeText.equals("Manhwa", true) || typeText.equals("Manhua", true) ->
-                searchMangaFromElement(element) // <-- Ganti di sini
-            typeText.equals("Manga", true) -> {
-                val titleText = element.selectFirst("h3.title")?.text()?.trim()
-                if (titleText != null && allowedManga.any { it.equals(titleText, true) }) {
-                    searchMangaFromElement(element) // <-- Ganti di sini
-                } else null
+        val mangas = document.select(latestUpdatesSelector()).mapNotNull { element ->
+            val typeText = element.selectFirst("span.type")?.text()?.trim() ?: return@mapNotNull null
+            when {
+                typeText.equals("Manhwa", true) || typeText.equals("Manhua", true) ->
+                    searchMangaFromElement(element)
+                typeText.equals("Manga", true) -> {
+                    val titleText = element.selectFirst("h3.title")?.text()?.trim()
+                    if (titleText != null && allowedManga.any { it.equals(titleText, true) }) {
+                        searchMangaFromElement(element)
+                    } else null
+                }
+                else -> null
             }
-            else -> null
         }
+        val hasNext = document.select(latestUpdatesNextPageSelector()).firstOrNull() != null
+        return MangasPage(mangas, hasNext)
     }
-    val hasNext = document.select(latestUpdatesNextPageSelector()).firstOrNull() != null
-    return MangasPage(mangas, hasNext)
-}
 
     override var baseUrl = preferences.getString("overrideBaseUrl", super.baseUrl)!!
 
@@ -102,12 +107,12 @@ class KomikCast : MangaThemesia(
 
     override fun searchMangaSelector() = "div.list-update_item"
 
-        override fun searchMangaFromElement(element: Element): SManga {
-    return super.searchMangaFromElement(element).apply {
-        thumbnail_url = "$resizeCover$thumbnail_url"
-        title = element.selectFirst("h3.title")!!.ownText()
+    override fun searchMangaFromElement(element: Element): SManga {
+        return super.searchMangaFromElement(element).apply {
+            thumbnail_url = "$resizeCover$thumbnail_url"
+            title = element.selectFirst("h3.title")!!.ownText()
+        }
     }
-}
 
     override val seriesDetailsSelector = "div.komik_info:has(.komik_info-content)"
     override val seriesTitleSelector = "h1.komik_info-content-body-title"
@@ -193,56 +198,56 @@ class KomikCast : MangaThemesia(
     }
 
     override fun pageListParse(response: okhttp3.Response): List<Page> {
-    val doc = response.asJsoup()
-    val service = preferences.getString("resize_service_url", "")
+        val doc = response.asJsoup()
+        val service = preferences.getString("resize_service_url", "")
 
-    return doc.select("div#chapter_body .main-reading-area img.size-full")
-        .filter { img -> 
-            val src = img.imgAttr().trim()
-            !src.contains("999.jpg")
-        }
-        .mapIndexed { i, img ->
-            val src = img.imgAttr().trim()
-            val finalUrl = "$service$src"
-            Page(i, "", finalUrl)
-        }
-}
+        return doc.select("div#chapter_body .main-reading-area img.size-full")
+            .filter { img -> 
+                val src = img.imgAttr().trim()
+                !src.contains("999.jpg")
+            }
+            .mapIndexed { i, img ->
+                val src = img.imgAttr().trim()
+                val finalUrl = "$service$src"
+                Page(i, "", finalUrl)
+            }
+    }
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
-    val resizeServicePref = EditTextPreference(screen.context).apply {
-        key = "resize_service_url"
-        title = "Resize Service URL (Pages)"
-        summary = "Masukkan URL layanan resize gambar untuk halaman (page list)."
-        setDefaultValue(null)
-        dialogTitle = "Resize Service URL"
-    }
-    screen.addPreference(resizeServicePref)
-
-    val baseUrlPref = EditTextPreference(screen.context).apply {
-        key = "overrideBaseUrl"
-        title = "Ubah Domain"
-        summary = "Update domain untuk ekstensi ini"
-        setDefaultValue(baseUrl)
-        dialogTitle = "Update domain untuk ekstensi ini"
-        dialogMessage = "Original: $baseUrl"
-
-        setOnPreferenceChangeListener { _, newValue ->
-            val newUrl = newValue as String
-            baseUrl = newUrl
-            preferences.edit().putString("overrideBaseUrl", newUrl).apply()
-            summary = "Current domain: $newUrl"
-            true
+        val resizeServicePref = EditTextPreference(screen.context).apply {
+            key = "resize_service_url"
+            title = "Resize Service URL (Pages)"
+            summary = "Masukkan URL layanan resize gambar untuk halaman (page list)."
+            setDefaultValue(null)
+            dialogTitle = "Resize Service URL"
         }
-    }
-    screen.addPreference(baseUrlPref)
+        screen.addPreference(resizeServicePref)
 
-    screen.addPreference(EditTextPreference(screen.context).apply {
-        key = MANGA_WHITELIST_PREF
-        title = MANGA_WHITELIST_PREF_TITLE
-        dialogTitle = MANGA_WHITELIST_PREF_TITLE
-        dialogMessage = "Masukkan judul Manga yang mau ditampilkan, dipisah koma"
-        summary = "Tetap tampilkan manga ini"
-        setDefaultValue("")
+        val baseUrlPref = EditTextPreference(screen.context).apply {
+            key = "overrideBaseUrl"
+            title = "Ubah Domain"
+            summary = "Update domain untuk ekstensi ini"
+            setDefaultValue(baseUrl)
+            dialogTitle = "Update domain untuk ekstensi ini"
+            dialogMessage = "Original: $baseUrl"
+
+            setOnPreferenceChangeListener { _, newValue ->
+                val newUrl = newValue as String
+                baseUrl = newUrl
+                preferences.edit().putString("overrideBaseUrl", newUrl).apply()
+                summary = "Current domain: $newUrl"
+                true
+            }
+        }
+        screen.addPreference(baseUrlPref)
+
+        screen.addPreference(EditTextPreference(screen.context).apply {
+            key = MANGA_WHITELIST_PREF
+            title = MANGA_WHITELIST_PREF_TITLE
+            dialogTitle = MANGA_WHITELIST_PREF_TITLE
+            dialogMessage = "Masukkan judul Manga yang mau ditampilkan, dipisah koma"
+            summary = "Tetap tampilkan manga ini"
+            setDefaultValue("")
         })
     }
 }
