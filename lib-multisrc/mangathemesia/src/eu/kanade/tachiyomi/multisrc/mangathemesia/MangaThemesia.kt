@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.multisrc.mangathemesia
 import eu.kanade.tachiyomi.lib.i18n.Intl
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
+import eu.kanade.tachiyomi.source.ConfigurableSource
 import eu.kanade.tachiyomi.source.model.Filter
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
@@ -42,7 +43,7 @@ abstract class MangaThemesia(
     final override val lang: String,
     val mangaUrlDirectory: String = "/manga",
     val dateFormat: SimpleDateFormat = SimpleDateFormat("MMMM dd, yyyy", Locale.US),
-) : ParsedHttpSource() {
+) : ConfigurableSource, ParsedHttpSource() {
 
     protected open val json: Json by injectLazy()
 
@@ -61,7 +62,7 @@ abstract class MangaThemesia(
     )
 
     // preferences (injekt)
-    protected val preferences: SharedPreferences by injectLazy()
+    protected open val preferences: SharedPreferences by injectLazy()
 
     // effective base url (mengembalikan override jika ada, atau baseUrl original)
     protected val prefBaseUrl: String
