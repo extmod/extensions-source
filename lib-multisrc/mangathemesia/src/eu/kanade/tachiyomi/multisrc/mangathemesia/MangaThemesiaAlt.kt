@@ -32,7 +32,7 @@ abstract class MangaThemesiaAlt(
     protected open val listUrl = "$mangaUrlDirectory/list-mode/"
     protected open val listSelector = "div#content div.soralist ul li a.series"
 
-    protected val preferences by getPreferencesLazy {
+    protected override val preferences by getPreferencesLazy {
         if (contains("__random_part_cache")) {
             edit().remove("__random_part_cache").apply()
         }
