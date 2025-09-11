@@ -29,10 +29,6 @@ class KomikStation : MangaThemesia(
 
     private val resizeCover = "https://wsrv.nl/?w=110&h=150&url="
 
-    private fun resizePage(): String? {
-        return preferences.getString("resize_service_url", null)?.takeIf { it.isNotBlank() }
-    }
-
     override var baseUrl = preferences.getString("overrideBaseUrl", super.baseUrl)!!
 
     override val client: OkHttpClient = super.client.newBuilder()
@@ -41,20 +37,16 @@ class KomikStation : MangaThemesia(
 
     override fun searchMangaFromElement(element: Element): SManga {
     return super.searchMangaFromElement(element).apply {
-        val img = element.select("img").firstOrNull()
-        if (img != null) {
-            val originalUrl = img.attr("src").trim()
-            thumbnail_url = "$resizeCover$originalUrl"
-        }
+        thumbnail_url = "$resizeCover$thumbnail_url"
     }
 }
 
-override fun mangaDetailsParse(document: Document): SManga {
+    override fun mangaDetailsParse(document: Document): SManga {
     val manga = super.mangaDetailsParse(document)
 
     val img = document.select(seriesThumbnailSelector).firstOrNull()
     if (img != null) {
-        val originalUrl = img.attr("src").trim()
+        val originalUrl = img.imgAttr().trim()
         manga.thumbnail_url = "$resizeCover$originalUrl"
         manga.title = img.attr("alt").trim()
     }
@@ -63,19 +55,15 @@ override fun mangaDetailsParse(document: Document): SManga {
 }
 
     override fun pageListParse(response: okhttp3.Response): List<Page> {
-        val doc = response.asJsoup()
-        val service = resizePage()
+    val doc = response.asJsoup()
+    val service = preferences.getString("resize_service_url", "")
 
-        return doc.select("#readerarea img").mapIndexed { i, img ->
-            val src = img.attr("src").trim()
-            val finalUrl = if (service != null) {
-                "$service$src"
-            } else {
-                src
-            }
-            Page(i, "", finalUrl)
-        }
+    return doc.select(pageSelector).mapIndexed { i, img ->
+        val src = img.imgAttr().trim()
+        val finalUrl = "$service$src"
+        Page(i, "", finalUrl)
     }
+}
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
         val resizeServicePref = EditTextPreference(screen.context).apply {
