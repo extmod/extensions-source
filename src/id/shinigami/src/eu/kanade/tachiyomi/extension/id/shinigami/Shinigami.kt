@@ -30,8 +30,6 @@ class Shinigami : HttpSource(), ConfigurableSource {
         Injekt.get<Application>().getSharedPreferences("source_$id", 0)
     }
 
-    private val resizeCover = "https://wsrv.nl/?w=110&h=150&url="
-
     override val baseUrl: String
         get() = preferences.getString("overrideBaseUrl", "https://app.shinigami.asia")!!
 
@@ -86,10 +84,12 @@ class Shinigami : HttpSource(), ConfigurableSource {
     }
 
     private fun popularMangaFromObject(obj: ShinigamiBrowseDataDto): SManga = SManga.create().apply {
-        title = obj.title ?: ""
-        thumbnail_url = obj.thumbnail
-        url = obj.mangaId ?: ""
+    title = obj.title ?: ""
+    thumbnail_url = obj.thumbnail?.let { 
+        "https://wsrv.nl/?w=150&h=110&url=$it"
     }
+    url = obj.mangaId ?: ""
+}
 
     override fun latestUpdatesRequest(page: Int): Request {
         val url = "$apiUrl/v1/manga/list".toHttpUrl().newBuilder()
