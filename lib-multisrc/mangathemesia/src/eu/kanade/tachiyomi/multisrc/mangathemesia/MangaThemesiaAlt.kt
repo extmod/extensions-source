@@ -1,6 +1,8 @@
 package eu.kanade.tachiyomi.multisrc.mangathemesia
 
 import android.content.SharedPreferences
+import android.widget.Toast
+import androidx.preference.EditTextPreference
 import androidx.preference.PreferenceScreen
 import androidx.preference.SwitchPreferenceCompat
 import eu.kanade.tachiyomi.network.GET
@@ -14,6 +16,9 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
+import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Request
 import okhttp3.Response
 import java.lang.ref.SoftReference
@@ -32,7 +37,8 @@ abstract class MangaThemesiaAlt(
     protected open val listUrl = "$mangaUrlDirectory/list-mode/"
     protected open val listSelector = "div#content div.soralist ul li a.series"
 
-    protected override val preferences by getPreferencesLazy {
+    // preferences lokal untuk subclass ini (tidak bergantung pada superclass)
+    protected val preferences by getPreferencesLazy {
         if (contains("__random_part_cache")) {
             edit().remove("__random_part_cache").apply()
         }
@@ -41,7 +47,88 @@ abstract class MangaThemesiaAlt(
         }
     }
 
+    /**
+     * Effective base URL read from preferences, or fallback ke baseUrl asli.
+     * Disimpan sebagai string lengkap (dengan scheme).
+     */
+    protected val prefBaseUrl: String
+        get() = preferences.getString("overrideBaseUrl", baseUrl) ?: baseUrl
+
+    /**
+     * Safe HttpUrl built from prefBaseUrl; jika invalid, fallback ke baseUrl asli (yang diasumsikan valid).
+     */
+    protected val prefBaseUrlHttpUrl: HttpUrl
+        get() = prefBaseUrl.toHttpUrlOrNull() ?: baseUrl.toHttpUrl()
+
+    protected fun buildUrl(path: String): String {
+        // path mungkin seperti "/manga/list-mode/" atau "manga/slug/"
+        val cleaned = path.trimStart('/').trimEnd('/')
+        return prefBaseUrlHttpUrl.newBuilder()
+            .addPathSegments(cleaned)
+            .build()
+            .toString()
+            .let { if (path.endsWith("/")) "$it/" else it }
+    }
+
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
+        // Resize service preference
+        val resizeServicePref = EditTextPreference(screen.context).apply {
+            key = "resize_service_url"
+            title = "Resize Service URL (Pages)"
+            summary = preferences.getString("resize_service_url", null)
+                ?: "Masukkan URL layanan resize gambar untuk halaman (page list)."
+            setDefaultValue(null)
+            dialogTitle = "Resize Service URL"
+            dialogMessage = "Contoh: https://images.weserv.nl/?url="
+        }
+        resizeServicePref.setOnPreferenceChangeListener { _, newValue ->
+            val newUrl = (newValue as? String)?.trim().takeIf { it?.isNotEmpty() == true }
+            preferences.edit().putString("resize_service_url", newUrl).apply()
+            resizeServicePref.summary = newUrl ?: "Masukkan URL layanan resize gambar untuk halaman (page list)."
+            true
+        }
+        screen.addPreference(resizeServicePref)
+
+        // Override base URL preference (domain override)
+        val baseUrlPref = EditTextPreference(screen.context).apply {
+            key = "overrideBaseUrl"
+            title = "Ubah Domain"
+            summary = "Current domain: ${preferences.getString("overrideBaseUrl", baseUrl)}"
+            setDefaultValue(baseUrl)
+            dialogTitle = "Update domain untuk ekstensi ini"
+            dialogMessage = "Original: $baseUrl\nMasukkan lengkap, mis. https://example.com"
+        }
+
+        baseUrlPref.setOnPreferenceChangeListener { pref, newValue ->
+            val ctx = pref.context
+            var newUrl = (newValue as? String)?.trim().orEmpty()
+
+            if (newUrl.isEmpty()) {
+                // hapus override -> fallback ke baseUrl asli
+                preferences.edit().remove("overrideBaseUrl").apply()
+                baseUrlPref.summary = "Current domain: $baseUrl"
+                true
+            } else {
+                // tambahkan scheme kalau user lupa
+                if (!newUrl.startsWith("http://") && !newUrl.startsWith("https://")) {
+                    newUrl = "https://$newUrl"
+                }
+                // validasi agar tidak melempar exception saat dipakai di toHttpUrl()
+                if (newUrl.toHttpUrlOrNull() == null) {
+                    Toast.makeText(ctx, "URL tidak valid, masukkan lengkap (mis. https://example.com)", Toast.LENGTH_SHORT).show()
+                    false
+                } else {
+                    // simpan normalized URL tanpa trailing slash
+                    val normalized = newUrl.trimEnd('/')
+                    preferences.edit().putString("overrideBaseUrl", normalized).apply()
+                    baseUrlPref.summary = "Current domain: $normalized"
+                    true
+                }
+            }
+        }
+        screen.addPreference(baseUrlPref)
+
+        // existing switch preference for random URL behavior
         SwitchPreferenceCompat(screen.context).apply {
             key = randomUrlPrefKey
             title = intl["pref_dynamic_url_title"]
@@ -80,7 +167,8 @@ abstract class MangaThemesiaAlt(
     }
 
     protected open fun fetchUrlMap(): Map<String, String> {
-        client.newCall(GET("$baseUrl$listUrl", headers)).execute().use { response ->
+        // gunakan prefBaseUrl agar override bekerja
+        client.newCall(GET(buildUrl(listUrl), headers)).execute().use { response ->
             val document = response.asJsoup()
 
             return document.select(listSelector).associate {
@@ -153,7 +241,7 @@ abstract class MangaThemesiaAlt(
 
         val randomSlug = getUrlMap()[slug] ?: slug
 
-        return GET("$baseUrl$mangaUrlDirectory/$randomSlug/", headers)
+        return GET(buildUrl("$mangaUrlDirectory/$randomSlug/"), headers)
     }
 
     override fun getMangaUrl(manga: SManga): String {
@@ -167,7 +255,7 @@ abstract class MangaThemesiaAlt(
 
         val randomSlug = getUrlMap(true)[slug] ?: slug
 
-        return "$baseUrl$mangaUrlDirectory/$randomSlug/"
+        return buildUrl("$mangaUrlDirectory/$randomSlug/")
     }
 
     override fun chapterListRequest(manga: SManga) = mangaDetailsRequest(manga)
