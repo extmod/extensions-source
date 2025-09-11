@@ -35,6 +35,15 @@ class KomikCast : MangaThemesia(
     private val preferences = Injekt.get<Application>().getSharedPreferences("source_$id", 0x0000)
     
     private val resizeCover = "https://wsrv.nl/?w=110&h=150&url="
+    
+    // Request untuk daftar populer
+    override fun popularMangaRequest(page: Int): Request =
+        GET("$baseUrl/komik/?orderby=update&page=$page", headers)
+
+    // Request untuk update terbaru
+    override fun latestUpdatesRequest(page: Int): Request {
+        return GET("$baseUrl/komik/page/$page/?&orderby=update", headers)
+    }
 
     override var baseUrl = preferences.getString("overrideBaseUrl", super.baseUrl)!!
 
