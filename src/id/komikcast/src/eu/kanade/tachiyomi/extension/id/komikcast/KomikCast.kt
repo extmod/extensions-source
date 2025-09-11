@@ -29,14 +29,14 @@ class KomikCast : MangaThemesia(
     "/manga"
 ), ConfigurableSource {
 
+    // Formerly "Komik Cast (WP Manga Stream)"
+    override val id = 972717448578983812
+
     private val preferences = Injekt.get<Application>().getSharedPreferences("source_$id", 0x0000)
     
     private val resizeCover = "https://wsrv.nl/?w=110&h=150&url="
 
     override var baseUrl = preferences.getString("overrideBaseUrl", super.baseUrl)!!
-
-    // Formerly "Komik Cast (WP Manga Stream)"
-    override val id = 972717448578983812
 
     override val client: OkHttpClient = super.client.newBuilder()
         .rateLimit(3)
