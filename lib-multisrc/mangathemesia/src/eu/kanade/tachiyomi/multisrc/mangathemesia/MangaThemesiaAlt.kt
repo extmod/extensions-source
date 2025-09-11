@@ -99,33 +99,29 @@ abstract class MangaThemesiaAlt(
             dialogMessage = "Original: $baseUrl\nMasukkan lengkap, mis. https://example.com"
         }
 
-        baseUrlPref.setOnPreferenceChangeListener { pref, newValue ->
-            val ctx = pref.context
-            var newUrl = (newValue as? String)?.trim().orEmpty()
+        baseUrlPref.setOnPreferenceChangeListener { _, newValue ->
+    val ctx = screen.context
+    var newUrl = (newValue as? String)?.trim().orEmpty()
 
-            if (newUrl.isEmpty()) {
-                // hapus override -> fallback ke baseUrl asli
-                preferences.edit().remove("overrideBaseUrl").apply()
-                baseUrlPref.summary = "Current domain: $baseUrl"
-                true
-            } else {
-                // tambahkan scheme kalau user lupa
-                if (!newUrl.startsWith("http://") && !newUrl.startsWith("https://")) {
-                    newUrl = "https://$newUrl"
-                }
-                // validasi agar tidak melempar exception saat dipakai di toHttpUrl()
-                if (newUrl.toHttpUrlOrNull() == null) {
-                    Toast.makeText(ctx, "URL tidak valid, masukkan lengkap (mis. https://example.com)", Toast.LENGTH_SHORT).show()
-                    false
-                } else {
-                    // simpan normalized URL tanpa trailing slash
-                    val normalized = newUrl.trimEnd('/')
-                    preferences.edit().putString("overrideBaseUrl", normalized).apply()
-                    baseUrlPref.summary = "Current domain: $normalized"
-                    true
-                }
-            }
+    if (newUrl.isEmpty()) {
+        preferences.edit().remove("overrideBaseUrl").apply()
+        baseUrlPref.summary = "Current domain: $baseUrl"
+        true
+    } else {
+        if (!newUrl.startsWith("http://") && !newUrl.startsWith("https://")) {
+            newUrl = "https://$newUrl"
         }
+        if (newUrl.toHttpUrlOrNull() == null) {
+            Toast.makeText(ctx, "URL tidak valid, masukkan lengkap (mis. https://example.com)", Toast.LENGTH_SHORT).show()
+            false
+        } else {
+            val normalized = newUrl.trimEnd('/')
+            preferences.edit().putString("overrideBaseUrl", normalized).apply()
+            baseUrlPref.summary = "Current domain: $normalized"
+            true
+        }
+    }
+}
         screen.addPreference(baseUrlPref)
 
         // existing switch preference for random URL behavior
