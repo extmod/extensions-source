@@ -79,61 +79,33 @@ class KomikCast : MangaThemesia("Komik Cast", "https://komikcast.li", "id", "/da
         .split(",")
         .map { it.trim() }
         .filter { it.isNotEmpty() }
-    
-    // Gunakan selector dari parent class
-    val mangas = document.select(latestUpdatesSelector()).mapNotNull { element ->
-        // Cari elemen type dengan berbagai kemungkinan selector
-        val typeText = element.selectFirst("span.type, .type, [class*='type']")?.text()?.trim()
-        
+
+    val mangas = document.select(latestUpdatesSelector()).mapNotNull { el ->
+        val typeText = el.selectFirst("span.type, .type, [class*='type']")?.text()?.trim()
+        val title = el.selectFirst("h3.title")?.text()?.trim()
+        val url = el.selectFirst("h3.title a")?.attr("href")
+
+        // Buat SManga manual
+        val manga = SManga.create().apply {
+            this.title = title ?: ""
+            this.url = url ?: ""
+            this.thumbnail_url = el.selectFirst("img")?.absUrl("src")
+        }
+
         when {
-            // Jika tidak ada type info, gunakan parent parsing (tampilkan)
-            typeText.isNullOrBlank() -> {
-                try {
-                    super.latestUpdatesFromElement(element)
-                } catch (e: Exception) {
-                    null
-                }
-            }
-            
-            // Selalu tampilkan Manhwa dan Manhua
-            typeText.equals("Manhwa", ignoreCase = true) || 
-            typeText.equals("Manhua", ignoreCase = true) -> {
-                try {
-                    super.latestUpdatesFromElement(element)
-                } catch (e: Exception) {
-                    null
-                }
-            }
-            
-            // Untuk Manga, cek whitelist
-            typeText.equals("Manga", ignoreCase = true) -> {
+            typeText.isNullOrBlank() -> manga
+            typeText.equals("Manhwa", true) || typeText.equals("Manhua", true) -> manga
+            typeText.equals("Manga", true) -> {
                 if (allowedManga.isEmpty()) {
-                    null // Skip semua manga jika whitelist kosong
-                } else {
-                    val titleText = element.selectFirst("h3.title a, h3.title, .title a, .title")?.text()?.trim()
-                    if (titleText != null && allowedManga.any { it.equals(titleText, ignoreCase = true) }) {
-                        try {
-                            super.latestUpdatesFromElement(element)
-                        } catch (e: Exception) {
-                            null
-                        }
-                    } else {
-                        null // Skip manga yang tidak ada di whitelist
-                    }
-                }
+                    null // skip semua Manga kalau whitelist kosong
+                } else if (title != null && allowedManga.any { it.equals(title, true) }) {
+                    manga
+                } else null
             }
-            
-            // Type lain, tampilkan
-            else -> {
-                try {
-                    super.latestUpdatesFromElement(element)
-                } catch (e: Exception) {
-                    null
-                }
-            }
+            else -> manga
         }
     }
-    
+
     val hasNext = document.select(latestUpdatesNextPageSelector()).firstOrNull() != null
     return MangasPage(mangas, hasNext)
 }
