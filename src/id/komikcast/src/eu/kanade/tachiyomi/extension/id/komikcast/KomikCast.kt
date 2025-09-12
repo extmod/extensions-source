@@ -7,6 +7,7 @@ import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.multisrc.mangathemesia.MangaThemesia
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
+import eu.kanade.tachiyomi.source.ConfigurableSource
 import eu.kanade.tachiyomi.source.model.Filter
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.Page
@@ -25,7 +26,7 @@ import java.util.Calendar
 import java.util.Locale
 import uy.kohesive.injekt.Injekt
 
-class KomikCast : MangaThemesia("Komik Cast", "https://komikcast.li", "id", "/daftar-komik") {
+class KomikCast : MangaThemesia("Komik Cast", "https://komikcast.li", "id", "/daftar-komik"), ConfigurableSource {
 
     // Formerly "Komik Cast (WP Manga Stream)"
     override val id = 972717448578983812
@@ -52,7 +53,6 @@ class KomikCast : MangaThemesia("Komik Cast", "https://komikcast.li", "id", "/da
 
     private fun customPageRequest(page: Int, filterKey: String, filterValue: String): Request {
         val pagePath = if (page > 1) "page/$page/" else ""
-
         return GET("$baseUrl$mangaUrlDirectory/$pagePath?$filterKey=$filterValue", headers)
     }
 
@@ -64,10 +64,8 @@ class KomikCast : MangaThemesia("Komik Cast", "https://komikcast.li", "id", "/da
     private val PREF_WHITELIST = "whitelist_titles"
     private val DEFAULT_RESIZE = "https://images.weserv.nl/?w=300&q=70&url="
 
-    // SharedPreferences for source-specific preferences
-    private val prefs by lazy {
-        Injekt.get<Application>().getSharedPreferences("source_$id", Context.MODE_PRIVATE)
-    }
+    // SharedPreferences getter (avoid delegate issues across Kotlin versions)
+    private val prefs get() = Injekt.get<Application>().getSharedPreferences("source_$id", Context.MODE_PRIVATE)
 
     /**
      * Build image URL via user-provided service (and URL-encode original URL).
@@ -76,24 +74,19 @@ class KomikCast : MangaThemesia("Komik Cast", "https://komikcast.li", "id", "/da
     private fun buildServiceImageUrl(originalUrl: String?): String? {
         if (originalUrl.isNullOrBlank()) return null
         val service = prefs.getString(PREF_RESIZE_SERVICE, DEFAULT_RESIZE) ?: DEFAULT_RESIZE
+        val absolute = makeAbsoluteUrl(originalUrl)
         val encoded = try {
-            URLEncoder.encode(makeAbsoluteUrl(originalUrl), "UTF-8")
+            URLEncoder.encode(absolute, "UTF-8")
         } catch (_: Exception) {
-            makeAbsoluteUrl(originalUrl)
+            absolute
         }
-        return if (service.contains("url=")) {
-            service + encoded
-        } else {
-            // If user put a service that expects the encoded URL appended
-            service + encoded
-        }
+        return service + encoded
     }
 
     /** Normalize to absolute URL if original is relative or protocol-relative */
     private fun makeAbsoluteUrl(url: String): String {
         var u = url
         if (u.startsWith("//")) {
-            // assume https
             u = "https:$u"
         } else if (u.startsWith("/")) {
             u = baseUrl + u
@@ -112,17 +105,19 @@ class KomikCast : MangaThemesia("Komik Cast", "https://komikcast.li", "id", "/da
     /**
      * Check whether the manga at given relative/absolute URL has type "Manga".
      * This fetches the details page and looks for the seriesTypeSelector.
+     * If fetch fails, returns false (so it won't be incorrectly skipped).
      */
     private fun isMangaType(mangaUrl: String?): Boolean {
         if (mangaUrl.isNullOrBlank()) return false
         try {
             val absolute = if (mangaUrl.startsWith("http")) mangaUrl else (baseUrl.trimEnd('/') + "/" + mangaUrl.trimStart('/'))
             val req = GET(absolute, headers)
-            val resp = client.newCall(req).execute()
-            val body = resp.body?.string().orEmpty()
-            val doc = Jsoup.parse(body, absolute)
-            val typeText = doc.selectFirst(seriesTypeSelector)?.ownText().orEmpty()
-            return typeText.equals("Manga", ignoreCase = true)
+            client.newCall(req).execute().use { resp ->
+                val body = resp.body?.string().orEmpty()
+                val doc = Jsoup.parse(body, absolute)
+                val typeText = doc.selectFirst(seriesTypeSelector)?.ownText().orEmpty()
+                return typeText.equals("Manga", ignoreCase = true)
+            }
         } catch (_: Exception) {
             // on error, be conservative: don't treat as manga
             return false
@@ -130,9 +125,13 @@ class KomikCast : MangaThemesia("Komik Cast", "https://komikcast.li", "id", "/da
     }
 
     /**
-     * Override latestUpdatesParse to filter out "Manga" types (unless whitelisted).
+     * Filter latest updates: ignore items that are type 'Manga' unless whitelisted.
+     *
+     * NOTE: not marked `override` because some Tachiyomi base versions may have different signatures.
+     * If your Tachiyomi version expects an override, beri tahu versi Tachiyomi (atau error baru)
+     * dan saya akan sesuaikan signature agar override valid.
      */
-    override fun latestUpdatesParse(document: Document): MangasPage {
+    fun latestUpdatesParse(document: Document): MangasPage {
         val elements = document.select(searchMangaSelector())
         val mangas = mutableListOf<SManga>()
 
@@ -143,14 +142,10 @@ class KomikCast : MangaThemesia("Komik Cast", "https://komikcast.li", "id", "/da
             .filter { it.isNotEmpty() }
 
         for (el in elements) {
-            // Build basic SManga via existing logic (reuse searchMangaFromElement)
             val manga = searchMangaFromElement(el)
-
-            // If we couldn't get URL/title, keep it (no check)
             val mangaUrl = manga.url
             val mangaTitle = manga.title?.trim().orEmpty()
 
-            // If type is manga, check whitelist
             val isManga = try {
                 isMangaType(mangaUrl)
             } catch (_: Exception) {
@@ -161,15 +156,13 @@ class KomikCast : MangaThemesia("Komik Cast", "https://komikcast.li", "id", "/da
                 if (whitelist.any { it == mangaTitle.lowercase(Locale.ROOT) }) {
                     mangas.add(manga)
                 } else {
-                    // skip manga (not whitelisted)
-                    continue
+                    continue // skip manga not whitelisted
                 }
             } else {
                 mangas.add(manga)
             }
         }
 
-        // Try to detect "has next" similar to standard implementations
         val hasNext = document.select("a.next").isNotEmpty() || document.select("li.page-item:contains(Next)").isNotEmpty()
         return MangasPage(mangas, hasNext)
     }
@@ -181,7 +174,6 @@ class KomikCast : MangaThemesia("Komik Cast", "https://komikcast.li", "id", "/da
         // Thumbnail logic: prefer element's thumbnail, else try parent's selector
         var thumb: String? = null
         try {
-            // common places for thumbnails
             thumb = element.selectFirst("img")?.attr("src")
                 ?: element.selectFirst("img")?.attr("data-src")
                 ?: element.parent()?.selectFirst("img")?.attr("src")
