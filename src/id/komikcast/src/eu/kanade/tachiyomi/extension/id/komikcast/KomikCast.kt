@@ -1,4 +1,4 @@
-package eu.kanade.tachiyomi.extension.id.komik
+package eu.kanade.tachiyomi.extension.id.komikcast
 
 import android.app.Application
 import androidx.preference.EditTextPreference
@@ -26,14 +26,14 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
 
-class Komik : ParsedHttpSource(), ConfigurableSource {
-    override val name = "Komik"
+class KomikCast : ParsedHttpSource(), ConfigurableSource {
+    override val name = "Komik Cast"
     override val lang = "id"
     override val supportsLatest = true
 
     // Client dengan rate limit
     override val client: OkHttpClient = network.cloudflareClient.newBuilder()
-        .rateLimit(1)
+        .rateLimit(3)
         .build()
 
     private val preferences = Injekt.get<Application>().getSharedPreferences("source_$id", 0)
