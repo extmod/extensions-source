@@ -204,20 +204,20 @@ class KomikCast : MangaThemesia("Komik Cast", "https://komikcast.li", "id", "/da
     }
 
     override fun pageListParse(document: Document): List<Page> {
-        val service = preferences.getString(RESIZE_SERVICE_URL_PREF, "")
-        
-        return document.select("div#chapter_body .main-reading-area img.size-full")
-            .distinctBy { img -> img.imgAttr() }
-            .filter { img -> 
-                val src = img.imgAttr().trim()
-                !src.contains("999.jpg")
-            }
-            .mapIndexed { i, img ->
-                val src = img.imgAttr().trim()
-                val finalUrl = if (service.isNotBlank()) "$service$src" else src
-                Page(i, document.location(), finalUrl)
-            }
-    }
+    val service = preferences.getString(RESIZE_SERVICE_URL_PREF, "") ?: ""
+    
+    return document.select("div#chapter_body .main-reading-area img.size-full")
+        .distinctBy { img -> img.imgAttr() }
+        .filter { img -> 
+            val src = img.imgAttr()?.trim() ?: ""
+            !src.contains("999.jpg")
+        }
+        .mapIndexed { i, img ->
+            val src = img.imgAttr()?.trim() ?: ""
+            val finalUrl = if (service.isNotBlank()) "$service$src" else src
+            Page(i, document.location(), finalUrl)
+        }
+}
 
     override val hasProjectPage: Boolean = true
     override val projectPageString = "/project-list"
