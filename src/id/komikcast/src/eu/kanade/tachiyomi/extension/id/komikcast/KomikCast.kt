@@ -1,111 +1,50 @@
 package eu.kanade.tachiyomi.extension.id.komikcast
 
 import android.app.Application
-import eu.kanade.tachiyomi.multisrc.mangathemesia.MangaThemesia
 import androidx.preference.EditTextPreference
 import androidx.preference.PreferenceScreen
+import eu.kanade.tachiyomi.multisrc.mangathemesia.MangaThemesia
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
 import eu.kanade.tachiyomi.source.ConfigurableSource
+import eu.kanade.tachiyomi.source.model.Filter
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
-import okhttp3.Response
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
+import eu.kanade.tachiyomi.util.asJsoup
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
-import eu.kanade.tachiyomi.util.asJsoup
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.util.Calendar
 import java.util.Locale
 
-class KomikCast : MangaThemesia(
-    "Komik Cast",
-    "https://komikcast.li",
-    "id",
-    "/manga"
-), ConfigurableSource {
+class KomikCast : MangaThemesia("Komik Cast", "https://komikcast.li", "id", "/daftar-komik"), ConfigurableSource {
 
     // Formerly "Komik Cast (WP Manga Stream)"
     override val id = 972717448578983812
 
+    // Preferences and constants
     private val preferences = Injekt.get<Application>().getSharedPreferences("source_$id", 0x0000)
     
-    private val resizeCover = "https://wsrv.nl/?w=110&h=150&url="
-    
-    // Constants for preferences
     companion object {
         private const val MANGA_WHITELIST_PREF = "MANGA_WHITELIST"
         private const val MANGA_WHITELIST_PREF_TITLE = "Manga Whitelist"
+        private const val RESIZE_SERVICE_URL_PREF = "resize_service_url"
+        private const val OVERRIDE_BASE_URL_PREF = "overrideBaseUrl"
     }
     
-    // Request untuk daftar populer
-    override fun popularMangaRequest(page: Int): Request =
-        GET("$baseUrl/komik/?orderby=update&page=$page", headers)
-
-    // Request untuk update terbaru - FIXED
-    override fun latestUpdatesRequest(page: Int): Request = 
-        customPageRequest(page, "sortby", "update")
-
-    private fun customPageRequest(page: Int, filterKey: String, filterValue: String): Request {
-        val pagePath = if (page > 1) "page/$page/" else ""
-        return GET("$baseUrl$mangaUrlDirectory/$pagePath?$filterKey=$filterValue", headers)
-    }
+    private val resizeCover = "https://wsrv.nl/?w=110&h=150&url="
     
-    // Selector untuk latest updates - ADDED
-    override fun latestUpdatesSelector(): String = searchMangaSelector()
-    
-    // Selector untuk pagination latest updates - ADDED
-    override fun latestUpdatesNextPageSelector(): String = "a.next.page-numbers"
-    
-    override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
-        val url = "$baseUrl/?s=$query&page=$page".toHttpUrl().newBuilder().build()
-        return GET(url, headers)
-    }
-    
-    // Parsing khusus untuk update terbaru - UPDATED
-    override fun latestUpdatesParse(response: Response): MangasPage {
-        val document = response.asJsoup()
-        val rawList = preferences.getString(MANGA_WHITELIST_PREF, "")
-        val allowedManga = rawList
-            ?.split(",")
-            ?.map { it.trim() }
-            ?.filter { it.isNotEmpty() }
-            ?: emptyList()
-
-        val mangas = document.select(latestUpdatesSelector()).mapNotNull { element ->
-            val typeText = element.selectFirst("span.type")?.text()?.trim() ?: return@mapNotNull null
-            when {
-                typeText.equals("Manhwa", true) || typeText.equals("Manhua", true) ->
-                    latestUpdatesFromElement(element)
-                typeText.equals("Manga", true) -> {
-                    val titleText = element.selectFirst("h3.title")?.text()?.trim()
-                    if (titleText != null && allowedManga.any { it.equals(titleText, true) }) {
-                        latestUpdatesFromElement(element)
-                    } else null
-                }
-                else -> null
-            }
-        }
-        val hasNext = document.select(latestUpdatesNextPageSelector()).firstOrNull() != null
-        return MangasPage(mangas, hasNext)
-    }
-
-    // Method untuk mengkonversi element ke SManga di latest updates - ADDED
-    override fun latestUpdatesFromElement(element: Element): SManga {
-        return super.latestUpdatesFromElement(element).apply {
-            thumbnail_url = "$resizeCover$thumbnail_url"
-            title = element.selectFirst("h3.title")!!.ownText()
-        }
-    }
-
-    override var baseUrl = preferences.getString("overrideBaseUrl", super.baseUrl)!!
+    // Override baseUrl to use preference value
+    override var baseUrl = preferences.getString(OVERRIDE_BASE_URL_PREF, super.baseUrl)!!
 
     override val client: OkHttpClient = super.client.newBuilder()
         .rateLimit(3)
@@ -124,10 +63,58 @@ class KomikCast : MangaThemesia(
         return GET(page.imageUrl!!, newHeaders)
     }
 
+    override fun popularMangaRequest(page: Int) = customPageRequest(page, "orderby", "popular")
+    override fun latestUpdatesRequest(page: Int) = customPageRequest(page, "sortby", "update")
+
+    private fun customPageRequest(page: Int, filterKey: String, filterValue: String): Request {
+        val pagePath = if (page > 1) "page/$page/" else ""
+
+        return GET("$baseUrl$mangaUrlDirectory/$pagePath?$filterKey=$filterValue", headers)
+    }
+
+    // Override latestUpdatesParse to implement manga filtering
+    override fun latestUpdatesParse(response: Response): MangasPage {
+        val document = response.asJsoup()
+        val rawList = preferences.getString(MANGA_WHITELIST_PREF, "")
+        val allowedManga = rawList
+            ?.split(",")
+            ?.map { it.trim() }
+            ?.filter { it.isNotEmpty() }
+            ?: emptyList()
+
+        val mangas = document.select(latestUpdatesSelector()).mapNotNull { element ->
+            val typeText = element.selectFirst("span.type")?.text()?.trim()
+            when {
+                // Always show Manhwa and Manhua
+                typeText.equals("Manhwa", true) || typeText.equals("Manhua", true) ->
+                    latestUpdatesFromElement(element)
+                // Only show Manga if it's in whitelist
+                typeText.equals("Manga", true) -> {
+                    val titleText = element.selectFirst("h3.title")?.text()?.trim()
+                    if (titleText != null && allowedManga.any { it.equals(titleText, true) }) {
+                        latestUpdatesFromElement(element)
+                    } else null
+                }
+                // Show other types by default
+                typeText.isNullOrBlank() -> latestUpdatesFromElement(element)
+                else -> latestUpdatesFromElement(element)
+            }
+        }
+        
+        val hasNext = document.select(latestUpdatesNextPageSelector()).firstOrNull() != null
+        return MangasPage(mangas, hasNext)
+    }
+
     override fun searchMangaSelector() = "div.list-update_item"
 
-    override fun searchMangaFromElement(element: Element): SManga {
-        return super.searchMangaFromElement(element).apply {
+    override fun searchMangaFromElement(element: Element) = super.searchMangaFromElement(element).apply {
+        thumbnail_url = "$resizeCover$thumbnail_url"
+        title = element.selectFirst("h3.title")!!.ownText()
+    }
+    
+    // Override latestUpdatesFromElement to apply custom thumbnail resizing
+    override fun latestUpdatesFromElement(element: Element): SManga {
+        return super.latestUpdatesFromElement(element).apply {
             thumbnail_url = "$resizeCover$thumbnail_url"
             title = element.selectFirst("h3.title")!!.ownText()
         }
@@ -168,7 +155,7 @@ class KomikCast : MangaThemesia(
                 .joinToString { it.trim() }
 
             status = seriesDetails.selectFirst(seriesStatusSelector)?.text().parseStatus()
-            thumbnail_url = resizeCover + seriesDetails.select(seriesThumbnailSelector).imgAttr()
+            thumbnail_url = "$resizeCover${seriesDetails.select(seriesThumbnailSelector).imgAttr()}"
         }
     }
 
@@ -216,56 +203,153 @@ class KomikCast : MangaThemesia(
         }
     }
 
-    override fun pageListParse(response: okhttp3.Response): List<Page> {
-        val doc = response.asJsoup()
-        val service = preferences.getString("resize_service_url", "")
-
-        return doc.select("div#chapter_body .main-reading-area img.size-full")
+    override fun pageListParse(document: Document): List<Page> {
+        val service = preferences.getString(RESIZE_SERVICE_URL_PREF, "")
+        
+        return document.select("div#chapter_body .main-reading-area img.size-full")
+            .distinctBy { img -> img.imgAttr() }
             .filter { img -> 
                 val src = img.imgAttr().trim()
                 !src.contains("999.jpg")
             }
             .mapIndexed { i, img ->
                 val src = img.imgAttr().trim()
-                val finalUrl = "$service$src"
-                Page(i, "", finalUrl)
+                val finalUrl = if (service.isNotBlank()) "$service$src" else src
+                Page(i, document.location(), finalUrl)
             }
     }
 
+    override val hasProjectPage: Boolean = true
+    override val projectPageString = "/project-list"
+
+    override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
+        val url = baseUrl.toHttpUrl().newBuilder()
+
+        if (query.isNotEmpty()) {
+            url.addPathSegments("page/$page/").addQueryParameter("s", query)
+            return GET(url.build(), headers)
+        }
+
+        url.addPathSegment(mangaUrlDirectory.substring(1))
+            .addPathSegments("page/$page/")
+
+        filters.forEach { filter ->
+            when (filter) {
+                is StatusFilter -> {
+                    url.addQueryParameter("status", filter.selectedValue())
+                }
+                is TypeFilter -> {
+                    url.addQueryParameter("type", filter.selectedValue())
+                }
+                is OrderByFilter -> {
+                    url.addQueryParameter("orderby", filter.selectedValue())
+                }
+                is GenreListFilter -> {
+                    filter.state
+                        .filter { it.state != Filter.TriState.STATE_IGNORE }
+                        .forEach {
+                            val value = if (it.state == Filter.TriState.STATE_EXCLUDE) "-${it.value}" else it.value
+                            url.addQueryParameter("genre[]", value)
+                        }
+                }
+                // if site has project page, default value "hasProjectPage" = false
+                is ProjectFilter -> {
+                    if (filter.selectedValue() == "project-filter-on") {
+                        url.setPathSegment(0, projectPageString.substring(1))
+                    }
+                }
+                else -> { /* Do Nothing */ }
+            }
+        }
+        return GET(url.build(), headers)
+    }
+
+    private class StatusFilter : SelectFilter(
+        "Status",
+        arrayOf(
+            Pair("All", ""),
+            Pair("Ongoing", "ongoing"),
+            Pair("Completed", "completed"),
+        ),
+    )
+
+    private class TypeFilter : SelectFilter(
+        "Type",
+        arrayOf(
+            Pair("All", ""),
+            Pair("Manga", "manga"),
+            Pair("Manhwa", "manhwa"),
+            Pair("Manhua", "manhua"),
+        ),
+    )
+
+    private class OrderByFilter(defaultOrder: String? = null) : SelectFilter(
+        "Sort By",
+        arrayOf(
+            Pair("Default", ""),
+            Pair("A-Z", "titleasc"),
+            Pair("Z-A", "titledesc"),
+            Pair("Update", "update"),
+            Pair("Popular", "popular"),
+        ),
+        defaultOrder,
+    )
+
+    override fun getFilterList(): FilterList {
+        val filters = mutableListOf<Filter<*>>(
+            Filter.Separator(),
+            StatusFilter(),
+            TypeFilter(),
+            OrderByFilter(),
+            Filter.Header(intl["genre_exclusion_warning"]),
+            GenreListFilter(intl["genre_filter_title"], getGenreList()),
+            Filter.Separator(),
+            Filter.Header(intl["project_filter_warning"]),
+            Filter.Header(intl.format("project_filter_name", name)),
+            ProjectFilter(intl["project_filter_title"], projectFilterOptions),
+        )
+        return FilterList(filters)
+    }
+
+    // Setup preference screen with custom options
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
+        // Resize Service URL preference
         val resizeServicePref = EditTextPreference(screen.context).apply {
-            key = "resize_service_url"
+            key = RESIZE_SERVICE_URL_PREF
             title = "Resize Service URL (Pages)"
             summary = "Masukkan URL layanan resize gambar untuk halaman (page list)."
-            setDefaultValue(null)
+            setDefaultValue("")
             dialogTitle = "Resize Service URL"
+            dialogMessage = "Contoh: https://wsrv.nl/?w=800&url="
         }
         screen.addPreference(resizeServicePref)
 
+        // Override Base URL preference
         val baseUrlPref = EditTextPreference(screen.context).apply {
-            key = "overrideBaseUrl"
+            key = OVERRIDE_BASE_URL_PREF
             title = "Ubah Domain"
             summary = "Update domain untuk ekstensi ini"
-            setDefaultValue(baseUrl)
+            setDefaultValue("https://komikcast.li")
             dialogTitle = "Update domain untuk ekstensi ini"
-            dialogMessage = "Original: $baseUrl"
+            dialogMessage = "Original: https://komikcast.li"
 
             setOnPreferenceChangeListener { _, newValue ->
                 val newUrl = newValue as String
                 baseUrl = newUrl
-                preferences.edit().putString("overrideBaseUrl", newUrl).apply()
+                preferences.edit().putString(OVERRIDE_BASE_URL_PREF, newUrl).apply()
                 summary = "Current domain: $newUrl"
                 true
             }
         }
         screen.addPreference(baseUrlPref)
 
+        // Manga Whitelist preference
         screen.addPreference(EditTextPreference(screen.context).apply {
             key = MANGA_WHITELIST_PREF
             title = MANGA_WHITELIST_PREF_TITLE
             dialogTitle = MANGA_WHITELIST_PREF_TITLE
-            dialogMessage = "Masukkan judul Manga yang mau ditampilkan, dipisah koma"
-            summary = "Tetap tampilkan manga ini"
+            dialogMessage = "Masukkan judul Manga yang mau ditampilkan di Latest Updates, dipisah koma.\nManhwa dan Manhua akan tetap ditampilkan."
+            summary = "Filter Manga di Latest Updates (Manhwa/Manhua selalu muncul)"
             setDefaultValue("")
         })
     }
