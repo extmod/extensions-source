@@ -19,10 +19,10 @@ import okhttp3.Request
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 import java.util.Calendar
 import java.util.Locale
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 
 class KomikCast : MangaThemesia("Komik Cast", "https://komikcast.li", "id", "/daftar-komik"), ConfigurableSource {
 
@@ -64,26 +64,19 @@ class KomikCast : MangaThemesia("Komik Cast", "https://komikcast.li", "id", "/da
     // sesuai permintaan: pakai langsung seperti ini
     private val preferences = Injekt.get<Application>().getSharedPreferences("source_$id", 0x0000)
 
-    /**
-     * Build image URL via user-provided service WITHOUT encoding the original URL.
-     * (Mengandalkan originalUrl sudah berbentuk absolute/valid.)
-     */
+    private fun makeAbsoluteUrl(url: String): String {
+        var u = url.trim()
+        if (u.startsWith("//")) u = "https:$u"
+        else if (u.startsWith("/")) u = baseUrl.trimEnd('/') + u
+        else if (!u.startsWith("http://") && !u.startsWith("https://")) u = baseUrl.trimEnd('/') + "/" + u.trimStart('/')
+        return u
+    }
+
     private fun buildServiceImageUrl(originalUrl: String?): String? {
         if (originalUrl.isNullOrBlank()) return null
         val service = preferences.getString(PREF_RESIZE_SERVICE, DEFAULT_RESIZE) ?: DEFAULT_RESIZE
-        val absolute = makeAbsoluteUrl(originalUrl).trim()
-        // langsung concat tanpa URLEncoder
+        val absolute = makeAbsoluteUrl(originalUrl)
         return service + absolute
-    }
-
-    private fun makeAbsoluteUrl(url: String): String {
-        var u = url
-        if (u.startsWith("//")) {
-            u = "https:$u"
-        } else if (u.startsWith("/")) {
-            u = baseUrl + u
-        }
-        return u
     }
 
     private fun buildCoverUrl(originalUrl: String?): String? {
@@ -91,15 +84,96 @@ class KomikCast : MangaThemesia("Komik Cast", "https://komikcast.li", "id", "/da
         return built ?: originalUrl
     }
 
-    private fun isMangaType(mangaUrl: String?): Boolean {
+    /**
+     * Robust detection of type from the listing element.
+     * - cek span.type, .list-update_item-image .type, .flag, dll.
+     * - jika teks ada, gunakan teks (trim, lowercase)
+     * - jika teks kosong, infer dari nama class (mis. 'manga-bg')
+     * - return normalized string (manga/manhwa/manhua) or null
+     */
+    private fun detectTypeFromElement(element: Element): String? {
+        // Try specific selectors first
+        val selectors = listOf(
+            "span.type",
+            ".list-update_item-image .type",
+            ".type",
+            ".badge-type",
+            ".flag",
+            ".post-meta .type",
+            ".meta .type"
+        )
+
+        for (sel in selectors) {
+            val e = element.selectFirst(sel)
+            if (e != null) {
+                val txt = e.text().trim()
+                if (txt.isNotEmpty()) {
+                    val norm = txt.lowercase(Locale.ROOT)
+                    return when {
+                        norm.contains("manga") -> "manga"
+                        norm.contains("manhwa") -> "manhwa"
+                        norm.contains("manhua") -> "manhua"
+                        else -> norm
+                    }
+                }
+                // try infer from classnames if text empty
+                val foundCls = e.classNames().firstOrNull { it.contains("manga", true) || it.contains("manhwa", true) || it.contains("manhua", true) }
+                if (foundCls != null) {
+                    return when {
+                        foundCls.contains("manga", true) -> "manga"
+                        foundCls.contains("manhwa", true) -> "manhwa"
+                        foundCls.contains("manhua", true) -> "manhua"
+                        else -> foundCls.lowercase(Locale.ROOT)
+                    }
+                }
+            }
+        }
+
+        // fallback: check any span inside image container for class names
+        val imgSpan = element.selectFirst(".list-update_item-image span")
+        if (imgSpan != null) {
+            val txt = imgSpan.text().trim()
+            if (txt.isNotEmpty()) {
+                val norm = txt.lowercase(Locale.ROOT)
+                return when {
+                    norm.contains("manga") -> "manga"
+                    norm.contains("manhwa") -> "manhwa"
+                    norm.contains("manhua") -> "manhua"
+                    else -> norm
+                }
+            }
+            val foundCls = imgSpan.classNames().firstOrNull { it.contains("manga", true) || it.contains("manhwa", true) || it.contains("manhua", true) }
+            if (foundCls != null) {
+                return when {
+                    foundCls.contains("manga", true) -> "manga"
+                    foundCls.contains("manhwa", true) -> "manhwa"
+                    foundCls.contains("manhua", true) -> "manhua"
+                    else -> foundCls.lowercase(Locale.ROOT)
+                }
+            }
+        }
+
+        // try generic spans/small tags
+        val smallMatch = element.select("span, small, div").map { it.text().trim().lowercase(Locale.ROOT) }
+            .firstOrNull { it == "manga" || it == "manhwa" || it == "manhua" }
+        if (smallMatch != null) return smallMatch
+
+        return null
+    }
+
+    /**
+     * Fallback detection hitting detail page only when necessary.
+     */
+    private fun isMangaTypeByFetch(mangaUrl: String?): Boolean {
         if (mangaUrl.isNullOrBlank()) return false
         try {
-            val absolute = if (mangaUrl.startsWith("http")) mangaUrl else (baseUrl.trimEnd('/') + "/" + mangaUrl.trimStart('/'))
+            val absolute = makeAbsoluteUrl(mangaUrl)
             val req = GET(absolute, headers)
             client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return false
                 val body = resp.body?.string().orEmpty()
                 val doc = Jsoup.parse(body, absolute)
-                val typeText = doc.selectFirst(seriesTypeSelector)?.ownText().orEmpty()
+                val typeText = doc.selectFirst(seriesTypeSelector)?.ownText()?.trim().orEmpty()
                 return typeText.equals("Manga", ignoreCase = true)
             }
         } catch (_: Exception) {
@@ -107,10 +181,13 @@ class KomikCast : MangaThemesia("Komik Cast", "https://komikcast.li", "id", "/da
         }
     }
 
-    // ringkas: kosongkan filter list
+    // ringkas: kosongkan filter list sesuai permintaan
     override fun getFilterList(): FilterList = FilterList()
 
-    // Tidak di-override agar kompatibel dengan berbagai multisrc
+    /**
+     * latestUpdatesParse: detect dari element dulu, fallback fetch.
+     * Abaikan item jika tipe == "manga" kecuali judul ada di whitelist.
+     */
     fun latestUpdatesParse(document: Document): MangasPage {
         val elements = document.select(searchMangaSelector())
         val mangas = mutableListOf<SManga>()
@@ -122,13 +199,14 @@ class KomikCast : MangaThemesia("Komik Cast", "https://komikcast.li", "id", "/da
 
         for (el in elements) {
             val manga = searchMangaFromElement(el)
-            val mangaUrl = manga.url
             val mangaTitle = manga.title?.trim().orEmpty()
+            val mangaUrl = manga.url
 
-            val isManga = try {
-                isMangaType(mangaUrl)
-            } catch (_: Exception) {
-                false
+            // detect from listing element (robust)
+            val typeFromElement = detectTypeFromElement(el)
+            val isManga = when {
+                typeFromElement != null -> typeFromElement.equals("manga", ignoreCase = true)
+                else -> isMangaTypeByFetch(mangaUrl)
             }
 
             if (isManga) {
@@ -183,11 +261,7 @@ class KomikCast : MangaThemesia("Komik Cast", "https://komikcast.li", "id", "/da
             seriesDetails.selectFirst(seriesTypeSelector)?.ownText().takeIf { it.isNullOrBlank().not() }?.let { genres.add(it) }
             genre = genres.map { genre ->
                 genre.lowercase(Locale.forLanguageTag(lang)).replaceFirstChar { char ->
-                    if (char.isLowerCase()) {
-                        char.titlecase(Locale.forLanguageTag(lang))
-                    } else {
-                        char.toString()
-                    }
+                    if (char.isLowerCase()) char.titlecase(Locale.forLanguageTag(lang)) else char.toString()
                 }
             }
                 .joinToString { it.trim() }
@@ -259,15 +333,12 @@ class KomikCast : MangaThemesia("Komik Cast", "https://komikcast.li", "id", "/da
 
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
         val url = baseUrl.toHttpUrl().newBuilder()
-
         if (query.isNotEmpty()) {
             url.addPathSegments("page/$page/").addQueryParameter("s", query)
             return GET(url.build(), headers)
         }
-
         url.addPathSegment(mangaUrlDirectory.substring(1))
             .addPathSegments("page/$page/")
-
         return GET(url.build(), headers)
     }
 
