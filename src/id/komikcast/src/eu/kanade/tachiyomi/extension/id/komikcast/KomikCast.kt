@@ -73,8 +73,30 @@ class KomikCast : MangaThemesia("Komik Cast", "https://komikcast.li", "id", "/da
     }
 
     override fun latestUpdatesParse(response: Response): MangasPage {
-    // Sementara bypass filtering untuk testing
-    return super.latestUpdatesParse(response)
+    // Gunakan parent parsing dulu, lalu filter hasilnya
+    val originalPage = super.latestUpdatesParse(response)
+    
+    val rawList = preferences.getString(MANGA_WHITELIST_PREF, "") ?: ""
+    val allowedManga = rawList
+        .split(",")
+        .map { it.trim() }
+        .filter { it.isNotEmpty() }
+    
+    // Filter hasil dari parent class, bukan parse ulang dari HTML
+    val filteredMangas = originalPage.mangas.filter { manga ->
+        // Logic filtering berdasarkan genre atau title
+        val genres = manga.genre?.lowercase() ?: ""
+        when {
+            "manhwa" in genres || "manhua" in genres -> true
+            "manga" in genres -> {
+                if (allowedManga.isEmpty()) false
+                else allowedManga.any { it.equals(manga.title, ignoreCase = true) }
+            }
+            else -> true
+        }
+    }
+    
+    return MangasPage(filteredMangas, originalPage.hasNextPage)
 }
 
     override fun searchMangaSelector() = "div.list-update_item"
