@@ -33,7 +33,7 @@ class KomikCast : ParsedHttpSource(), ConfigurableSource {
 
     // Client dengan rate limit
     override val client: OkHttpClient = network.cloudflareClient.newBuilder()
-        .rateLimit(3)
+        .rateLimit(1)
         .build()
 
     private val preferences = Injekt.get<Application>().getSharedPreferences("source_$id", 0)
@@ -192,15 +192,6 @@ class KomikCast : ParsedHttpSource(), ConfigurableSource {
                 Page(i, document.location(), finalUrl)
             }
     }
-
-    val finalImages = if (filteredImages.isEmpty()) allImages else filteredImages
-
-    return finalImages.mapIndexed { i, img ->
-        val imageUrl = img.attr("src")
-        val finalUrl = if (resizeUrlGambar != null) resizeUrlGambar + imageUrl else imageUrl
-        Page(i, document.location(), finalUrl)
-    }
-}
 
     override fun imageUrlParse(document: Document): String = throw UnsupportedOperationException()
     override fun imageRequest(page: Page): Request =
