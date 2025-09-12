@@ -155,7 +155,7 @@ class KomikCast : MangaThemesia("Komik Cast", "https://komikcast.li", "id", "/da
                 .joinToString { it.trim() }
 
             status = seriesDetails.selectFirst(seriesStatusSelector)?.text().parseStatus()
-            thumbnail_url = "$resizeCover${seriesDetails.select(seriesThumbnailSelector).imgAttr()}"
+            thumbnail_url = resizeCover + (seriesDetails.select(seriesThumbnailSelector).imgAttr() ?: "")
         }
     }
 
