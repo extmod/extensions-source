@@ -73,30 +73,69 @@ class KomikCast : MangaThemesia("Komik Cast", "https://komikcast.li", "id", "/da
     }
 
     override fun latestUpdatesParse(response: Response): MangasPage {
-    // Gunakan parent parsing dulu, lalu filter hasilnya
-    val originalPage = super.latestUpdatesParse(response)
-    
+    val document = response.asJsoup()
     val rawList = preferences.getString(MANGA_WHITELIST_PREF, "") ?: ""
     val allowedManga = rawList
         .split(",")
         .map { it.trim() }
         .filter { it.isNotEmpty() }
     
-    // Filter hasil dari parent class, bukan parse ulang dari HTML
-    val filteredMangas = originalPage.mangas.filter { manga ->
-        // Logic filtering berdasarkan genre atau title
-        val genres = manga.genre?.lowercase() ?: ""
+    // Gunakan selector dari parent class
+    val mangas = document.select(latestUpdatesSelector()).mapNotNull { element ->
+        // Cari elemen type dengan berbagai kemungkinan selector
+        val typeText = element.selectFirst("span.type, .type, [class*='type']")?.text()?.trim()
+        
         when {
-            "manhwa" in genres || "manhua" in genres -> true
-            "manga" in genres -> {
-                if (allowedManga.isEmpty()) false
-                else allowedManga.any { it.equals(manga.title, ignoreCase = true) }
+            // Jika tidak ada type info, gunakan parent parsing (tampilkan)
+            typeText.isNullOrBlank() -> {
+                try {
+                    super.latestUpdatesFromElement(element)
+                } catch (e: Exception) {
+                    null
+                }
             }
-            else -> true
+            
+            // Selalu tampilkan Manhwa dan Manhua
+            typeText.equals("Manhwa", ignoreCase = true) || 
+            typeText.equals("Manhua", ignoreCase = true) -> {
+                try {
+                    super.latestUpdatesFromElement(element)
+                } catch (e: Exception) {
+                    null
+                }
+            }
+            
+            // Untuk Manga, cek whitelist
+            typeText.equals("Manga", ignoreCase = true) -> {
+                if (allowedManga.isEmpty()) {
+                    null // Skip semua manga jika whitelist kosong
+                } else {
+                    val titleText = element.selectFirst("h3.title a, h3.title, .title a, .title")?.text()?.trim()
+                    if (titleText != null && allowedManga.any { it.equals(titleText, ignoreCase = true) }) {
+                        try {
+                            super.latestUpdatesFromElement(element)
+                        } catch (e: Exception) {
+                            null
+                        }
+                    } else {
+                        null // Skip manga yang tidak ada di whitelist
+                    }
+                }
+            }
+            
+            // Type lain, tampilkan
+            else -> {
+                try {
+                    super.latestUpdatesFromElement(element)
+                } catch (e: Exception) {
+                    null
+                }
+            }
         }
     }
     
-    return MangasPage(filteredMangas, originalPage.hasNextPage)
+    val hasNext = document.select(latestUpdatesNextPageSelector()).firstOrNull() != null
+    return MangasPage(mangas, hasNext)
 }
 
     override fun searchMangaSelector() = "div.list-update_item"
