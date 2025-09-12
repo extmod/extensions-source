@@ -38,15 +38,6 @@ class KomikCast : ParsedHttpSource(), ConfigurableSource {
     private val preferences = Injekt.get<Application>().getSharedPreferences("source_$id", 0)
     override var baseUrl: String = preferences.getString("overrideBaseUrl", "https://komikcast")!!
 
-    private fun ResizeGambar(originalUrl: String): String {
-        val serviceUrl = preferences.getString("resize_url_gambar", null)
-        return if (!serviceUrl.isNullOrEmpty()) {
-            "$serviceUrl$originalUrl"
-        } else {
-            originalUrl
-        }
-    }
-
     private fun ResizeCover(originalUrl: String): String {
         return "https://wsrv.nl/?w=110&h=150&url=$originalUrl"
     }
@@ -105,7 +96,7 @@ class KomikCast : ParsedHttpSource(), ConfigurableSource {
         val manga = SManga.create()
         manga.thumbnail_url = element.select("img").attr("abs:src")?.let { ResizeCover(it) }
         manga.title = element.select("h3.title").text().substringBefore("(").trim()
-        element.select("div.list-update_item a").first()!!.let {
+        element.select("a").first()!!.let {
             manga.setUrlWithoutDomain(it.attr("href"))
         }
         return manga
@@ -177,24 +168,19 @@ class KomikCast : ParsedHttpSource(), ConfigurableSource {
 
     // Pages
     override fun pageListParse(document: Document): List<Page> {
+    val serviceUrl = preferences.getString("resize_url_gambar", null)
     return document.select("div#chapter_body .main-reading-area img.size-full")
-        .mapNotNull { img ->
-            val url = img.absUrl("src")
-            if (url.isBlank() || url.lowercase().endsWith("999.jpg")) {
-                null
-            } else {
-                url
-            }
-        }
-        .mapIndexed { i, url ->
-            val finalUrl = ResizeGambar(url)
+        .mapIndexedNotNull { i, img ->
+            val url = img.absUrl("src").takeIf { 
+                it.isNotBlank() && !it.lowercase().endsWith("999.jpg") 
+            } ?: return@mapIndexedNotNull null
+            
+            val finalUrl = serviceUrl?.let { "$it$url" } ?: url
             Page(i, document.location(), finalUrl)
         }
 }
 
     override fun imageUrlParse(document: Document): String = throw UnsupportedOperationException()
-    override fun imageRequest(page: Page): Request =
-        GET(page.imageUrl!!, headersBuilder().set("Referer", baseUrl).build())
 
     // Filters
     override fun getFilterList(): FilterList = FilterList(Filter.Header("No filters"))
