@@ -1,14 +1,12 @@
 package eu.kanade.tachiyomi.extension.id.komikcast
 
 import android.app.Application
-import android.content.Context
 import androidx.preference.EditTextPreference
 import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.multisrc.mangathemesia.MangaThemesia
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
 import eu.kanade.tachiyomi.source.ConfigurableSource
-import eu.kanade.tachiyomi.source.model.Filter
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
@@ -21,14 +19,12 @@ import okhttp3.Request
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
-import java.net.URLEncoder
 import java.util.Calendar
 import java.util.Locale
 import uy.kohesive.injekt.Injekt
 
 class KomikCast : MangaThemesia("Komik Cast", "https://komikcast.li", "id", "/daftar-komik"), ConfigurableSource {
 
-    // Formerly "Komik Cast (WP Manga Stream)"
     override val id = 972717448578983812
 
     override val client: OkHttpClient = super.client.newBuilder()
@@ -64,26 +60,21 @@ class KomikCast : MangaThemesia("Komik Cast", "https://komikcast.li", "id", "/da
     private val PREF_WHITELIST = "whitelist_titles"
     private val DEFAULT_RESIZE = "https://images.weserv.nl/?w=300&q=70&url="
 
-    // SharedPreferences getter (avoid delegate issues across Kotlin versions)
-    private val prefs get() = Injekt.get<Application>().getSharedPreferences("source_$id", Context.MODE_PRIVATE)
+    // sesuai permintaan: pakai langsung seperti ini
+    private val preferences = Injekt.get<Application>().getSharedPreferences("source_$id", 0x0000)
 
     /**
-     * Build image URL via user-provided service (and URL-encode original URL).
-     * Used for page images and covers (depending on caller).
+     * Build image URL via user-provided service WITHOUT encoding the original URL.
+     * (Mengandalkan originalUrl sudah berbentuk absolute/valid.)
      */
     private fun buildServiceImageUrl(originalUrl: String?): String? {
         if (originalUrl.isNullOrBlank()) return null
-        val service = prefs.getString(PREF_RESIZE_SERVICE, DEFAULT_RESIZE) ?: DEFAULT_RESIZE
-        val absolute = makeAbsoluteUrl(originalUrl)
-        val encoded = try {
-            URLEncoder.encode(absolute, "UTF-8")
-        } catch (_: Exception) {
-            absolute
-        }
-        return service + encoded
+        val service = preferences.getString(PREF_RESIZE_SERVICE, DEFAULT_RESIZE) ?: DEFAULT_RESIZE
+        val absolute = makeAbsoluteUrl(originalUrl).trim()
+        // langsung concat tanpa URLEncoder
+        return service + absolute
     }
 
-    /** Normalize to absolute URL if original is relative or protocol-relative */
     private fun makeAbsoluteUrl(url: String): String {
         var u = url
         if (u.startsWith("//")) {
@@ -94,19 +85,11 @@ class KomikCast : MangaThemesia("Komik Cast", "https://komikcast.li", "id", "/da
         return u
     }
 
-    /**
-     * Cover builder (wraps buildServiceImageUrl but keeps original if service unset)
-     */
     private fun buildCoverUrl(originalUrl: String?): String? {
         val built = buildServiceImageUrl(originalUrl)
         return built ?: originalUrl
     }
 
-    /**
-     * Check whether the manga at given relative/absolute URL has type "Manga".
-     * This fetches the details page and looks for the seriesTypeSelector.
-     * If fetch fails, returns false (so it won't be incorrectly skipped).
-     */
     private fun isMangaType(mangaUrl: String?): Boolean {
         if (mangaUrl.isNullOrBlank()) return false
         try {
@@ -119,24 +102,19 @@ class KomikCast : MangaThemesia("Komik Cast", "https://komikcast.li", "id", "/da
                 return typeText.equals("Manga", ignoreCase = true)
             }
         } catch (_: Exception) {
-            // on error, be conservative: don't treat as manga
             return false
         }
     }
 
-    /**
-     * Filter latest updates: ignore items that are type 'Manga' unless whitelisted.
-     *
-     * NOTE: not marked `override` because some Tachiyomi base versions may have different signatures.
-     * If your Tachiyomi version expects an override, beri tahu versi Tachiyomi (atau error baru)
-     * dan saya akan sesuaikan signature agar override valid.
-     */
+    // ringkas: kosongkan filter list
+    override fun getFilterList(): FilterList = FilterList()
+
+    // Tidak di-override agar kompatibel dengan berbagai multisrc
     fun latestUpdatesParse(document: Document): MangasPage {
         val elements = document.select(searchMangaSelector())
         val mangas = mutableListOf<SManga>()
 
-        // Build whitelist (lowercase trimmed)
-        val whitelistRaw = prefs.getString(PREF_WHITELIST, "") ?: ""
+        val whitelistRaw = preferences.getString(PREF_WHITELIST, "") ?: ""
         val whitelist = whitelistRaw.split(",")
             .map { it.trim().lowercase(Locale.ROOT) }
             .filter { it.isNotEmpty() }
@@ -156,7 +134,7 @@ class KomikCast : MangaThemesia("Komik Cast", "https://komikcast.li", "id", "/da
                 if (whitelist.any { it == mangaTitle.lowercase(Locale.ROOT) }) {
                     mangas.add(manga)
                 } else {
-                    continue // skip manga not whitelisted
+                    continue
                 }
             } else {
                 mangas.add(manga)
@@ -168,19 +146,16 @@ class KomikCast : MangaThemesia("Komik Cast", "https://komikcast.li", "id", "/da
     }
 
     override fun searchMangaFromElement(element: Element) = super.searchMangaFromElement(element).apply {
-        // Title as before
         title = element.selectFirst("h3.title")!!.ownText()
 
-        // Thumbnail logic: prefer element's thumbnail, else try parent's selector
         var thumb: String? = null
         try {
             thumb = element.selectFirst("img")?.attr("src")
                 ?: element.selectFirst("img")?.attr("data-src")
                 ?: element.parent()?.selectFirst("img")?.attr("src")
                 ?: element.parent()?.selectFirst("img")?.attr("data-src")
-        } catch (_: Exception) { /* ignore */ }
+        } catch (_: Exception) { }
 
-        // If still null, keep what super assigned (if any). Otherwise build via service.
         thumbnail_url = buildCoverUrl(thumb ?: thumbnail_url)
     }
 
@@ -199,13 +174,11 @@ class KomikCast : MangaThemesia("Komik Cast", "https://komikcast.li", "id", "/da
             artist = seriesDetails.selectFirst(seriesArtistSelector)?.ownText().removeEmptyPlaceholder()
             author = seriesDetails.selectFirst(seriesAuthorSelector)?.ownText().removeEmptyPlaceholder()
             description = seriesDetails.select(seriesDescriptionSelector).joinToString("\n") { it.text() }.trim()
-            // Add alternative name to manga description
             val altName = seriesDetails.selectFirst(seriesAltNameSelector)?.ownText().takeIf { it.isNullOrBlank().not() }
             altName?.let {
                 description = "$description\n\n$altNamePrefix$altName".trim()
             }
             val genres = seriesDetails.select(seriesGenreSelector).map { it.text() }.toMutableList()
-            // Add series type (manga/manhwa/manhua/other) to genre
             seriesDetails.selectFirst(seriesTypeSelector)?.ownText().takeIf { it.isNullOrBlank().not() }?.let { genres.add(it) }
             genre = genres.map { genre ->
                 genre.lowercase(Locale.forLanguageTag(lang)).replaceFirstChar { char ->
@@ -220,7 +193,6 @@ class KomikCast : MangaThemesia("Komik Cast", "https://komikcast.li", "id", "/da
 
             status = seriesDetails.selectFirst(seriesStatusSelector)?.text().parseStatus()
 
-            // Use the new cover builder so covers are resized via service when pref set
             val origThumb = seriesDetails.select(seriesThumbnailSelector).imgAttr()
             thumbnail_url = buildCoverUrl(origThumb)
         }
@@ -257,9 +229,7 @@ class KomikCast : MangaThemesia("Komik Cast", "https://komikcast.li", "id", "/da
                 "year" in date -> Calendar.getInstance().apply {
                     add(Calendar.YEAR, -value)
                 }.timeInMillis
-                else -> {
-                    0L
-                }
+                else -> 0L
             }
         } else {
             try {
@@ -273,7 +243,6 @@ class KomikCast : MangaThemesia("Komik Cast", "https://komikcast.li", "id", "/da
     override fun pageListParse(document: Document): List<Page> {
         return document.select("div#chapter_body .main-reading-area img.size-full")
             .distinctBy { img ->
-                // use absolute src as identity when possible
                 val src = img.attr("src").ifEmpty { img.absUrl("src") }
                 src
             }
@@ -298,38 +267,9 @@ class KomikCast : MangaThemesia("Komik Cast", "https://komikcast.li", "id", "/da
         url.addPathSegment(mangaUrlDirectory.substring(1))
             .addPathSegments("page/$page/")
 
-        filters.forEach { filter ->
-            when (filter) {
-                is StatusFilter -> {
-                    url.addQueryParameter("status", filter.selectedValue())
-                }
-                is TypeFilter -> {
-                    url.addQueryParameter("type", filter.selectedValue())
-                }
-                is OrderByFilter -> {
-                    url.addQueryParameter("orderby", filter.selectedValue())
-                }
-                is GenreListFilter -> {
-                    filter.state
-                        .filter { it.state != Filter.TriState.STATE_IGNORE }
-                        .forEach {
-                            val value = if (it.state == Filter.TriState.STATE_EXCLUDE) "-${it.value}" else it.value
-                            url.addQueryParameter("genre[]", value)
-                        }
-                }
-                // if site has project page, default value "hasProjectPage" = false
-                is ProjectFilter -> {
-                    if (filter.selectedValue() == "project-filter-on") {
-                        url.setPathSegment(0, projectPageString.substring(1))
-                    }
-                }
-                else -> { /* Do Nothing */ }
-            }
-        }
         return GET(url.build(), headers)
     }
 
-    // Setup preference screen with three preferences requested
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
         val context = screen.context
 
@@ -360,52 +300,5 @@ class KomikCast : MangaThemesia("Komik Cast", "https://komikcast.li", "id", "/da
         screen.addPreference(resizeServicePref)
         screen.addPreference(overrideDomainPref)
         screen.addPreference(whitelistPref)
-    }
-
-    private class StatusFilter : SelectFilter(
-        "Status",
-        arrayOf(
-            Pair("All", ""),
-            Pair("Ongoing", "ongoing"),
-            Pair("Completed", "completed"),
-        ),
-    )
-
-    private class TypeFilter : SelectFilter(
-        "Type",
-        arrayOf(
-            Pair("All", ""),
-            Pair("Manga", "manga"),
-            Pair("Manhwa", "manhwa"),
-            Pair("Manhua", "manhua"),
-        ),
-    )
-
-    private class OrderByFilter(defaultOrder: String? = null) : SelectFilter(
-        "Sort By",
-        arrayOf(
-            Pair("Default", ""),
-            Pair("A-Z", "titleasc"),
-            Pair("Z-A", "titledesc"),
-            Pair("Update", "update"),
-            Pair("Popular", "popular"),
-        ),
-        defaultOrder,
-    )
-
-    override fun getFilterList(): FilterList {
-        val filters = mutableListOf<Filter<*>>(
-            Filter.Separator(),
-            StatusFilter(),
-            TypeFilter(),
-            OrderByFilter(),
-            Filter.Header(intl["genre_exclusion_warning"]),
-            GenreListFilter(intl["genre_filter_title"], getGenreList()),
-            Filter.Separator(),
-            Filter.Header(intl["project_filter_warning"]),
-            Filter.Header(intl.format("project_filter_name", name)),
-            ProjectFilter(intl["project_filter_title"], projectFilterOptions),
-        )
-        return FilterList(filters)
     }
 }
