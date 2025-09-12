@@ -50,7 +50,7 @@ class KomikCast : MangaThemesia(
 
     // Request untuk update terbaru
     override fun latestUpdatesRequest(page: Int): Request {
-        return GET("$baseUrl/komik/page/$page/?&orderby=update", headers)
+        return GET("$baseUrl/komik/?orderby=update&page=$page", headers)
     }
     
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
