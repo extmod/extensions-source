@@ -16,7 +16,6 @@ import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import java.util.Calendar
@@ -61,132 +60,65 @@ class KomikCast : MangaThemesia("Komik Cast", "https://komikcast.li", "id", "/da
     private val PREF_WHITELIST = "whitelist_titles"
     private val DEFAULT_RESIZE = "https://images.weserv.nl/?w=300&q=70&url="
 
-    // sesuai permintaan: pakai langsung seperti ini
+    // SharedPreferences sesuai permintaan
     private val preferences = Injekt.get<Application>().getSharedPreferences("source_$id", 0x0000)
 
-    private fun makeAbsoluteUrl(url: String): String {
-        var u = url.trim()
-        if (u.startsWith("//")) u = "https:$u"
-        else if (u.startsWith("/")) u = baseUrl.trimEnd('/') + u
-        else if (!u.startsWith("http://") && !u.startsWith("https://")) u = baseUrl.trimEnd('/') + "/" + u.trimStart('/')
-        return u
-    }
-
-    private fun buildServiceImageUrl(originalUrl: String?): String? {
-        if (originalUrl.isNullOrBlank()) return null
+    private fun buildServiceImageUrlFromAbsolute(absoluteUrl: String?): String? {
+        if (absoluteUrl.isNullOrBlank()) return null
         val service = preferences.getString(PREF_RESIZE_SERVICE, DEFAULT_RESIZE) ?: DEFAULT_RESIZE
-        val absolute = makeAbsoluteUrl(originalUrl)
-        return service + absolute
+        // langsung gabung, asumsi absoluteUrl sudah lengkap (gunakan absUrl dari element)
+        return service + absoluteUrl.trim()
     }
 
-    private fun buildCoverUrl(originalUrl: String?): String? {
-        val built = buildServiceImageUrl(originalUrl)
-        return built ?: originalUrl
+    private fun buildCoverUrlFromElementImage(el: Element): String? {
+        // prefer absUrl, fallback ke attr src apa adanya
+        val abs = el.selectFirst("img")?.absUrl("src").takeIf { !it.isNullOrBlank() }
+            ?: el.selectFirst("img")?.attr("src")
+        return buildServiceImageUrlFromAbsolute(abs)
     }
 
     /**
-     * Robust detection of type from the listing element.
-     * - cek span.type, .list-update_item-image .type, .flag, dll.
-     * - jika teks ada, gunakan teks (trim, lowercase)
-     * - jika teks kosong, infer dari nama class (mis. 'manga-bg')
-     * - return normalized string (manga/manhwa/manhua) or null
+     * Deteksi tipe hanya dari listing element — tidak melakukan fetch.
+     * Mengembalikan normalized: "manga"/"manhwa"/"manhua" atau null.
      */
     private fun detectTypeFromElement(element: Element): String? {
-        // Try specific selectors first
-        val selectors = listOf(
-            "span.type",
-            ".list-update_item-image .type",
-            ".type",
-            ".badge-type",
-            ".flag",
-            ".post-meta .type",
-            ".meta .type"
-        )
-
-        for (sel in selectors) {
-            val e = element.selectFirst(sel)
-            if (e != null) {
-                val txt = e.text().trim()
-                if (txt.isNotEmpty()) {
-                    val norm = txt.lowercase(Locale.ROOT)
-                    return when {
-                        norm.contains("manga") -> "manga"
-                        norm.contains("manhwa") -> "manhwa"
-                        norm.contains("manhua") -> "manhua"
-                        else -> norm
-                    }
-                }
-                // try infer from classnames if text empty
-                val foundCls = e.classNames().firstOrNull { it.contains("manga", true) || it.contains("manhwa", true) || it.contains("manhua", true) }
-                if (foundCls != null) {
-                    return when {
-                        foundCls.contains("manga", true) -> "manga"
-                        foundCls.contains("manhwa", true) -> "manhwa"
-                        foundCls.contains("manhua", true) -> "manhua"
-                        else -> foundCls.lowercase(Locale.ROOT)
-                    }
-                }
-            }
-        }
-
-        // fallback: check any span inside image container for class names
-        val imgSpan = element.selectFirst(".list-update_item-image span")
-        if (imgSpan != null) {
-            val txt = imgSpan.text().trim()
+        // cek span.type di dalam .list-update_item-image (contoh HTML Anda punya <span class="type manga-bg">Manga</span>)
+        element.select(".list-update_item-image span, span.type, .type, .flag").forEach { s ->
+            val txt = s.text().trim()
             if (txt.isNotEmpty()) {
                 val norm = txt.lowercase(Locale.ROOT)
-                return when {
-                    norm.contains("manga") -> "manga"
-                    norm.contains("manhwa") -> "manhwa"
-                    norm.contains("manhua") -> "manhua"
-                    else -> norm
-                }
+                if (norm.contains("manga")) return "manga"
+                if (norm.contains("manhwa")) return "manhwa"
+                if (norm.contains("manhua")) return "manhua"
             }
-            val foundCls = imgSpan.classNames().firstOrNull { it.contains("manga", true) || it.contains("manhwa", true) || it.contains("manhua", true) }
-            if (foundCls != null) {
-                return when {
-                    foundCls.contains("manga", true) -> "manga"
-                    foundCls.contains("manhwa", true) -> "manhwa"
-                    foundCls.contains("manhua", true) -> "manhua"
-                    else -> foundCls.lowercase(Locale.ROOT)
-                }
+            // cek classname seperti 'manga-bg'
+            s.classNames().firstOrNull()?.let { cls ->
+                val c = cls.lowercase(Locale.ROOT)
+                if (c.contains("manga")) return "manga"
+                if (c.contains("manhwa")) return "manhwa"
+                if (c.contains("manhua")) return "manhua"
             }
         }
 
-        // try generic spans/small tags
-        val smallMatch = element.select("span, small, div").map { it.text().trim().lowercase(Locale.ROOT) }
-            .firstOrNull { it == "manga" || it == "manhwa" || it == "manhua" }
-        if (smallMatch != null) return smallMatch
+        // cek teks langsung di judul/other small tags
+        element.select("span, small, div").map { it.text().trim().lowercase(Locale.ROOT) }
+            .firstOrNull { it == "manga" || it == "manhwa" || it == "manhua" }?.let { return it }
+
+        // cek HTML mentah untuk pattern khas (heuristic)
+        val html = element.html().lowercase(Locale.ROOT)
+        if (html.contains("manga-bg") || html.contains(">manga<") || html.contains("class=\"type manga")) return "manga"
+        if (html.contains("manhwa")) return "manhwa"
+        if (html.contains("manhua")) return "manhua"
 
         return null
-    }
-
-    /**
-     * Fallback detection hitting detail page only when necessary.
-     */
-    private fun isMangaTypeByFetch(mangaUrl: String?): Boolean {
-        if (mangaUrl.isNullOrBlank()) return false
-        try {
-            val absolute = makeAbsoluteUrl(mangaUrl)
-            val req = GET(absolute, headers)
-            client.newCall(req).execute().use { resp ->
-                if (!resp.isSuccessful) return false
-                val body = resp.body?.string().orEmpty()
-                val doc = Jsoup.parse(body, absolute)
-                val typeText = doc.selectFirst(seriesTypeSelector)?.ownText()?.trim().orEmpty()
-                return typeText.equals("Manga", ignoreCase = true)
-            }
-        } catch (_: Exception) {
-            return false
-        }
     }
 
     // ringkas: kosongkan filter list sesuai permintaan
     override fun getFilterList(): FilterList = FilterList()
 
     /**
-     * latestUpdatesParse: detect dari element dulu, fallback fetch.
-     * Abaikan item jika tipe == "manga" kecuali judul ada di whitelist.
+     * latestUpdatesParse: deteksi hanya dari element (NO fetch).
+     * Skip item jika detected == "manga" kecuali judul ada di whitelist.
      */
     fun latestUpdatesParse(document: Document): MangasPage {
         val elements = document.select(searchMangaSelector())
@@ -200,14 +132,9 @@ class KomikCast : MangaThemesia("Komik Cast", "https://komikcast.li", "id", "/da
         for (el in elements) {
             val manga = searchMangaFromElement(el)
             val mangaTitle = manga.title?.trim().orEmpty()
-            val mangaUrl = manga.url
 
-            // detect from listing element (robust)
-            val typeFromElement = detectTypeFromElement(el)
-            val isManga = when {
-                typeFromElement != null -> typeFromElement.equals("manga", ignoreCase = true)
-                else -> isMangaTypeByFetch(mangaUrl)
-            }
+            val detected = detectTypeFromElement(el)
+            val isManga = detected != null && detected.equals("manga", ignoreCase = true)
 
             if (isManga) {
                 if (whitelist.any { it == mangaTitle.lowercase(Locale.ROOT) }) {
@@ -225,17 +152,13 @@ class KomikCast : MangaThemesia("Komik Cast", "https://komikcast.li", "id", "/da
     }
 
     override fun searchMangaFromElement(element: Element) = super.searchMangaFromElement(element).apply {
+        // title sama seperti sebelumnya
         title = element.selectFirst("h3.title")!!.ownText()
 
-        var thumb: String? = null
-        try {
-            thumb = element.selectFirst("img")?.attr("src")
-                ?: element.selectFirst("img")?.attr("data-src")
-                ?: element.parent()?.selectFirst("img")?.attr("src")
-                ?: element.parent()?.selectFirst("img")?.attr("data-src")
-        } catch (_: Exception) { }
-
-        thumbnail_url = buildCoverUrl(thumb ?: thumbnail_url)
+        // thumbnail: gunakan absUrl bila tersedia (menghindari makeAbsoluteUrl manual)
+        val thumbAbs = element.selectFirst("img")?.absUrl("src").takeIf { !it.isNullOrBlank() }
+        val thumbAttr = element.selectFirst("img")?.attr("src")
+        thumbnail_url = buildServiceImageUrlFromAbsolute(thumbAbs ?: thumbAttr ?: thumbnail_url)
     }
 
     override val seriesDetailsSelector = "div.komik_info:has(.komik_info-content)"
@@ -268,8 +191,10 @@ class KomikCast : MangaThemesia("Komik Cast", "https://komikcast.li", "id", "/da
 
             status = seriesDetails.selectFirst(seriesStatusSelector)?.text().parseStatus()
 
-            val origThumb = seriesDetails.select(seriesThumbnailSelector).imgAttr()
-            thumbnail_url = buildCoverUrl(origThumb)
+            // gunakan element -> absUrl untuk cover
+            val coverAbs = seriesDetails.selectFirst(seriesThumbnailSelector)?.absUrl("src")
+            val coverAttr = seriesDetails.selectFirst(seriesThumbnailSelector)?.attr("src")
+            thumbnail_url = buildServiceImageUrlFromAbsolute(coverAbs ?: coverAttr)
         }
     }
 
@@ -286,44 +211,25 @@ class KomikCast : MangaThemesia("Komik Cast", "https://komikcast.li", "id", "/da
         return if (date.endsWith("ago")) {
             val value = date.split(' ')[0].toInt()
             when {
-                "min" in date -> Calendar.getInstance().apply {
-                    add(Calendar.MINUTE, -value)
-                }.timeInMillis
-                "hour" in date -> Calendar.getInstance().apply {
-                    add(Calendar.HOUR_OF_DAY, -value)
-                }.timeInMillis
-                "day" in date -> Calendar.getInstance().apply {
-                    add(Calendar.DATE, -value)
-                }.timeInMillis
-                "week" in date -> Calendar.getInstance().apply {
-                    add(Calendar.DATE, -value * 7)
-                }.timeInMillis
-                "month" in date -> Calendar.getInstance().apply {
-                    add(Calendar.MONTH, -value)
-                }.timeInMillis
-                "year" in date -> Calendar.getInstance().apply {
-                    add(Calendar.YEAR, -value)
-                }.timeInMillis
+                "min" in date -> Calendar.getInstance().apply { add(Calendar.MINUTE, -value) }.timeInMillis
+                "hour" in date -> Calendar.getInstance().apply { add(Calendar.HOUR_OF_DAY, -value) }.timeInMillis
+                "day" in date -> Calendar.getInstance().apply { add(Calendar.DATE, -value) }.timeInMillis
+                "week" in date -> Calendar.getInstance().apply { add(Calendar.DATE, -value * 7) }.timeInMillis
+                "month" in date -> Calendar.getInstance().apply { add(Calendar.MONTH, -value) }.timeInMillis
+                "year" in date -> Calendar.getInstance().apply { add(Calendar.YEAR, -value) }.timeInMillis
                 else -> 0L
             }
         } else {
-            try {
-                dateFormat.parse(date)?.time ?: 0
-            } catch (_: Exception) {
-                0L
-            }
+            try { dateFormat.parse(date)?.time ?: 0 } catch (_: Exception) { 0L }
         }
     }
 
     override fun pageListParse(document: Document): List<Page> {
         return document.select("div#chapter_body .main-reading-area img.size-full")
-            .distinctBy { img ->
-                val src = img.attr("src").ifEmpty { img.absUrl("src") }
-                src
-            }
+            .distinctBy { img -> img.absUrl("src").ifEmpty { img.attr("src") } }
             .mapIndexed { i, img ->
-                val orig = img.attr("src").ifEmpty { img.absUrl("src") }
-                val finalUrl = buildServiceImageUrl(orig) ?: orig
+                val orig = img.absUrl("src").ifEmpty { img.attr("src") }
+                val finalUrl = buildServiceImageUrlFromAbsolute(orig) ?: orig
                 Page(i, document.location(), finalUrl)
             }
     }
@@ -337,8 +243,7 @@ class KomikCast : MangaThemesia("Komik Cast", "https://komikcast.li", "id", "/da
             url.addPathSegments("page/$page/").addQueryParameter("s", query)
             return GET(url.build(), headers)
         }
-        url.addPathSegment(mangaUrlDirectory.substring(1))
-            .addPathSegments("page/$page/")
+        url.addPathSegment(mangaUrlDirectory.substring(1)).addPathSegments("page/$page/")
         return GET(url.build(), headers)
     }
 
