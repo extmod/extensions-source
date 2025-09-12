@@ -177,14 +177,20 @@ class KomikCast : ParsedHttpSource(), ConfigurableSource {
 
     // Pages
     override fun pageListParse(document: Document): List<Page> {
-        return document.select("div#chapter_body .main-reading-area img.size-full")
-            .distinctBy { img -> img.absUrl("src").ifEmpty { img.attr("src") } }
-            .mapIndexed { i, img ->
-                val orig = img.absUrl("src").ifEmpty { img.attr("src") }
-                val finalUrl = ResizeGambar(orig)
-                Page(i, document.location(), finalUrl)
+    return document.select("div#chapter_body .main-reading-area img.size-full")
+        .mapNotNull { img ->
+            val url = img.absUrl("src")
+            if (url.isBlank() || url.lowercase().endsWith("999.jpg")) {
+                null
+            } else {
+                url
             }
-    }
+        }
+        .mapIndexed { i, url ->
+            val finalUrl = ResizeGambar(url)
+            Page(i, document.location(), finalUrl)
+        }
+}
 
     override fun imageUrlParse(document: Document): String = throw UnsupportedOperationException()
     override fun imageRequest(page: Page): Request =
