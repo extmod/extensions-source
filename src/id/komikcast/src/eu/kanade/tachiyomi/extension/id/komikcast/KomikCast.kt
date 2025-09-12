@@ -32,11 +32,6 @@ class KomikCast : MangaThemesia(
     "/manga"
 ), ConfigurableSource {
 
-    companion object {
-        private const val MANGA_WHITELIST_PREF = "manga_whitelist"
-        private const val MANGA_WHITELIST_PREF_TITLE = "Whitelist Manga"
-    }
-
     // Formerly "Komik Cast (WP Manga Stream)"
     override val id = 972717448578983812
 
@@ -44,21 +39,37 @@ class KomikCast : MangaThemesia(
     
     private val resizeCover = "https://wsrv.nl/?w=110&h=150&url="
     
+    // Constants for preferences
+    companion object {
+        private const val MANGA_WHITELIST_PREF = "MANGA_WHITELIST"
+        private const val MANGA_WHITELIST_PREF_TITLE = "Manga Whitelist"
+    }
+    
     // Request untuk daftar populer
     override fun popularMangaRequest(page: Int): Request =
         GET("$baseUrl/komik/?orderby=update&page=$page", headers)
 
-    // Request untuk update terbaru
-    override fun latestUpdatesRequest(page: Int): Request {
-        return GET("$baseUrl/komik/?orderby=update&page=$page", headers)
+    // Request untuk update terbaru - FIXED
+    override fun latestUpdatesRequest(page: Int): Request = 
+        customPageRequest(page, "sortby", "update")
+
+    private fun customPageRequest(page: Int, filterKey: String, filterValue: String): Request {
+        val pagePath = if (page > 1) "page/$page/" else ""
+        return GET("$baseUrl$mangaUrlDirectory/$pagePath?$filterKey=$filterValue", headers)
     }
+    
+    // Selector untuk latest updates - ADDED
+    override fun latestUpdatesSelector(): String = searchMangaSelector()
+    
+    // Selector untuk pagination latest updates - ADDED
+    override fun latestUpdatesNextPageSelector(): String = "a.next.page-numbers"
     
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
         val url = "$baseUrl/?s=$query&page=$page".toHttpUrl().newBuilder().build()
         return GET(url, headers)
     }
     
-    // Parsing khusus untuk update terbaru
+    // Parsing khusus untuk update terbaru - UPDATED
     override fun latestUpdatesParse(response: Response): MangasPage {
         val document = response.asJsoup()
         val rawList = preferences.getString(MANGA_WHITELIST_PREF, "")
@@ -72,11 +83,11 @@ class KomikCast : MangaThemesia(
             val typeText = element.selectFirst("span.type")?.text()?.trim() ?: return@mapNotNull null
             when {
                 typeText.equals("Manhwa", true) || typeText.equals("Manhua", true) ->
-                    searchMangaFromElement(element)
+                    latestUpdatesFromElement(element)
                 typeText.equals("Manga", true) -> {
                     val titleText = element.selectFirst("h3.title")?.text()?.trim()
                     if (titleText != null && allowedManga.any { it.equals(titleText, true) }) {
-                        searchMangaFromElement(element)
+                        latestUpdatesFromElement(element)
                     } else null
                 }
                 else -> null
@@ -84,6 +95,14 @@ class KomikCast : MangaThemesia(
         }
         val hasNext = document.select(latestUpdatesNextPageSelector()).firstOrNull() != null
         return MangasPage(mangas, hasNext)
+    }
+
+    // Method untuk mengkonversi element ke SManga di latest updates - ADDED
+    override fun latestUpdatesFromElement(element: Element): SManga {
+        return super.latestUpdatesFromElement(element).apply {
+            thumbnail_url = "$resizeCover$thumbnail_url"
+            title = element.selectFirst("h3.title")!!.ownText()
+        }
     }
 
     override var baseUrl = preferences.getString("overrideBaseUrl", super.baseUrl)!!
