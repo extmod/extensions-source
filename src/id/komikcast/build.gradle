@@ -1,10 +1,7 @@
 ext {
-    extName = 'Komik Cast'
-    extClass = '.KomikCast'
-    themePkg = 'mangathemesia'
-    baseUrl = 'https://komikcast.li'
-    overrideVersionCode = 36
-    isNsfw = false
+    extName = 'Komik'
+    extClass = '.Komik'
+    extVersionCode = 1
 }
 
 apply from: "$rootDir/common.gradle"
