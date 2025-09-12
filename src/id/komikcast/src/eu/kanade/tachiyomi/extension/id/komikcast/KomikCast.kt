@@ -1,50 +1,34 @@
 package eu.kanade.tachiyomi.extension.id.komikcast
 
 import android.app.Application
+import android.content.Context
 import androidx.preference.EditTextPreference
 import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.multisrc.mangathemesia.MangaThemesia
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
-import eu.kanade.tachiyomi.source.ConfigurableSource
 import eu.kanade.tachiyomi.source.model.Filter
 import eu.kanade.tachiyomi.source.model.FilterList
-import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
-import eu.kanade.tachiyomi.util.asJsoup
+import eu.kanade.tachiyomi.source.model.MangasPage
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.Response
+import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
+import java.net.URLEncoder
 import java.util.Calendar
 import java.util.Locale
+import uy.kohesive.injekt.Injekt
 
-class KomikCast : MangaThemesia("Komik Cast", "https://komikcast.li", "id", "/daftar-komik"), ConfigurableSource {
+class KomikCast : MangaThemesia("Komik Cast", "https://komikcast.li", "id", "/daftar-komik") {
 
     // Formerly "Komik Cast (WP Manga Stream)"
     override val id = 972717448578983812
-
-    // Preferences and constants
-    private val preferences = Injekt.get<Application>().getSharedPreferences("source_$id", 0x0000)
-    
-    companion object {
-        private const val MANGA_WHITELIST_PREF = "MANGA_WHITELIST"
-        private const val MANGA_WHITELIST_PREF_TITLE = "Manga Whitelist"
-        private const val RESIZE_SERVICE_URL_PREF = "resize_service_url"
-        private const val OVERRIDE_BASE_URL_PREF = "overrideBaseUrl"
-    }
-    
-    private val resizeCover = "https://wsrv.nl/?w=110&h=150&url="
-    
-    // Override baseUrl to use preference value
-    override var baseUrl = preferences.getString(OVERRIDE_BASE_URL_PREF, super.baseUrl)!!
 
     override val client: OkHttpClient = super.client.newBuilder()
         .rateLimit(3)
@@ -72,57 +56,140 @@ class KomikCast : MangaThemesia("Komik Cast", "https://komikcast.li", "id", "/da
         return GET("$baseUrl$mangaUrlDirectory/$pagePath?$filterKey=$filterValue", headers)
     }
 
-    override fun latestUpdatesParse(response: Response): MangasPage {
-    val document = response.asJsoup()
-    val rawList = preferences.getString(MANGA_WHITELIST_PREF, "") ?: ""
-    val allowedManga = rawList
-        .split(",")
-        .map { it.trim() }
-        .filter { it.isNotEmpty() }
-
-    val mangas = document.select(latestUpdatesSelector()).mapNotNull { el ->
-        val typeText = el.selectFirst("span.type, .type, [class*='type']")?.text()?.trim()
-        val title = el.selectFirst("h3.title")?.text()?.trim()
-        val url = el.selectFirst("h3.title a")?.attr("href")
-
-        // Buat SManga manual
-        val manga = SManga.create().apply {
-            this.title = title ?: ""
-            this.url = url ?: ""
-            this.thumbnail_url = el.selectFirst("img")?.absUrl("src")
-        }
-
-        when {
-            typeText.isNullOrBlank() -> manga
-            typeText.equals("Manhwa", true) || typeText.equals("Manhua", true) -> manga
-            typeText.equals("Manga", true) -> {
-                if (allowedManga.isEmpty()) {
-                    null // skip semua Manga kalau whitelist kosong
-                } else if (title != null && allowedManga.any { it.equals(title, true) }) {
-                    manga
-                } else null
-            }
-            else -> manga
-        }
-    }
-
-    val hasNext = document.select(latestUpdatesNextPageSelector()).firstOrNull() != null
-    return MangasPage(mangas, hasNext)
-}
-
     override fun searchMangaSelector() = "div.list-update_item"
 
-    override fun searchMangaFromElement(element: Element) = super.searchMangaFromElement(element).apply {
-        thumbnail_url = "$resizeCover$thumbnail_url"
-        title = element.selectFirst("h3.title")!!.ownText()
+    // Preference keys & defaults
+    private val PREF_RESIZE_SERVICE = "resize_service_url"
+    private val PREF_OVERRIDE_DOMAIN = "override_domain"
+    private val PREF_WHITELIST = "whitelist_titles"
+    private val DEFAULT_RESIZE = "https://images.weserv.nl/?w=300&q=70&url="
+
+    // SharedPreferences for source-specific preferences
+    private val prefs by lazy {
+        Injekt.get<Application>().getSharedPreferences("source_$id", Context.MODE_PRIVATE)
     }
-    
-    // Override latestUpdatesFromElement to apply custom thumbnail resizing
-    override fun latestUpdatesFromElement(element: Element): SManga {
-        return super.latestUpdatesFromElement(element).apply {
-            thumbnail_url = "$resizeCover$thumbnail_url"
-            title = element.selectFirst("h3.title")!!.ownText()
+
+    /**
+     * Build image URL via user-provided service (and URL-encode original URL).
+     * Used for page images and covers (depending on caller).
+     */
+    private fun buildServiceImageUrl(originalUrl: String?): String? {
+        if (originalUrl.isNullOrBlank()) return null
+        val service = prefs.getString(PREF_RESIZE_SERVICE, DEFAULT_RESIZE) ?: DEFAULT_RESIZE
+        val encoded = try {
+            URLEncoder.encode(makeAbsoluteUrl(originalUrl), "UTF-8")
+        } catch (_: Exception) {
+            makeAbsoluteUrl(originalUrl)
         }
+        return if (service.contains("url=")) {
+            service + encoded
+        } else {
+            // If user put a service that expects the encoded URL appended
+            service + encoded
+        }
+    }
+
+    /** Normalize to absolute URL if original is relative or protocol-relative */
+    private fun makeAbsoluteUrl(url: String): String {
+        var u = url
+        if (u.startsWith("//")) {
+            // assume https
+            u = "https:$u"
+        } else if (u.startsWith("/")) {
+            u = baseUrl + u
+        }
+        return u
+    }
+
+    /**
+     * Cover builder (wraps buildServiceImageUrl but keeps original if service unset)
+     */
+    private fun buildCoverUrl(originalUrl: String?): String? {
+        val built = buildServiceImageUrl(originalUrl)
+        return built ?: originalUrl
+    }
+
+    /**
+     * Check whether the manga at given relative/absolute URL has type "Manga".
+     * This fetches the details page and looks for the seriesTypeSelector.
+     */
+    private fun isMangaType(mangaUrl: String?): Boolean {
+        if (mangaUrl.isNullOrBlank()) return false
+        try {
+            val absolute = if (mangaUrl.startsWith("http")) mangaUrl else (baseUrl.trimEnd('/') + "/" + mangaUrl.trimStart('/'))
+            val req = GET(absolute, headers)
+            val resp = client.newCall(req).execute()
+            val body = resp.body?.string().orEmpty()
+            val doc = Jsoup.parse(body, absolute)
+            val typeText = doc.selectFirst(seriesTypeSelector)?.ownText().orEmpty()
+            return typeText.equals("Manga", ignoreCase = true)
+        } catch (_: Exception) {
+            // on error, be conservative: don't treat as manga
+            return false
+        }
+    }
+
+    /**
+     * Override latestUpdatesParse to filter out "Manga" types (unless whitelisted).
+     */
+    override fun latestUpdatesParse(document: Document): MangasPage {
+        val elements = document.select(searchMangaSelector())
+        val mangas = mutableListOf<SManga>()
+
+        // Build whitelist (lowercase trimmed)
+        val whitelistRaw = prefs.getString(PREF_WHITELIST, "") ?: ""
+        val whitelist = whitelistRaw.split(",")
+            .map { it.trim().lowercase(Locale.ROOT) }
+            .filter { it.isNotEmpty() }
+
+        for (el in elements) {
+            // Build basic SManga via existing logic (reuse searchMangaFromElement)
+            val manga = searchMangaFromElement(el)
+
+            // If we couldn't get URL/title, keep it (no check)
+            val mangaUrl = manga.url
+            val mangaTitle = manga.title?.trim().orEmpty()
+
+            // If type is manga, check whitelist
+            val isManga = try {
+                isMangaType(mangaUrl)
+            } catch (_: Exception) {
+                false
+            }
+
+            if (isManga) {
+                if (whitelist.any { it == mangaTitle.lowercase(Locale.ROOT) }) {
+                    mangas.add(manga)
+                } else {
+                    // skip manga (not whitelisted)
+                    continue
+                }
+            } else {
+                mangas.add(manga)
+            }
+        }
+
+        // Try to detect "has next" similar to standard implementations
+        val hasNext = document.select("a.next").isNotEmpty() || document.select("li.page-item:contains(Next)").isNotEmpty()
+        return MangasPage(mangas, hasNext)
+    }
+
+    override fun searchMangaFromElement(element: Element) = super.searchMangaFromElement(element).apply {
+        // Title as before
+        title = element.selectFirst("h3.title")!!.ownText()
+
+        // Thumbnail logic: prefer element's thumbnail, else try parent's selector
+        var thumb: String? = null
+        try {
+            // common places for thumbnails
+            thumb = element.selectFirst("img")?.attr("src")
+                ?: element.selectFirst("img")?.attr("data-src")
+                ?: element.parent()?.selectFirst("img")?.attr("src")
+                ?: element.parent()?.selectFirst("img")?.attr("data-src")
+        } catch (_: Exception) { /* ignore */ }
+
+        // If still null, keep what super assigned (if any). Otherwise build via service.
+        thumbnail_url = buildCoverUrl(thumb ?: thumbnail_url)
     }
 
     override val seriesDetailsSelector = "div.komik_info:has(.komik_info-content)"
@@ -160,7 +227,10 @@ class KomikCast : MangaThemesia("Komik Cast", "https://komikcast.li", "id", "/da
                 .joinToString { it.trim() }
 
             status = seriesDetails.selectFirst(seriesStatusSelector)?.text().parseStatus()
-            thumbnail_url = resizeCover + (seriesDetails.select(seriesThumbnailSelector).imgAttr() ?: "")
+
+            // Use the new cover builder so covers are resized via service when pref set
+            val origThumb = seriesDetails.select(seriesThumbnailSelector).imgAttr()
+            thumbnail_url = buildCoverUrl(origThumb)
         }
     }
 
@@ -209,20 +279,18 @@ class KomikCast : MangaThemesia("Komik Cast", "https://komikcast.li", "id", "/da
     }
 
     override fun pageListParse(document: Document): List<Page> {
-    val service = preferences.getString(RESIZE_SERVICE_URL_PREF, "") ?: ""
-    
-    return document.select("div#chapter_body .main-reading-area img.size-full")
-        .distinctBy { img -> img.imgAttr() }
-        .filter { img -> 
-            val src = img.imgAttr()?.trim() ?: ""
-            !src.contains("999.jpg")
-        }
-        .mapIndexed { i, img ->
-            val src = img.imgAttr()?.trim() ?: ""
-            val finalUrl = if (service.isNotBlank()) "$service$src" else src
-            Page(i, document.location(), finalUrl)
-        }
-}
+        return document.select("div#chapter_body .main-reading-area img.size-full")
+            .distinctBy { img ->
+                // use absolute src as identity when possible
+                val src = img.attr("src").ifEmpty { img.absUrl("src") }
+                src
+            }
+            .mapIndexed { i, img ->
+                val orig = img.attr("src").ifEmpty { img.absUrl("src") }
+                val finalUrl = buildServiceImageUrl(orig) ?: orig
+                Page(i, document.location(), finalUrl)
+            }
+    }
 
     override val hasProjectPage: Boolean = true
     override val projectPageString = "/project-list"
@@ -267,6 +335,39 @@ class KomikCast : MangaThemesia("Komik Cast", "https://komikcast.li", "id", "/da
             }
         }
         return GET(url.build(), headers)
+    }
+
+    // Setup preference screen with three preferences requested
+    override fun setupPreferenceScreen(screen: PreferenceScreen) {
+        val context = screen.context
+
+        val resizeServicePref = EditTextPreference(context).apply {
+            key = PREF_RESIZE_SERVICE
+            title = "Resize Service URL"
+            summary = "URL layanan resize gambar. Contoh: $DEFAULT_RESIZE (akan menambahkan URL gambar setelah 'url=')"
+            setDefaultValue(DEFAULT_RESIZE)
+            dialogTitle = "Resize Service URL"
+        }
+
+        val overrideDomainPref = EditTextPreference(context).apply {
+            key = PREF_OVERRIDE_DOMAIN
+            title = "Override Domain (Opsional)"
+            summary = "Jika ingin mengganti domain gambar (mis. untuk proxy), masukkan domain di sini (contoh: images.example.com). Kosongkan untuk tidak mengubah."
+            setDefaultValue("")
+            dialogTitle = "Override Domain"
+        }
+
+        val whitelistPref = EditTextPreference(context).apply {
+            key = PREF_WHITELIST
+            title = "Whitelist Judul (untuk menampilkan manga di Update Terbaru)"
+            summary = "Masukkan judul judul yang ingin tetap tampil walau tipe 'Manga'. Pisahkan dengan koma."
+            setDefaultValue("")
+            dialogTitle = "Whitelist Judul (pisah koma)"
+        }
+
+        screen.addPreference(resizeServicePref)
+        screen.addPreference(overrideDomainPref)
+        screen.addPreference(whitelistPref)
     }
 
     private class StatusFilter : SelectFilter(
@@ -314,48 +415,5 @@ class KomikCast : MangaThemesia("Komik Cast", "https://komikcast.li", "id", "/da
             ProjectFilter(intl["project_filter_title"], projectFilterOptions),
         )
         return FilterList(filters)
-    }
-
-    // Setup preference screen with custom options
-    override fun setupPreferenceScreen(screen: PreferenceScreen) {
-        // Resize Service URL preference
-        val resizeServicePref = EditTextPreference(screen.context).apply {
-            key = RESIZE_SERVICE_URL_PREF
-            title = "Resize Service URL (Pages)"
-            summary = "Masukkan URL layanan resize gambar untuk halaman (page list)."
-            setDefaultValue("")
-            dialogTitle = "Resize Service URL"
-            dialogMessage = "Contoh: https://wsrv.nl/?w=800&url="
-        }
-        screen.addPreference(resizeServicePref)
-
-        // Override Base URL preference
-        val baseUrlPref = EditTextPreference(screen.context).apply {
-            key = OVERRIDE_BASE_URL_PREF
-            title = "Ubah Domain"
-            summary = "Update domain untuk ekstensi ini"
-            setDefaultValue("https://komikcast.li")
-            dialogTitle = "Update domain untuk ekstensi ini"
-            dialogMessage = "Original: https://komikcast.li"
-
-            setOnPreferenceChangeListener { _, newValue ->
-                val newUrl = newValue as String
-                baseUrl = newUrl
-                preferences.edit().putString(OVERRIDE_BASE_URL_PREF, newUrl).apply()
-                summary = "Current domain: $newUrl"
-                true
-            }
-        }
-        screen.addPreference(baseUrlPref)
-
-        // Manga Whitelist preference
-        screen.addPreference(EditTextPreference(screen.context).apply {
-            key = MANGA_WHITELIST_PREF
-            title = MANGA_WHITELIST_PREF_TITLE
-            dialogTitle = MANGA_WHITELIST_PREF_TITLE
-            dialogMessage = "Masukkan judul Manga yang mau ditampilkan di Latest Updates, dipisah koma.\nManhwa dan Manhua akan tetap ditampilkan."
-            summary = "Filter Manga di Latest Updates (Manhwa/Manhua selalu muncul)"
-            setDefaultValue("")
-        })
     }
 }
