@@ -72,51 +72,9 @@ class KomikCast : MangaThemesia("Komik Cast", "https://komikcast.li", "id", "/da
         return GET("$baseUrl$mangaUrlDirectory/$pagePath?$filterKey=$filterValue", headers)
     }
 
-override fun latestUpdatesParse(response: Response): MangasPage {
-    val document = response.asJsoup()
-    val rawList = preferences.getString(MANGA_WHITELIST_PREF, "") ?: ""
-    val allowedManga = rawList
-        .split(",")
-        .map { it.trim() }
-        .filter { it.isNotEmpty() }
-
-    val mangas = document.select(latestUpdatesSelector()).mapNotNull { element ->
-        // Debug: ambil type text dengan fallback
-        val typeText = element.selectFirst("span.type")?.text()?.trim()
-        
-        when {
-            // Jika tidak ada type atau kosong, tampilkan semua
-            typeText.isNullOrBlank() -> latestUpdatesFromElement(element)
-            
-            // Selalu tampilkan Manhwa dan Manhua
-            typeText.equals("Manhwa", ignoreCase = true) || 
-            typeText.equals("Manhua", ignoreCase = true) -> {
-                latestUpdatesFromElement(element)
-            }
-            
-            // Untuk Manga, cek whitelist jika ada
-            typeText.equals("Manga", ignoreCase = true) -> {
-                if (allowedManga.isEmpty()) {
-                    // Jika whitelist kosong, tampilkan semua manga
-                    latestUpdatesFromElement(element)
-                } else {
-                    // Jika ada whitelist, cek apakah manga ada di list
-                    val titleText = element.selectFirst("h3.title a, h3.title")?.text()?.trim()
-                    if (titleText != null && allowedManga.any { it.equals(titleText, ignoreCase = true) }) {
-                        latestUpdatesFromElement(element)
-                    } else {
-                        null // Skip manga ini
-                    }
-                }
-            }
-            
-            // Type lain (jika ada), tampilkan
-            else -> latestUpdatesFromElement(element)
-        }
-    }
-    
-    val hasNext = document.select(latestUpdatesNextPageSelector()).firstOrNull() != null
-    return MangasPage(mangas, hasNext)
+    override fun latestUpdatesParse(response: Response): MangasPage {
+    // Sementara bypass filtering untuk testing
+    return super.latestUpdatesParse(response)
 }
 
     override fun searchMangaSelector() = "div.list-update_item"
