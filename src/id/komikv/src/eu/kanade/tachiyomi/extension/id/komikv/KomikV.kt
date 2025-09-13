@@ -2,7 +2,6 @@ package eu.kanade.tachiyomi.extension.id.komikv
 
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.source.model.FilterList
-import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
@@ -10,7 +9,6 @@ import eu.kanade.tachiyomi.source.online.ParsedHttpSource
 import okhttp3.Headers
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import java.text.SimpleDateFormat
@@ -19,7 +17,7 @@ import java.util.Locale
 
 class KomikV : ParsedHttpSource() {
 
-    override val name = "Komikv"
+    override val name = "KomikV"
     override val baseUrl = "https://komikav.net"
     override val lang = "id"
     override val supportsLatest = true
@@ -182,45 +180,5 @@ class KomikV : ParsedHttpSource() {
         return document.selectFirst("img.lazyimage, .reader-area img")?.let { img ->
             img.absUrl("data-src").ifEmpty { img.absUrl("src") }
         } ?: ""
-    }
-
-    // Handle potential pagination for popular/latest
-    override fun popularMangaParse(response: Response): MangasPage {
-        val document = response.asJsoup()
-        val mangas = document.select(popularMangaSelector()).map { element ->
-            popularMangaFromElement(element)
-        }
-
-        val hasNextPage = popularMangaNextPageSelector()?.let { selector ->
-            document.select(selector).isNotEmpty()
-        } ?: false
-
-        return MangasPage(mangas, hasNextPage)
-    }
-
-    override fun latestUpdatesParse(response: Response): MangasPage {
-        val document = response.asJsoup()
-        val mangas = document.select(latestUpdatesSelector()).map { element ->
-            latestUpdatesFromElement(element)
-        }
-
-        val hasNextPage = latestUpdatesNextPageSelector()?.let { selector ->
-            document.select(selector).isNotEmpty()
-        } ?: false
-
-        return MangasPage(mangas, hasNextPage)
-    }
-
-    override fun searchMangaParse(response: Response): MangasPage {
-        val document = response.asJsoup()
-        val mangas = document.select(searchMangaSelector()).map { element ->
-            searchMangaFromElement(element)
-        }
-
-        val hasNextPage = searchMangaNextPageSelector()?.let { selector ->
-            document.select(selector).isNotEmpty()
-        } ?: false
-
-        return MangasPage(mangas, hasNextPage)
     }
 }
