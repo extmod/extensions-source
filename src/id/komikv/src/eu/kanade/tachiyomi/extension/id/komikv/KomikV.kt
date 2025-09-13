@@ -19,7 +19,7 @@ import java.util.Locale
 
 class KomikV : ParsedHttpSource() {
 
-    override val name = "KomikV"
+    override val name = "Komikv"
     override val baseUrl = "https://komikav.net"
     override val lang = "id"
     override val supportsLatest = true
@@ -42,16 +42,16 @@ class KomikV : ParsedHttpSource() {
 
     override fun popularMangaFromElement(element: Element): SManga {
         return SManga.create().apply {
-            val titleElement = element.selectFirst("h2 a, h2") 
+            val titleElement = element.selectFirst("h2 a, h2")
             val linkElement = element.selectFirst("a[href*='/manga/']") ?: element.selectFirst("a")
             val imgElement = element.selectFirst("img.lazyimage, img")
 
             title = titleElement?.text()?.trim() ?: imgElement?.attr("alt")?.trim() ?: ""
             url = linkElement?.attr("href") ?: ""
-            
+
             thumbnail_url = imgElement?.let { img ->
-                img.attr("data-src").ifEmpty { 
-                    img.attr("src") 
+                img.attr("data-src").ifEmpty {
+                    img.attr("src")
                 }
             } ?: ""
         }
@@ -86,14 +86,14 @@ class KomikV : ParsedHttpSource() {
     override fun mangaDetailsParse(document: Document): SManga {
         return SManga.create().apply {
             title = document.selectFirst("h1, .entry-title, .post-title")?.text()?.trim() ?: ""
-            
+
             author = document.selectFirst(".author, .meta-author, .manga-info .author")?.text()?.replace("Author:", "")?.trim()
-            
+
             description = document.selectFirst(".synopsis, .summary, .description, .entry-content p")?.text()?.trim()
                 ?: document.selectFirst(".sinopsis")?.text()?.trim() ?: ""
-            
+
             genre = document.select(".genre a, .genres a, .tag a").joinToString { it.text() }
-            
+
             status = document.selectFirst(".status, .manga-status")?.text()?.let { statusText ->
                 when {
                     statusText.contains("Ongoing", true) || statusText.contains("On-going", true) -> SManga.ONGOING
@@ -102,7 +102,7 @@ class KomikV : ParsedHttpSource() {
                     else -> SManga.UNKNOWN
                 }
             } ?: SManga.UNKNOWN
-            
+
             thumbnail_url = document.selectFirst(".post-thumb img, .manga-thumb img, img.lazyimage")?.let { img ->
                 img.absUrl("data-src").ifEmpty { img.absUrl("src") }
             } ?: ""
@@ -115,12 +115,12 @@ class KomikV : ParsedHttpSource() {
     override fun chapterFromElement(element: Element): SChapter {
         return SChapter.create().apply {
             val link = if (element.tagName() == "a") element else element.selectFirst("a")!!
-            
+
             name = link.text().trim()
             url = link.attr("href")
-            
-            date_upload = element.selectFirst(".date, .chapter-date, .time, span.float-right")?.text()?.let { 
-                parseChapterDate(it) 
+
+            date_upload = element.selectFirst(".date, .chapter-date, .time, span.float-right")?.text()?.let {
+                parseChapterDate(it)
             } ?: 0
         }
     }
@@ -160,21 +160,21 @@ class KomikV : ParsedHttpSource() {
     // Page List
     override fun pageListParse(document: Document): List<Page> {
         val pages = mutableListOf<Page>()
-        
+
         // Try multiple selectors for images
         val images = document.select("img.lazyimage, .reader-area img, #chapter img, .main-reading-area img, .page-break img, .entry-content img")
             .ifEmpty { document.select("img[src*='.jpg'], img[src*='.png'], img[src*='.webp']") }
-        
+
         images.forEachIndexed { index, img ->
-            val imageUrl = img.absUrl("data-src").ifEmpty { 
-                img.absUrl("src") 
+            val imageUrl = img.absUrl("data-src").ifEmpty {
+                img.absUrl("src")
             }
-            
+
             if (imageUrl.isNotEmpty() && (imageUrl.contains(".jpg") || imageUrl.contains(".png") || imageUrl.contains(".webp"))) {
                 pages.add(Page(index, "", imageUrl))
             }
         }
-        
+
         return pages
     }
 
@@ -190,11 +190,11 @@ class KomikV : ParsedHttpSource() {
         val mangas = document.select(popularMangaSelector()).map { element ->
             popularMangaFromElement(element)
         }
-        
+
         val hasNextPage = popularMangaNextPageSelector()?.let { selector ->
             document.select(selector).isNotEmpty()
         } ?: false
-        
+
         return MangasPage(mangas, hasNextPage)
     }
 
@@ -203,11 +203,11 @@ class KomikV : ParsedHttpSource() {
         val mangas = document.select(latestUpdatesSelector()).map { element ->
             latestUpdatesFromElement(element)
         }
-        
+
         val hasNextPage = latestUpdatesNextPageSelector()?.let { selector ->
             document.select(selector).isNotEmpty()
         } ?: false
-        
+
         return MangasPage(mangas, hasNextPage)
     }
 
@@ -216,11 +216,11 @@ class KomikV : ParsedHttpSource() {
         val mangas = document.select(searchMangaSelector()).map { element ->
             searchMangaFromElement(element)
         }
-        
+
         val hasNextPage = searchMangaNextPageSelector()?.let { selector ->
             document.select(selector).isNotEmpty()
         } ?: false
-        
+
         return MangasPage(mangas, hasNextPage)
     }
 }
