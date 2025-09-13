@@ -58,8 +58,16 @@ class Kiryuu : MangaThemesia(
     val doc = response.asJsoup()
     val service = preferences.getString("resize_service_url", "")
 
-    return doc.select(pageSelector).mapIndexed { i, img ->
-        val src = img.imgAttr().trim()
+    val srcList = doc.select(pageSelector)
+        .map { it.imgAttr().trim() }
+        .filter { it.isNotEmpty() }
+        .filter { src ->
+            val check = src.substringBefore("?")
+            !check.contains("999.jpg", ignoreCase = true) &&
+            !check.contains("logov2.png", ignoreCase = true)
+        }
+
+    return srcList.mapIndexed { i, src ->
         val finalUrl = "$service$src"
         Page(i, "", finalUrl)
     }
