@@ -271,7 +271,7 @@ class KomikV : ParsedHttpSource() {
     override fun popularMangaSelector() = "div.grid div.flex.overflow-hidden, div.grid div.neu, .list-update_item, .bsx"
     override fun popularMangaFromElement(element: Element): SManga {
         return SManga.create().apply {
-            title = element.selectFirst("h2 a, h2, .title, .entry-title")?.text()?.trim().orEmpty()
+            title = element.selectFirst("h2.font-bold, h2 a, h2")?.text()?.trim().orEmpty()
             val link = element.selectFirst("a[href*='/comic/'], a[href*='/manga/']") ?: element.selectFirst("a")
             val linkHref = link?.attr("href").orEmpty()
             url = if (linkHref.startsWith(baseUrl)) linkHref.removePrefix(baseUrl) else linkHref
