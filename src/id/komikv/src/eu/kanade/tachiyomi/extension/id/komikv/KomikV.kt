@@ -26,7 +26,7 @@ class KomikV : ParsedHttpSource() {
     override val lang = "id"
     override val supportsLatest = true
 
-    // Jika environment Anda tidak menyediakan network.cloudflareClient, ganti menjadi OkHttpClient()
+    // Jika build Anda tidak punya network.cloudflareClient, ganti menjadi OkHttpClient()
     override val client: OkHttpClient = network.cloudflareClient
 
     override fun headersBuilder(): Headers.Builder = Headers.Builder()
@@ -35,9 +35,7 @@ class KomikV : ParsedHttpSource() {
         .add("Accept-Language", "id-ID,id;q=0.9,en;q=0.8")
         .add("Referer", baseUrl)
 
-    // ----------------------
-    // JSON q-data._objs heuristik
-    // ----------------------
+    // --- Utilities untuk JSON / date ---
     private fun tryParseJSONObject(text: String): JSONObject? {
         return try {
             JSONObject(text)
@@ -46,67 +44,178 @@ class KomikV : ParsedHttpSource() {
         }
     }
 
+    private fun tryParseJSONArray(text: String): JSONArray? {
+        return try {
+            JSONArray(text)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun tryParseDate(dateStr: String?): Long {
+        if (dateStr.isNullOrBlank()) return 0L
+        try {
+            val s = dateStr
+            return when {
+                s.contains("jam lalu", true) -> {
+                    val h = s.replace(Regex("\\D"), "").toIntOrNull() ?: 0
+                    System.currentTimeMillis() - h * 3600L * 1000L
+                }
+                s.contains("hari lalu", true) -> {
+                    val d = s.replace(Regex("\\D"), "").toIntOrNull() ?: 0
+                    System.currentTimeMillis() - d * 24L * 3600L * 1000L
+                }
+                else -> {
+                    val df = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.getDefault())
+                    try { df.parse(s)?.time ?: 0L } catch (_: Exception) {
+                        val df2 = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+                        df2.parse(s)?.time ?: 0L
+                    }
+                }
+            }
+        } catch (_: Exception) {
+            return 0L
+        }
+    }
+
+    // --- Heuristik parsing _objs dari q-data.json ---
     private fun parseQDataObjsToManga(root: JSONObject): List<SManga> {
         val out = mutableListOf<SManga>()
         if (!root.has("_objs")) return out
         val arr = root.optJSONArray("_objs") ?: return out
-
+        val n = arr.length()
         var i = 0
-        while (i < arr.length()) {
-            val maybeTitle = arr.optString(i, "").trim()
-            if (maybeTitle.isBlank() || maybeTitle.length < 3) {
-                i++
-                continue
-            }
 
-            // cari image url setelah title
-            var imageUrl = ""
+        fun getStringAt(idx: Int): String {
+            return if (idx in 0 until n) arr.optString(idx, "") else ""
+        }
+
+        val imageRegex = Regex("https?://[^\\s'\"]+\\.(?:jpg|jpeg|png|webp)(?:\\?[^\\s'\"]*)?")
+        val slugRegex = Regex("^[a-z0-9\\-]+$")
+        val hasLetterRegex = Regex("\\p{L}")
+
+        while (i < n) {
+            // Jika kita menemukan gambar, kita cari judul mundur beberapa elemen ke belakang
+            val maybe = getStringAt(i)
             var imageIdx = -1
-            var j = i + 1
-            while (j < arr.length()) {
-                val s = arr.optString(j, "")
-                if (s.matches(Regex("https?://[^\\s'\"]+\\.(?:jpg|jpeg|png|webp)(?:\\?[^\\s'\"]*)?"))) {
-                    imageUrl = s
-                    imageIdx = j
-                    break
+            if (maybe.matches(imageRegex)) {
+                imageIdx = i
+            } else {
+                // coba cari gambar sedikit maju (beberapa entri didahului oleh teks)
+                var j = i
+                while (j < minOf(n, i + 6)) {
+                    if (getStringAt(j).matches(imageRegex)) {
+                        imageIdx = j
+                        break
+                    }
+                    j++
                 }
-                j++
             }
 
-            // cari slug setelah image
-            var slug = ""
-            var slugIdx = -1
             if (imageIdx >= 0) {
+                // cari judul mundur hingga 6 langkah sebelum imageIdx
+                var title = ""
+                var titleIdx = -1
+                val startSearch = maxOf(0, imageIdx - 6)
+                for (k in imageIdx - 1 downTo startSearch) {
+                    val cand = getStringAt(k).trim()
+                    if (cand.isEmpty()) continue
+                    // valid title harus mengandung huruf (bukan angka murni) dan panjang minimal 4
+                    if (hasLetterRegex.containsMatchIn(cand) && !cand.matches(Regex("^\\d+\$")) && cand.length >= 4) {
+                        title = cand
+                        titleIdx = k
+                        break
+                    }
+                }
+
+                // jika gak ketemu dengan mundur, coba cari maju dari startSearch
+                if (title.isEmpty()) {
+                    for (k in startSearch until imageIdx) {
+                        val cand = getStringAt(k).trim()
+                        if (cand.isEmpty()) continue
+                        if (hasLetterRegex.containsMatchIn(cand) && !cand.matches(Regex("^\\d+\$")) && cand.length >= 4) {
+                            title = cand
+                            titleIdx = k
+                            break
+                        }
+                    }
+                }
+
+                // cari slug setelah gambar
+                var slug = ""
+                var slugIdx = -1
                 var k = imageIdx + 1
-                while (k < arr.length()) {
-                    val s = arr.optString(k, "")
-                    if (s.matches(Regex("^[a-z0-9\\-]{3,}$"))) {
+                while (k < minOf(n, imageIdx + 8)) {
+                    val s = getStringAt(k)
+                    if (s.matches(slugRegex)) {
                         slug = s
                         slugIdx = k
                         break
                     }
                     k++
                 }
-            }
 
-            // synopsis: ambil kandidat teks pendek setelah title
-            var synopsis = ""
-            for (sIdx in i + 1 until minOf(i + 6, arr.length())) {
-                val cand = arr.optString(sIdx, "")
-                if (cand.length > synopsis.length && !cand.startsWith("http", true)) synopsis = cand
-            }
-
-            if (imageUrl.isNotEmpty() && slug.isNotEmpty()) {
-                val manga = SManga.create().apply {
-                    title = maybeTitle
-                    description = synopsis
-                    // Pola url ini asumsi situs pakai /comic/slug — ubah ke /manga/ jika perlu
-                    url = "/comic/$slug"
-                    thumbnail_url = imageUrl
+                // cari synopsis: ambil teks yang antara titleIdx+1 sampai imageIdx-1 terpanjang
+                var synopsis = ""
+                if (titleIdx >= 0) {
+                    for (sIdx in titleIdx + 1 until imageIdx) {
+                        val cand = getStringAt(sIdx)
+                        if (cand.length > synopsis.length && !cand.startsWith("http", true)) synopsis = cand
+                    }
+                } else {
+                    // fallback: ambil elemen sebelum image jika panjang
+                    val cand = getStringAt(imageIdx - 1)
+                    if (cand.isNotBlank() && cand.length >= 10) synopsis = cand
                 }
-                out.add(manga)
-                i = if (slugIdx >= 0) slugIdx + 1 else imageIdx + 1
-                continue
+
+                if (title.isNotBlank() && slug.isNotBlank()) {
+                    val manga = SManga.create().apply {
+                        this.title = title
+                        this.description = synopsis
+                        this.thumbnail_url = getStringAt(imageIdx)
+                        // buat url relatif ke situs
+                        this.url = if (slug.startsWith("/")) "/comic/$slug" else "/comic/$slug"
+                    }
+                    out.add(manga)
+                    // lompat indeks melewati entri yang baru dipakai
+                    i = maxOf(imageIdx + 1, slugIdx + 1).coerceAtLeast(i + 1)
+                    continue
+                }
+            }
+
+            // jika tidak menemukan image di dekat i, coba jika arr[i] sendiri sudah judul yang valid (cadangan)
+            val cand2 = getStringAt(i).trim()
+            if (cand2.isNotBlank() && hasLetterRegex.containsMatchIn(cand2) && !cand2.matches(Regex("^\\d+\$")) && cand2.length >= 4) {
+                // coba cari image sedikit setelah
+                var img = ""
+                var j = i + 1
+                while (j < minOf(n, i + 8)) {
+                    val s = getStringAt(j)
+                    if (s.matches(imageRegex)) { img = s; break }
+                    j++
+                }
+                val slugCandidate = run {
+                    var sl = ""
+                    var kk = j + 1
+                    while (kk < minOf(n, j + 8)) {
+                        val s = getStringAt(kk)
+                        if (s.matches(slugRegex)) { sl = s; break }
+                        kk++
+                    }
+                    sl
+                }
+                if (img.isNotBlank() && slugCandidate.isNotBlank()) {
+                    val synopsis = getStringAt(i + 1)
+                    val manga = SManga.create().apply {
+                        title = cand2
+                        description = synopsis
+                        thumbnail_url = img
+                        url = "/comic/$slugCandidate"
+                    }
+                    out.add(manga)
+                    i = j + 1
+                    continue
+                }
             }
 
             i++
@@ -115,26 +224,23 @@ class KomikV : ParsedHttpSource() {
         return out
     }
 
-    // ----------------------
-    // Popular
-    // ----------------------
-    override fun popularMangaRequest(page: Int): Request {
-        return GET("$baseUrl/q-data.json?page=$page", headers)
-    }
+    // --- Popular / paging ---
+    override fun popularMangaRequest(page: Int): Request = GET("$baseUrl/q-data.json?page=$page", headers)
 
     override fun popularMangaParse(response: Response): MangasPage {
         val body = response.body?.string().orEmpty()
 
-        // 1) coba parse special q-data JSON
+        // 1) coba parse q-data JSON _objs
         try {
             val root = tryParseJSONObject(body)
             if (root != null) {
                 val parsed = parseQDataObjsToManga(root)
-                if (parsed.isNotEmpty()) return MangasPage(parsed, false)
+                // jika kita menemukan entri dari JSON, kembalikan dan biarkan app coba next page bila parsed tidak kosong
+                if (parsed.isNotEmpty()) return MangasPage(parsed, parsed.isNotEmpty())
             }
         } catch (_: Exception) {}
 
-        // 2) fallback: parse HTML
+        // 2) fallback HTML parsing
         try {
             val doc = Jsoup.parse(body, baseUrl)
             val elements = doc.select(popularMangaSelector())
@@ -163,21 +269,14 @@ class KomikV : ParsedHttpSource() {
 
     override fun popularMangaNextPageSelector() = "a:contains(Next), a:contains(›), .next-page, [href*='page=']"
 
-    // ----------------------
-    // Latest
-    // ----------------------
-    override fun latestUpdatesRequest(page: Int): Request {
-        return GET("$baseUrl/q-data.json?page=$page&latest=1", headers)
-    }
-
+    // --- Latest (re-use) ---
+    override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/q-data.json?page=$page&latest=1", headers)
     override fun latestUpdatesParse(response: Response): MangasPage = popularMangaParse(response)
     override fun latestUpdatesSelector() = popularMangaSelector()
     override fun latestUpdatesFromElement(element: Element) = popularMangaFromElement(element)
     override fun latestUpdatesNextPageSelector() = popularMangaNextPageSelector()
 
-    // ----------------------
-    // Search
-    // ----------------------
+    // --- Search ---
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
         return if (query.isNotEmpty()) {
             GET("$baseUrl/q-data.json?search=${java.net.URLEncoder.encode(query, "UTF-8")}&page=$page", headers)
@@ -191,11 +290,9 @@ class KomikV : ParsedHttpSource() {
     override fun searchMangaFromElement(element: Element) = popularMangaFromElement(element)
     override fun searchMangaNextPageSelector() = popularMangaNextPageSelector()
 
-    // ----------------------
-    // Manga details
-    // ----------------------
+    // --- Manga details ---
     override fun mangaDetailsParse(document: Document): SManga {
-        // coba parse JSON yang mungkin tertanam di text
+        // coba parse JSON yang tertanam di text
         val raw = document.text()
         try {
             val root = tryParseJSONObject(raw)
@@ -205,13 +302,11 @@ class KomikV : ParsedHttpSource() {
             }
         } catch (_: Exception) {}
 
-        // fallback HTML parsing (aman terhadap null)
         return SManga.create().apply {
             title = document.selectFirst("h1, .entry-title, .post-title")?.text()?.trim().orEmpty()
             author = document.selectFirst(".author, .meta-author")?.text()?.replace("Author:", "")?.trim().orEmpty()
             description = document.selectFirst(".synopsis, .summary, .entry-content p")?.text()?.trim().orEmpty()
             genre = document.select(".genre a, .genres a, .tag a").joinToString { it.text() }
-
             val statusText = document.selectFirst(".status, .manga-status")?.text().orEmpty()
             status = when {
                 statusText.contains("ongoing", true) -> SManga.ONGOING
@@ -219,16 +314,13 @@ class KomikV : ParsedHttpSource() {
                 statusText.contains("hiatus", true) -> SManga.ON_HIATUS
                 else -> SManga.UNKNOWN
             }
-
             val thumb1 = document.selectFirst(".post-thumb img, img.lazyimage")?.absUrl("data-src").orEmpty()
             val thumb2 = document.selectFirst(".post-thumb img, img")?.absUrl("src").orEmpty()
             thumbnail_url = if (thumb1.isNotBlank()) thumb1 else if (thumb2.isNotBlank()) thumb2 else ""
         }
     }
 
-    // ----------------------
-    // Chapters
-    // ----------------------
+    // --- Chapters ---
     override fun chapterListSelector() = ".chapter-list a, .chapters a, ul.chapters li a, .wp-manga-chapter a, a[href*='/chapter/']"
 
     override fun chapterFromElement(element: Element): SChapter {
@@ -244,11 +336,10 @@ class KomikV : ParsedHttpSource() {
         }
     }
 
-    // Pada ParsedHttpSource klasik kadang signature chapterListParse menerima Response
     override fun chapterListParse(response: Response): List<SChapter> {
         val body = response.body?.string().orEmpty()
 
-        // coba parse JSON chapters
+        // coba parse JSON chapters (beberapa endpoint mungkin mengembalikan objek chapters)
         try {
             val root = tryParseJSONObject(body)
             if (root != null) {
@@ -277,7 +368,7 @@ class KomikV : ParsedHttpSource() {
             }
         } catch (_: Exception) {}
 
-        // fallback HTML parse
+        // fallback HTML
         val doc = Jsoup.parse(body, baseUrl)
         val elems = doc.select(chapterListSelector())
         return elems.map { el ->
@@ -294,9 +385,7 @@ class KomikV : ParsedHttpSource() {
         }
     }
 
-    // ----------------------
-    // Pages
-    // ----------------------
+    // --- Pages ---
     override fun pageListParse(document: Document): List<Page> {
         val raw = document.text()
         try {
@@ -333,7 +422,7 @@ class KomikV : ParsedHttpSource() {
             }
         } catch (_: Exception) {}
 
-        // fallback HTML parsing for images
+        // fallback HTML images
         val images = document.select("img.lazyimage, .reader-area img, #chapter img, .main-reading-area img, .page-break img, .entry-content img")
             .ifEmpty { document.select("img[src*='.jpg'], img[src*='.png'], img[src*='.webp']") }
 
@@ -347,36 +436,5 @@ class KomikV : ParsedHttpSource() {
 
     override fun imageUrlParse(document: Document): String {
         return document.selectFirst("img")?.absUrl("src").orEmpty()
-    }
-
-    // ----------------------
-    // Utilities
-    // ----------------------
-    private fun tryParseDate(dateStr: String?): Long {
-        if (dateStr.isNullOrBlank()) return 0L
-        try {
-            val s = dateStr
-            return when {
-                s.contains("jam lalu", true) -> {
-                    val h = s.replace(Regex("\\D"), "").toIntOrNull() ?: 0
-                    System.currentTimeMillis() - h * 3600L * 1000L
-                }
-                s.contains("hari lalu", true) -> {
-                    val d = s.replace(Regex("\\D"), "").toIntOrNull() ?: 0
-                    System.currentTimeMillis() - d * 24L * 3600L * 1000L
-                }
-                else -> {
-                    val df = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.getDefault())
-                    try {
-                        df.parse(s)?.time ?: 0L
-                    } catch (_: Exception) {
-                        val df2 = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-                        df2.parse(s)?.time ?: 0L
-                    }
-                }
-            }
-        } catch (_: Exception) {
-            return 0L
-        }
     }
 }
