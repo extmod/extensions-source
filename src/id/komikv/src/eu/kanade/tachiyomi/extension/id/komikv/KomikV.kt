@@ -32,46 +32,22 @@ class KomikV : ParsedHttpSource() {
         .add("Referer", baseUrl)
 
     companion object {
+        // menyimpan url yang sudah ditampilkan di sesi runtime agar next page tidak duplicate
         private val seenUrls = mutableSetOf<String>()
+
         fun resetSeen() {
             seenUrls.clear()
         }
     }
 
-    // 1) resetSeen pada popular request
+    // Popular (with dedupe across pages)
     override fun popularMangaRequest(page: Int): Request {
-    if (page <= 1) resetSeen()
-    return GET("$baseUrl/?page=$page", headers)
-}
+        if (page <= 1) resetSeen()
+        return GET("$baseUrl/?page=$page", headers)
+    }
 
-// 2) perketat next selector
-    override fun popularMangaNextPageSelector() =
-    "a[rel=next], .pagination a[rel=next], .pagination a[href*='page=']:not([href*='page=1']), a.next, a:contains(Next), a:contains(›)"
-
-// 3) override popularMangaParse untuk deteksi next yang lebih andal
-    override fun popularMangaParse(response: Response): MangasPage {
-    val body = response.body?.string().orEmpty()
-    val doc = Jsoup.parse(body, baseUrl)
-
-    // ambil daftar dengan dedupe menggunakan seenUrls (agar tidak duplicate across pages)
-    val list = doc.select(popularMangaSelector())
-        .map { popularMangaFromElement(it) }
-        .filter { it.url.isNotBlank() && seenUrls.add(it.url) }
-
-    // cari page saat ini dari request (fallback ke 1)
-    val currentPage = response.request.url.queryParameter("page")?.toIntOrNull() ?: 1
-
-    // cara pertama: ada elemen next di DOM sesuai selector kita?
-    val hasNextByDom = doc.select(popularMangaNextPageSelector()).isNotEmpty()
-
-    // cara kedua (fallback): cari literal ?page=current+1 di HTML/JS (berguna untuk Qwik/json)
-    val nextPageNumber = currentPage + 1
-    val hasNextByPattern = Regex("""[?&]page=${nextPageNumber}\b""").containsMatchIn(body)
-
-    val hasNext = hasNextByDom || hasNextByPattern
-
-    return MangasPage(list, hasNext)
-}
+    override fun popularMangaSelector(): String =
+        "div.grid div.flex.overflow-hidden, div.grid div.neu, .list-update_item, .bsx"
 
     override fun popularMangaFromElement(element: Element): SManga {
         return SManga.create().apply {
@@ -83,17 +59,41 @@ class KomikV : ParsedHttpSource() {
             thumbnail_url = img?.attr("data-src")?.ifEmpty { img.attr("src") }.orEmpty()
         }
     }
-    override fun popularMangaNextPageSelector() = "a:contains(Next), a:contains(›), .next-page, [href*='page=']"
 
-    // Latest / Search reuse popular parse
+    override fun popularMangaNextPageSelector(): String =
+        "a[rel=next], .pagination a[rel=next], .pagination a[href*='page=']:not([href*='page=1']), a.next, a:contains(Next), a:contains(›)"
+
+    // Override popularMangaParse untuk deteksi next yang lebih andal (DOM + pattern di JS/HTML)
+    override fun popularMangaParse(response: Response): MangasPage {
+        val body = response.body?.string().orEmpty()
+        val doc = Jsoup.parse(body, baseUrl)
+
+        val list = doc.select(popularMangaSelector())
+            .map { popularMangaFromElement(it) }
+            .filter { it.url.isNotBlank() && seenUrls.add(it.url) }
+
+        val currentPage = response.request.url.queryParameter("page")?.toIntOrNull() ?: 1
+
+        val hasNextByDom = doc.select(popularMangaNextPageSelector()).isNotEmpty()
+
+        val nextPageNumber = currentPage + 1
+        val hasNextByPattern = Regex("""[?&]page=${nextPageNumber}\b""").containsMatchIn(body) ||
+                Regex("""/page/${nextPageNumber}(/|["'])""").containsMatchIn(body)
+
+        val hasNext = hasNextByDom || hasNextByPattern
+
+        return MangasPage(list, hasNext)
+    }
+
+    // --- Latest / Search reuse popular parse
     override fun latestUpdatesRequest(page: Int): Request {
         if (page <= 1) resetSeen()
         return GET("$baseUrl/?page=$page&latest=1", headers)
     }
     override fun latestUpdatesParse(response: Response): MangasPage = popularMangaParse(response)
-    override fun latestUpdatesSelector() = popularMangaSelector()
-    override fun latestUpdatesFromElement(element: Element) = popularMangaFromElement(element)
-    override fun latestUpdatesNextPageSelector() = popularMangaNextPageSelector()
+    override fun latestUpdatesSelector(): String = popularMangaSelector()
+    override fun latestUpdatesFromElement(element: Element): SManga = popularMangaFromElement(element)
+    override fun latestUpdatesNextPageSelector(): String = popularMangaNextPageSelector()
 
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
         if (page <= 1) resetSeen()
@@ -104,9 +104,9 @@ class KomikV : ParsedHttpSource() {
         }
     }
     override fun searchMangaParse(response: Response): MangasPage = popularMangaParse(response)
-    override fun searchMangaSelector() = popularMangaSelector()
-    override fun searchMangaFromElement(element: Element) = popularMangaFromElement(element)
-    override fun searchMangaNextPageSelector() = popularMangaNextPageSelector()
+    override fun searchMangaSelector(): String = popularMangaSelector()
+    override fun searchMangaFromElement(element: Element): SManga = popularMangaFromElement(element)
+    override fun searchMangaNextPageSelector(): String = popularMangaNextPageSelector()
 
     // --- Manga details (sederhana, HTML-only)
     override fun mangaDetailsParse(document: Document): SManga {
@@ -136,20 +136,21 @@ class KomikV : ParsedHttpSource() {
                 else -> SManga.UNKNOWN
             }
 
-            // thumbnail: cari data-src dulu, lalu src
-            val thumbEl = document.selectFirst("img[data-src], img.lazyimage, img.cover, img")
-            val thumb1 = thumbEl?.attr("data-src").orEmpty()
-            val thumb2 = thumbEl?.attr("src").orEmpty()
+            // thumbnail: cari data-src dulu, lalu src (gunakan absUrl supaya relatif juga tertangani)
+            val thumb1 = document.selectFirst("img[data-src], img.lazyimage, img.cover")?.absUrl("data-src").orEmpty()
+            val thumb2 = document.selectFirst("img[data-src], img.lazyimage, img.cover, img")?.absUrl("src").orEmpty()
             thumbnail_url = when {
-                thumb1.isNotBlank() -> if (thumb1.startsWith("http")) thumb1 else baseUrl.trimEnd('/') + thumb1
-                thumb2.isNotBlank() -> if (thumb2.startsWith("http")) thumb2 else baseUrl.trimEnd('/') + thumb2
+                thumb1.isNotBlank() -> thumb1
+                thumb2.isNotBlank() -> thumb2
                 else -> ""
             }
         }
     }
 
     // --- Chapters
-    override fun chapterListSelector() = ".chapter-list a, .chapters a, ul.chapters li a, .wp-manga-chapter a, a[href*='/chapter/']"
+    override fun chapterListSelector(): String =
+        ".chapter-list a, .chapters a, ul.chapters li a, .wp-manga-chapter a, a[href*='/chapter/']"
+
     override fun chapterFromElement(element: Element): SChapter {
         val link = if (element.tagName() == "a") element else element.selectFirst("a")!!
         val name = link.text()?.trim().orEmpty()
