@@ -34,10 +34,10 @@ class KomikV : ParsedHttpSource() {
     // -------------------
     override fun popularMangaRequest(page: Int): Request {
         // Halaman 1 SSR, halaman >1 mungkin butuh qfunc (Qwik). Untuk sekarang fallback ke query param page.
-        return GET("$baseUrl/?page=$page", defaultHeaders)
+        return GET("$baseUrl/manga/?page=$page", defaultHeaders)
     }
 
-    override fun latestUpdatesRequest(page: Int): Request = popularMangaRequest(page)
+    override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/manga/?page=$page&order=latest", defaultHeaders)
 
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
         val encoded = java.net.URLEncoder.encode(query, "utf-8")
@@ -47,25 +47,31 @@ class KomikV : ParsedHttpSource() {
     // -------------------
     // Popular parsers (ParsedHttpSource style)
     // -------------------
-    override fun popularMangaSelector(): String = "div.list-update_items .list-update_item, article, .bs"
+    // Sesuai view-source: tiap item ada di div.grid > div.flex.overflow-hidden
+    override fun popularMangaSelector(): String = "div.grid > div.flex.overflow-hidden"
 
     override fun popularMangaFromElement(element: Element): SManga {
+        // Prefer anchor that links to manga item (bisa /manga/ atau /komik/)
+        val a = element.selectFirst("a[href^=/manga/], a[href^=/komik/]") ?: element.selectFirst("a")
+        val href = a?.attr("href").orEmpty()
+
+        val img = element.selectFirst("img")
+        val titleFromImg = img?.attr("alt").orEmpty()
+        val titleFromH2 = element.selectFirst("h2")?.text().orEmpty()
+        val title = titleFromImg.ifEmpty { titleFromH2 }
+
+        val thumb = img?.attr("data-src").orEmpty().ifEmpty { img?.attr("src").orEmpty() }
+
         return SManga.create().apply {
-            // title
-            title = element.selectFirst("h2, .title, .name")?.text().orEmpty()
-
-            // url - prefer href attribute of first anchor
-            val href = element.selectFirst("a")?.attr("href").orEmpty()
+            this.title = title
+            // keep relative url if provided
             url = if (href.startsWith("http")) href else href
-
-            // thumbnail
-            thumbnail_url = element.selectFirst("img")?.attr("data-src").orEmpty()
-                .ifEmpty { element.selectFirst("img")?.attr("src").orEmpty() }
+            thumbnail_url = thumb
         }
     }
 
-    // Qwik-driven sites often have no real "next page" selector; keep a heuristic selector
-    override fun popularMangaNextPageSelector(): String? = "div[q\\:slot=loadmore], button:contains(Load More), [data-load-more]"
+    // Qwik-driven sites often have no real "next page" link; keep a heuristic selector for load-more
+    override fun popularMangaNextPageSelector(): String? = "div[q\\:slot=loadmore], [q\\:slot=loadmore], button:contains(Load More)"
 
     // -------------------
     // Latest - reuse popular
@@ -91,11 +97,10 @@ class KomikV : ParsedHttpSource() {
             .ifEmpty { document.selectFirst("img")?.attr("src").orEmpty() }
         manga.description = document.selectFirst(".summary, .entry-content, .desc, .sinopsis")?.text().orEmpty()
 
-        // optional: author, status, genre parsing (tambahkan bila DOM jelas)
         manga.author = document.selectFirst(".author, .meta-author")?.text().orEmpty()
         val statusText = document.selectFirst(".status, .meta-status")?.text().orEmpty().lowercase()
         manga.status = when {
-            statusText.contains("ongoing") || statusText.contains("on-going") || statusText.contains("on going") || statusText.contains("on going") ->  SManga.ONGOING
+            statusText.contains("ongoing") || statusText.contains("on-going") || statusText.contains("on going") ->  SManga.ONGOING
             statusText.contains("completed") || statusText.contains("finish") -> SManga.COMPLETED
             else -> SManga.UNKNOWN
         }
@@ -109,11 +114,9 @@ class KomikV : ParsedHttpSource() {
 
     override fun chapterFromElement(element: Element): SChapter {
         val chapter = SChapter.create()
-        // element might be an <a> or contain <a>
         val a = if (element.tagName() == "a") element else element.selectFirst("a") ?: element
         chapter.name = a.text().orEmpty()
         chapter.url = a.attr("href").orEmpty()
-        // date parsing optional
         return chapter
     }
 
@@ -121,10 +124,8 @@ class KomikV : ParsedHttpSource() {
     // Pages
     // -------------------
     override fun pageListParse(document: Document): List<Page> {
-        // Ambil gambar pembaca (SSR area)
-        val imgs = document.select("div#chapter_body img, .main-reading-area img, .page img, img.wp-manga-chapter-img")
+        val imgs = document.select("img.lazyimage, img.wp-manga-chapter-img, #chapter_body img, .main-reading-area img, .page img")
         if (imgs.isEmpty()) {
-            // fallback: ambil semua img di konten
             return document.select("img").mapIndexed { i, el ->
                 val src = el.absUrl("data-src").ifEmpty { el.absUrl("src") }
                 Page(i, "", src)
