@@ -100,11 +100,11 @@ class KomikV : ParsedHttpSource() {
         val document = response.asJsoup()
         val elements = document.select(popularMangaSelector())
         
-        val mangas = elements.mapNotNull { element ->
+        val mangas = elements.mapNotNull { element: Element ->
             try {
                 popularMangaFromElement(element)
             } catch (_: Exception) { null }
-        }.filter { manga ->
+        }.filter { manga: SManga ->
             val key = manga.url.ifEmpty { manga.title }
             if (seenUrls.contains(key)) {
                 false
@@ -114,7 +114,7 @@ class KomikV : ParsedHttpSource() {
             }
         }
 
-        val hasNext = document.select("a:contains(Next), a:contains(Selanjutnya), a[href*='page=']:contains(›)").isNotEmpty()
+        val hasNext = document.select("a:contains(Berikutnya), a:contains(Next), a[href*='page=']:contains(›)").isNotEmpty()
         return MangasPage(mangas, hasNext && mangas.isNotEmpty())
     }
 
