@@ -17,7 +17,6 @@ import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import java.text.SimpleDateFormat
-import java.util.Calendar
 import java.util.Locale
 
 class KomikV : ParsedHttpSource() {
@@ -27,7 +26,8 @@ class KomikV : ParsedHttpSource() {
     override val lang = "id"
     override val supportsLatest = true
 
-    // gunakan network client tachiyomi (harus tersedia di project Anda)
+    // gunakan network client tachiyomi; jika environment Anda tidak punya network.cloudflareClient,
+    // ubah menjadi OkHttpClient()
     override val client: OkHttpClient = network.cloudflareClient
 
     override fun headersBuilder(): Headers.Builder = Headers.Builder()
@@ -37,7 +37,7 @@ class KomikV : ParsedHttpSource() {
         .add("Referer", baseUrl)
 
     // ----------------------
-    // Helper khusus q-data.json (_objs heuristic)
+    // Helpers for q-data.json style
     // ----------------------
     private fun tryParseJSONObject(text: String): JSONObject? {
         return try {
@@ -83,7 +83,7 @@ class KomikV : ParsedHttpSource() {
                     k++
                 }
             }
-            // synopsis pendek (cari beberapa elemen setelah title)
+            // synopsis pendek (cek beberapa elemen setelah title)
             var synopsis = ""
             for (sIdx in i+1 until minOf(i+6, arr.length())) {
                 val cand = arr.optString(sIdx, "")
@@ -93,7 +93,7 @@ class KomikV : ParsedHttpSource() {
                 val manga = SManga.create().apply {
                     title = maybeTitle
                     description = synopsis
-                    url = "/comic/$slug" // sesuaikan pola jika situs pakai /manga/
+                    url = "/comic/$slug" // ubah ke /manga/ jika situs pakai itu
                     thumbnail_url = imageUrl
                 }
                 out.add(manga)
@@ -106,13 +106,12 @@ class KomikV : ParsedHttpSource() {
     }
 
     // ----------------------
-    // Popular (request ke q-data.json, parse JSON bila ada, fallback HTML)
+    // Popular
     // ----------------------
     override fun popularMangaRequest(page: Int): Request {
         return GET("$baseUrl/q-data.json?page=$page", headers)
     }
 
-    // override parsing response-level agar bisa deteksi JSON
     override fun popularMangaParse(response: Response): MangasPage {
         val body = response.body?.string().orEmpty()
 
@@ -185,10 +184,10 @@ class KomikV : ParsedHttpSource() {
     override fun searchMangaNextPageSelector() = popularMangaNextPageSelector()
 
     // ----------------------
-    // Manga details (document-based; try parse JSON inside document text first)
+    // Manga details
     // ----------------------
     override fun mangaDetailsParse(document: Document): SManga {
-        // document.text() bisa jadi JSON string jika server mengembalikan JSON yang dibungkus
+        // coba parse JSON yang mungkin ada di document.text()
         val raw = document.text()
         try {
             val root = tryParseJSONObject(raw)
@@ -220,13 +219,26 @@ class KomikV : ParsedHttpSource() {
     // ----------------------
     override fun chapterListSelector() = ".chapter-list a, .chapters a, ul.chapters li a, .wp-manga-chapter a, a[href*='/chapter/']"
 
-    override fun chapterListParse(document: Document): List<SChapter> {
-        // coba parse JSON dari document text (untuk q-data yang berada di page)
-        val raw = document.text()
+    // implement requirement: chapterFromElement (abstract in base)
+    override fun chapterFromElement(element: Element): SChapter {
+        val link = if (element.tagName() == "a") element else element.selectFirst("a")!!
+        val name = link.text().trim()
+        var url = link.attr("href") ?: ""
+        if (url.startsWith(baseUrl)) url = url.removePrefix(baseUrl)
+        return SChapter.create().apply {
+            this.name = name
+            this.url = url
+            this.date_upload = tryParseDate(link.selectFirst(".date, .chapter-date, .time")?.text())
+        }
+    }
+
+    // Provide chapterListParse with JSON-first fallback
+    override fun chapterListParse(response: Response): List<SChapter> {
+        val body = response.body?.string().orEmpty()
+        // 1) try parse JSON inside response body
         try {
-            val root = tryParseJSONObject(raw)
+            val root = tryParseJSONObject(body)
             if (root != null) {
-                // cari array chapters / items / data
                 val keys = listOf("chapters", "items", "data")
                 for (k in keys) {
                     if (root.has(k) && root.get(k) is JSONArray) {
@@ -236,7 +248,7 @@ class KomikV : ParsedHttpSource() {
                             val o = arr.optJSONObject(i) ?: continue
                             val name = o.optString("title", o.optString("chapter", o.optString("name", "")))
                             var url = o.optString("url", o.optString("link", ""))
-                            if (url.isNotEmpty() && !url.startsWith("http")) url = baseUrl.trimEnd('/') + (if (url.startsWith("/")) url else "/$url")
+                            if (url.isNotBlank() && !url.startsWith("http")) url = baseUrl.trimEnd('/') + (if (url.startsWith("/")) url else "/$url")
                             list.add(SChapter.create().apply {
                                 this.name = name
                                 this.url = url.removePrefix(baseUrl)
@@ -246,18 +258,22 @@ class KomikV : ParsedHttpSource() {
                         if (list.isNotEmpty()) return list
                     }
                 }
-                // fallback: cari gambar di _objs untuk halaman chapter (rare)
+                // fallback: look into _objs for chapter-like urls (rare)
             }
         } catch (_: Exception) {}
 
-        // fallback HTML chapters parse
-        val elems = document.select(chapterListSelector())
+        // 2) HTML fallback
+        val doc = Jsoup.parse(body, baseUrl)
+        val elems = doc.select(chapterListSelector())
         return elems.map { el ->
             val link = if (el.tagName() == "a") el else el.selectFirst("a")!!
+            val name = link.text().trim()
+            var url = link.attr("href") ?: ""
+            if (url.startsWith(baseUrl)) url = url.removePrefix(baseUrl)
             SChapter.create().apply {
-                name = link.text().trim()
-                url = link.attr("href").let { if (it.startsWith(baseUrl)) it.removePrefix(baseUrl) else it }
-                date_upload = tryParseDate(link.selectFirst(".date, .chapter-date, .time")?.text().orEmpty())
+                this.name = name
+                this.url = url
+                this.date_upload = tryParseDate(link.selectFirst(".date, .chapter-date, .time")?.text())
             }
         }
     }
@@ -266,7 +282,7 @@ class KomikV : ParsedHttpSource() {
     // Pages
     // ----------------------
     override fun pageListParse(document: Document): List<Page> {
-        // try JSON in document text first (pages/images arrays or _objs images)
+        // try JSON in document text first (pages/images arrays or images inside _objs)
         val raw = document.text()
         try {
             val root = tryParseJSONObject(raw)
