@@ -11,13 +11,9 @@ import okhttp3.Headers
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
-import org.json.JSONArray
-import org.json.JSONObject
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
-import java.text.SimpleDateFormat
-import java.util.Locale
 
 class KomikV : ParsedHttpSource() {
 
@@ -36,17 +32,14 @@ class KomikV : ParsedHttpSource() {
         .add("Referer", baseUrl)
 
     companion object {
-        // menyimpan url yang sudah ditampilkan di sesi runtime agar next page tidak duplicate
         private val seenUrls = mutableSetOf<String>()
-
         fun resetSeen() {
             seenUrls.clear()
         }
     }
 
     // Popular (with dedupe across pages)
-    // ----------------------
-        override fun popularMangaRequest(page: Int): Request {
+    override fun popularMangaRequest(page: Int): Request {
         return GET("$baseUrl/?page=$page", headers)
     }
 
@@ -63,7 +56,7 @@ class KomikV : ParsedHttpSource() {
     }
     override fun popularMangaNextPageSelector() = "a:contains(Next), a:contains(›), .next-page, [href*='page=']"
 
-    // --- Latest / Search reuse popular parse
+    // Latest / Search reuse popular parse
     override fun latestUpdatesRequest(page: Int): Request {
         if (page <= 1) resetSeen()
         return GET("$baseUrl/?page=$page&latest=1", headers)
@@ -86,31 +79,43 @@ class KomikV : ParsedHttpSource() {
     override fun searchMangaFromElement(element: Element) = popularMangaFromElement(element)
     override fun searchMangaNextPageSelector() = popularMangaNextPageSelector()
 
-    // --- Manga details
+    // --- Manga details (sederhana, HTML-only)
     override fun mangaDetailsParse(document: Document): SManga {
-        val raw = document.text()
-        try {
-            val root = tryParseJSONObject(raw)
-            if (root != null) {
-                val list = parseQDataObjsToManga(root)
-                if (list.isNotEmpty()) return list.first()
-            }
-        } catch (_: Exception) {}
         return SManga.create().apply {
             title = document.selectFirst("h1, .entry-title, .post-title")?.text()?.trim().orEmpty()
-            author = document.selectFirst(".mt-4 text-sm a")?.text()?.replace("", "")?.trim().orEmpty()
+
+            author = document.selectFirst(".mt-4 .text-sm a")?.text()?.trim().orEmpty()
+
             description = document.selectFirst(".mt-4.w-full p")?.text()?.trim().orEmpty()
-            genre = document.select(".genre a, .genres a, .tag a").joinToString { it.text() }
-            val statusText = document.selectFirst(".status, .manga-status")?.text().orEmpty()
+
+            // genre list + tambahkan tipe komik di akhir (selector tipe: .w-full.rounded-l-full.bg-red-800)
+            val genres = document.select(".genre a, .genres a, .tag a")
+                .map { it.text().trim() }
+                .filter { it.isNotEmpty() }
+                .toMutableList()
+            val type = document.selectFirst(".w-full.rounded-l-full.bg-red-800")?.text()?.trim().orEmpty()
+            if (type.isNotBlank()) genres.add(type)
+            genre = genres.joinToString(", ")
+
+            // status (cari beberapa kemungkinan selector)
+            val statusText = document.selectFirst(".status, .manga-status, .w-full.rounded-r-full, .bg-green-800")
+                ?.text().orEmpty()
             status = when {
-                statusText.contains("ongoing", true) -> SManga.ONGOING
+                statusText.contains("ongoing", true) || statusText.contains("on-going", true) -> SManga.ONGOING
                 statusText.contains("completed", true) || statusText.contains("tamat", true) -> SManga.COMPLETED
                 statusText.contains("hiatus", true) -> SManga.ON_HIATUS
                 else -> SManga.UNKNOWN
             }
-            val thumb1 = document.selectFirst("img.w-full rounded-md neu neu-active")?.absUrl("data-src").orEmpty()
-            val thumb2 = document.selectFirst("img.w-full rounded-md neu neu-active")?.absUrl("src").orEmpty()
-            thumbnail_url = if (thumb1.isNotBlank()) thumb1 else if (thumb2.isNotBlank()) thumb2 else ""
+
+            // thumbnail: cari data-src dulu, lalu src
+            val thumbEl = document.selectFirst("img[data-src], img.lazyimage, img.cover, img")
+            val thumb1 = thumbEl?.attr("data-src").orEmpty()
+            val thumb2 = thumbEl?.attr("src").orEmpty()
+            thumbnail_url = when {
+                thumb1.isNotBlank() -> if (thumb1.startsWith("http")) thumb1 else baseUrl.trimEnd('/') + thumb1
+                thumb2.isNotBlank() -> if (thumb2.startsWith("http")) thumb2 else baseUrl.trimEnd('/') + thumb2
+                else -> ""
+            }
         }
     }
 
@@ -120,96 +125,35 @@ class KomikV : ParsedHttpSource() {
         val link = if (element.tagName() == "a") element else element.selectFirst("a")!!
         val name = link.text()?.trim().orEmpty()
         val hrefRaw = link.attr("href").orEmpty()
-        var url = if (hrefRaw.startsWith(baseUrl)) hrefRaw.removePrefix(baseUrl) else hrefRaw
+        val url = if (hrefRaw.startsWith(baseUrl)) hrefRaw.removePrefix(baseUrl) else hrefRaw
         return SChapter.create().apply {
             this.name = name
             this.url = url
-            this.date_upload = tryParseDate(link.selectFirst(".date, .chapter-date, .time")?.text())
+            // tanggal dihapus (tidak memakai tryParseDate)
         }
     }
 
     override fun chapterListParse(response: Response): List<SChapter> {
         val body = response.body?.string().orEmpty()
-        try {
-            val root = tryParseJSONObject(body)
-            if (root != null) {
-                val keys = listOf("chapters", "items", "data")
-                for (k in keys) {
-                    if (root.has(k) && root.get(k) is JSONArray) {
-                        val arr = root.getJSONArray(k)
-                        val list = mutableListOf<SChapter>()
-                        for (i in 0 until arr.length()) {
-                            val o = arr.optJSONObject(i) ?: continue
-                            val name = o.optString("title", o.optString("chapter", o.optString("name", ""))).orEmpty()
-                            val rawUrl = o.optString("url", o.optString("link", "")).orEmpty()
-                            var url = rawUrl
-                            if (url.isNotBlank() && !url.startsWith("http")) url = baseUrl.trimEnd('/') + (if (url.startsWith("/")) url else "/$url")
-                            list.add(SChapter.create().apply {
-                                this.name = name
-                                this.url = url.removePrefix(baseUrl)
-                                this.date_upload = tryParseDate(o.optString("date", ""))
-                            })
-                        }
-                        if (list.isNotEmpty()) return list
-                    }
-                }
-            }
-        } catch (_: Exception) {}
-        // HTML fallback
         val doc = Jsoup.parse(body, baseUrl)
         val elems = doc.select(chapterListSelector())
         return elems.map { el ->
             val link = if (el.tagName() == "a") el else el.selectFirst("a")!!
             val name = link.text()?.trim().orEmpty()
             val hrefRaw = link.attr("href").orEmpty()
-            var url = if (hrefRaw.startsWith(baseUrl)) hrefRaw.removePrefix(baseUrl) else hrefRaw
+            val url = if (hrefRaw.startsWith(baseUrl)) hrefRaw.removePrefix(baseUrl) else hrefRaw
             SChapter.create().apply {
                 this.name = name
                 this.url = url
-                this.date_upload = tryParseDate(link.selectFirst(".date, .chapter-date, .time")?.text())
             }
         }
     }
 
-    // --- Pages
+    // --- Pages (HTML-only)
     override fun pageListParse(document: Document): List<Page> {
-        val raw = document.text()
-        try {
-            val root = tryParseJSONObject(raw)
-            if (root != null) {
-                val arrNames = listOf("pages", "images", "imgs")
-                for (k in arrNames) {
-                    if (root.has(k) && root.get(k) is JSONArray) {
-                        val arr = root.getJSONArray(k)
-                        val pages = mutableListOf<Page>()
-                        for (i in 0 until arr.length()) {
-                            val v = arr.opt(i)
-                            val url = when (v) {
-                                is JSONObject -> v.optString("url", v.optString("src", "")).orEmpty()
-                                is String -> v
-                                else -> ""
-                            }
-                            if (url.isNotBlank()) pages.add(Page(pages.size, "", if (url.startsWith("http")) url else baseUrl.trimEnd('/') + url))
-                        }
-                        if (pages.isNotEmpty()) return pages
-                    }
-                }
-                if (root.has("_objs")) {
-                    val arr = root.getJSONArray("_objs")
-                    val pages = mutableListOf<Page>()
-                    for (i in 0 until arr.length()) {
-                        val s = arr.optString(i, "")
-                        if (s.matches(Regex("https?://[^\\s'\"]+\\.(?:jpg|jpeg|png|webp)(?:\\?[^\\s'\"]*)?"))) {
-                            pages.add(Page(pages.size, "", s))
-                        }
-                    }
-                    if (pages.isNotEmpty()) return pages
-                }
-            }
-        } catch (_: Exception) {}
-
-        val images = document.select("img.lazyimage, .reader-area img, #chapter img, .main-reading-area img, .page-break img, .entry-content img")
-            .ifEmpty { document.select("img[src*='.jpg'], img[src*='.png'], img[src*='.webp']") }
+        val images = document.select(
+            "img.lazyimage, .reader-area img, #chapter img, .main-reading-area img, .page-break img, .entry-content img"
+        ).ifEmpty { document.select("img[src*='.jpg'], img[src*='.png'], img[src*='.webp']") }
 
         val pages = mutableListOf<Page>()
         images.forEachIndexed { idx, img ->
