@@ -44,184 +44,12 @@ class KomikV : ParsedHttpSource() {
         }
     }
 
-    // ----------------------
-    // util JSON/date
-    // ----------------------
-    private fun tryParseJSONObject(text: String): JSONObject? {
-        return try { JSONObject(text) } catch (_: Exception) { null }
-    }
-    private fun tryParseJSONArray(text: String): JSONArray? {
-        return try { JSONArray(text) } catch (_: Exception) { null }
-    }
-
-    private fun tryParseDate(dateStr: String?): Long {
-        if (dateStr.isNullOrBlank()) return 0L
-        try {
-            val s = dateStr
-            return when {
-                s.contains("jam lalu", true) -> {
-                    val h = s.replace(Regex("\\D"), "").toIntOrNull() ?: 0
-                    System.currentTimeMillis() - h * 3600L * 1000L
-                }
-                s.contains("hari lalu", true) -> {
-                    val d = s.replace(Regex("\\D"), "").toIntOrNull() ?: 0
-                    System.currentTimeMillis() - d * 24L * 3600L * 1000L
-                }
-                else -> {
-                    val df = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.getDefault())
-                    try { df.parse(s)?.time ?: 0L } catch (_: Exception) {
-                        val df2 = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-                        df2.parse(s)?.time ?: 0L
-                    }
-                }
-            }
-        } catch (_: Exception) { return 0L }
-    }
-
-    // ----------------------
-    // heuristik parsing _objs (lebih ketat untuk judul)
-    // ----------------------
-    private fun parseQDataObjsToManga(root: JSONObject): List<SManga> {
-        val out = mutableListOf<SManga>()
-        if (!root.has("_objs")) return out
-        val arr = root.optJSONArray("_objs") ?: return out
-        val n = arr.length()
-        if (n == 0) return out
-
-        fun getStringAt(idx: Int): String = if (idx in 0 until n) arr.optString(idx, "") else ""
-        val imageRegex = Regex("https?://[^\\s'\"]+\\.(?:jpg|jpeg|png|webp)(?:\\?[^\\s'\"]*)?")
-        val slugRegex = Regex("^[a-z0-9\\-]{3,}$")
-        val hasLetterRegex = Regex("\\p{L}")
-        val isoDateRegex = Regex("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}") // avoid timestamps
-
-        var i = 0
-        while (i < n) {
-            val s = getStringAt(i)
-
-            // if encountering an image directly or within next few entries, use it as anchor
-            var imageIdx = -1
-            if (s.matches(imageRegex)) {
-                imageIdx = i
-            } else {
-                var j = i
-                while (j < minOf(n, i + 6)) {
-                    if (getStringAt(j).matches(imageRegex)) { imageIdx = j; break }
-                    j++
-                }
-            }
-
-            if (imageIdx >= 0) {
-                // search backward for a good title candidate (prefer up to 6 positions)
-                var title = ""
-                var titleIdx = -1
-                val startSearch = maxOf(0, imageIdx - 6)
-                for (k in imageIdx - 1 downTo startSearch) {
-                    val cand = getStringAt(k).trim()
-                    if (cand.isEmpty()) continue
-                    // reject JSON-like strings, timestamps, numeric-only, too-short or control-chars
-                    if (cand.startsWith("{") || cand.contains("\":") || cand.contains("id\":") || cand.contains("\"id\"") || isoDateRegex.containsMatchIn(cand)) continue
-                    if (cand.length < 4) continue
-                    if (!hasLetterRegex.containsMatchIn(cand)) continue
-                    // looks good
-                    title = cand
-                    titleIdx = k
-                    break
-                }
-
-                // try forward if not found backward
-                if (title.isEmpty()) {
-                    for (k in imageIdx + 1 .. minOf(n-1, imageIdx + 3)) {
-                        val cand = getStringAt(k).trim()
-                        if (cand.isEmpty()) continue
-                        if (cand.startsWith("{") || cand.contains("\":") || isoDateRegex.containsMatchIn(cand)) continue
-                        if (cand.length < 4) continue
-                        if (!hasLetterRegex.containsMatchIn(cand)) continue
-                        title = cand
-                        titleIdx = k
-                        break
-                    }
-                }
-
-                // find slug after image
-                var slug = ""
-                var slugIdx = -1
-                var kk = imageIdx + 1
-                while (kk < minOf(n, imageIdx + 10)) {
-                    val candidate = getStringAt(kk)
-                    if (candidate.matches(slugRegex)) { slug = candidate; slugIdx = kk; break }
-                    kk++
-                }
-
-                // synopsis: candidate between titleIdx+1 and imageIdx-1 longest non-http string
-                var synopsis = ""
-                if (titleIdx >= 0 && titleIdx + 1 <= imageIdx - 1) {
-                    for (sIdx in (titleIdx + 1) until imageIdx) {
-                        val cand = getStringAt(sIdx)
-                        if (cand.length > synopsis.length && !cand.startsWith("http") && !cand.startsWith("{") && !isoDateRegex.containsMatchIn(cand)) synopsis = cand
-                    }
-                } else {
-                    // fallback: try element before image if plausible
-                    val cand = getStringAt(imageIdx - 1)
-                    if (cand.isNotBlank() && cand.length >= 10 && !isoDateRegex.containsMatchIn(cand)) synopsis = cand
-                }
-
-                if (title.isNotBlank() && slug.isNotBlank()) {
-                    val manga = SManga.create().apply {
-                        this.title = title
-                        this.description = synopsis
-                        this.thumbnail_url = getStringAt(imageIdx)
-                        this.url = if (slug.startsWith("/")) slug else "/comic/$slug"
-                    }
-                    out.add(manga)
-                    // advance i beyond used area
-                    i = maxOf(imageIdx + 1, slugIdx + 1).coerceAtLeast(i + 1)
-                    continue
-                }
-            }
-
-            // fallback: if arr[i] looks like a clean title by itself (rare)
-            val cand = s.trim()
-            if (cand.isNotBlank() && cand.length >= 4 && hasLetterRegex.containsMatchIn(cand) && !cand.startsWith("{") && !isoDateRegex.containsMatchIn(cand)) {
-                // try to find image & slug shortly after
-                var foundImg = ""
-                var j = i + 1
-                while (j < minOf(n, i + 8)) {
-                    val s2 = getStringAt(j)
-                    if (s2.matches(imageRegex)) { foundImg = s2; break }
-                    j++
-                }
-                var slug = ""
-                var k = j + 1
-                while (k < minOf(n, j + 8)) {
-                    val s3 = getStringAt(k)
-                    if (s3.matches(slugRegex)) { slug = s3; break }
-                    k++
-                }
-                if (foundImg.isNotBlank() && slug.isNotBlank()) {
-                    out.add(SManga.create().apply {
-                        this.title = cand
-                        this.description = getStringAt(i + 1)
-                        this.thumbnail_url = foundImg
-                        this.url = "/comic/$slug"
-                    })
-                    i = k + 1
-                    continue
-                }
-            }
-
-            i++
-        }
-
-        return out
-    }
-
-    // ----------------------
     // Popular (with dedupe across pages)
     // ----------------------
     override fun popularMangaRequest(page: Int): Request {
         // reset seen for page 1 so new listing refresh works
         if (page <= 1) resetSeen()
-        return GET("$baseUrl/q-data.json?page=$page", headers)
+        return GET("$baseUrl/?page=$page", headers)
     }
 
     override fun popularMangaParse(response: Response): MangasPage {
@@ -284,7 +112,7 @@ class KomikV : ParsedHttpSource() {
     // --- Latest / Search reuse popular parse
     override fun latestUpdatesRequest(page: Int): Request {
         if (page <= 1) resetSeen()
-        return GET("$baseUrl/q-data.json?page=$page&latest=1", headers)
+        return GET("$baseUrl/?page=$page&latest=1", headers)
     }
     override fun latestUpdatesParse(response: Response): MangasPage = popularMangaParse(response)
     override fun latestUpdatesSelector() = popularMangaSelector()
@@ -316,8 +144,8 @@ class KomikV : ParsedHttpSource() {
         } catch (_: Exception) {}
         return SManga.create().apply {
             title = document.selectFirst("h1, .entry-title, .post-title")?.text()?.trim().orEmpty()
-            author = document.selectFirst(".author, .meta-author")?.text()?.replace("Author:", "")?.trim().orEmpty()
-            description = document.selectFirst(".synopsis, .summary, .entry-content p")?.text()?.trim().orEmpty()
+            author = document.selectFirst(".mt-4 text-sm a")?.text()?.replace("", "")?.trim().orEmpty()
+            description = document.selectFirst(".mt-4.w-full p")?.text()?.trim().orEmpty()
             genre = document.select(".genre a, .genres a, .tag a").joinToString { it.text() }
             val statusText = document.selectFirst(".status, .manga-status")?.text().orEmpty()
             status = when {
@@ -326,8 +154,8 @@ class KomikV : ParsedHttpSource() {
                 statusText.contains("hiatus", true) -> SManga.ON_HIATUS
                 else -> SManga.UNKNOWN
             }
-            val thumb1 = document.selectFirst(".post-thumb img, img.lazyimage")?.absUrl("data-src").orEmpty()
-            val thumb2 = document.selectFirst(".post-thumb img, img")?.absUrl("src").orEmpty()
+            val thumb1 = document.selectFirst("img.w-full rounded-md neu neu-active")?.absUrl("data-src").orEmpty()
+            val thumb2 = document.selectFirst("img.w-full rounded-md neu neu-active")?.absUrl("src").orEmpty()
             thumbnail_url = if (thumb1.isNotBlank()) thumb1 else if (thumb2.isNotBlank()) thumb2 else ""
         }
     }
