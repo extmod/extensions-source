@@ -7,18 +7,15 @@ import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
-import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.tachiyomi.source.online.ParsedHttpSource
 import okhttp3.Headers
-import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.RequestBody
-import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
-import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
+import org.jsoup.nodes.Element
 
-class KomikV : HttpSource() {
+class KomikV : ParsedHttpSource() {
 
     override val name: String = "KomikV"
     override val baseUrl: String = "https://komikav.net"
@@ -32,125 +29,121 @@ class KomikV : HttpSource() {
         .add("Accept", "*/*")
         .build()
 
-    // ---------- Helpers ----------
-    // Parse response body into Jsoup Document (read body once)
-    private fun responseToDoc(response: Response): Document {
-        val body = response.body?.string().orEmpty()
-        return Jsoup.parse(body)
-    }
-
-    // Build a simple Qwik payload example (sesuaikan jika implement qfunc)
-    private fun buildQwikPayloadExample(qrl: String, entry: Int = 2): RequestBody {
-        val obj = """{"_entry":"$entry","_objs":["\u0002_#s_$qrl",3,["0","1"]]}"""
-        return obj.toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
-    }
-
-    // ---------- Requests ----------
+    // -------------------
+    // Requests (simple)
+    // -------------------
     override fun popularMangaRequest(page: Int): Request {
-        // page 1 -> SSR HTML
-        if (page <= 1) {
-            return GET(baseUrl, defaultHeaders)
-        }
-
-        // contoh: jika sudah punya qrl token, gunakan endpoint ?qfunc=token
-        // val qrl = "aBKj8Qeh2MM" // TODO: ambil/detect token secara dinamis
-        // return Request.Builder()
-        //     .url("$baseUrl/?qfunc=$qrl")
-        //     .post(buildQwikPayloadExample(qrl, 2))
-        //     .headers(defaultHeaders)
-        //     .build()
-
-        // fallback: ambil halaman utama bila belum ada mekanisme qfunc
-        return GET(baseUrl, defaultHeaders)
+        // Halaman 1 SSR, halaman >1 mungkin butuh qfunc (Qwik). Untuk sekarang fallback ke query param page.
+        return GET("$baseUrl/?page=$page", defaultHeaders)
     }
 
     override fun latestUpdatesRequest(page: Int): Request = popularMangaRequest(page)
 
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
-        val url = "$baseUrl/?s=${java.net.URLEncoder.encode(query, "utf-8")}"
-        return GET(url, defaultHeaders)
+        val encoded = java.net.URLEncoder.encode(query, "utf-8")
+        return GET("$baseUrl/?s=$encoded&page=$page", defaultHeaders)
     }
 
-    override fun mangaDetailsRequest(mangaUrl: String): Request =
-        GET(if (mangaUrl.startsWith("http")) mangaUrl else baseUrl + mangaUrl, defaultHeaders)
+    // -------------------
+    // Popular parsers (ParsedHttpSource style)
+    // -------------------
+    override fun popularMangaSelector(): String = "div.list-update_items .list-update_item, article, .bs"
 
-    override fun chapterListRequest(mangaUrl: String): Request =
-        GET(if (mangaUrl.startsWith("http")) mangaUrl else baseUrl + mangaUrl, defaultHeaders)
+    override fun popularMangaFromElement(element: Element): SManga {
+        return SManga.create().apply {
+            // title
+            title = element.selectFirst("h2, .title, .name")?.text().orEmpty()
 
-    override fun pageListRequest(chapterUrl: String): Request =
-        GET(if (chapterUrl.startsWith("http")) chapterUrl else baseUrl + chapterUrl, defaultHeaders)
+            // url - prefer href attribute of first anchor
+            val href = element.selectFirst("a")?.attr("href").orEmpty()
+            url = if (href.startsWith("http")) href else href
 
-    // ---------- Parsers ----------
-    override fun popularMangaParse(response: Response): MangasPage {
-        val doc = responseToDoc(response)
-
-        // selector contoh — sesuaikan dengan struktur situs
-        val elements = doc.select("div.grid div.flex.overflow-hidden, .list-update_item, article")
-        val mangas = elements.map { el ->
-            SManga.create().apply {
-                title = el.selectFirst("h2, .title, .name")?.text().orEmpty()
-                val a = el.selectFirst("a")
-                val href = a?.attr("href").orEmpty()
-                url = if (href.startsWith("/")) href else href
-                thumbnail_url = el.selectFirst("img")?.attr("data-src").orEmpty()
-                    .ifEmpty { el.selectFirst("img")?.attr("src").orEmpty() }
-            }
+            // thumbnail
+            thumbnail_url = element.selectFirst("img")?.attr("data-src").orEmpty()
+                .ifEmpty { element.selectFirst("img")?.attr("src").orEmpty() }
         }
-
-        // cek tombol load more (JS-driven)
-        val hasLoadMore = doc.select("div[q\\:slot=loadmore], button:contains(Load More), [data-load-more]").isNotEmpty()
-        return MangasPage(mangas, hasLoadMore)
     }
 
-    override fun latestUpdatesParse(response: Response): MangasPage = popularMangaParse(response)
+    // Qwik-driven sites often have no real "next page" selector; keep a heuristic selector
+    override fun popularMangaNextPageSelector(): String? = "div[q\\:slot=loadmore], button:contains(Load More), [data-load-more]"
 
-    override fun searchMangaParse(response: Response): MangasPage = popularMangaParse(response)
+    // -------------------
+    // Latest - reuse popular
+    // -------------------
+    override fun latestUpdatesSelector(): String = popularMangaSelector()
+    override fun latestUpdatesFromElement(element: Element): SManga = popularMangaFromElement(element)
+    override fun latestUpdatesNextPageSelector(): String? = popularMangaNextPageSelector()
 
-    override fun mangaDetailsParse(response: Response): SManga {
-        val doc = responseToDoc(response)
+    // -------------------
+    // Search - reuse popular
+    // -------------------
+    override fun searchMangaSelector(): String = popularMangaSelector()
+    override fun searchMangaFromElement(element: Element): SManga = popularMangaFromElement(element)
+    override fun searchMangaNextPageSelector(): String? = popularMangaNextPageSelector()
+
+    // -------------------
+    // Manga detail
+    // -------------------
+    override fun mangaDetailsParse(document: Document): SManga {
         val manga = SManga.create()
-        manga.title = doc.selectFirst("h1")?.text().orEmpty()
-        manga.thumbnail_url = doc.selectFirst("img")?.attr("data-src").orEmpty()
-            .ifEmpty { doc.selectFirst("img")?.attr("src").orEmpty() }
-        manga.description = doc.selectFirst(".summary, .entry-content, .desc, .sinopsis")?.text().orEmpty()
-        // Args lain (author, status) dapat ditambahkan bila ditemukan di DOM
+        manga.title = document.selectFirst("h1")?.text().orEmpty()
+        manga.thumbnail_url = document.selectFirst("img")?.attr("data-src").orEmpty()
+            .ifEmpty { document.selectFirst("img")?.attr("src").orEmpty() }
+        manga.description = document.selectFirst(".summary, .entry-content, .desc, .sinopsis")?.text().orEmpty()
+
+        // optional: author, status, genre parsing (tambahkan bila DOM jelas)
+        manga.author = document.selectFirst(".author, .meta-author")?.text().orEmpty()
+        val statusText = document.selectFirst(".status, .meta-status")?.text().orEmpty().lowercase()
+        manga.status = when {
+            statusText.contains("ongoing") || statusText.contains("on-going") || statusText.contains("on going") || statusText.contains("on going") ->  SManga.ONGOING
+            statusText.contains("completed") || statusText.contains("finish") -> SManga.COMPLETED
+            else -> SManga.UNKNOWN
+        }
         return manga
     }
 
-    override fun chapterListParse(response: Response): List<SChapter> {
-        val doc = responseToDoc(response)
-        val chapters = mutableListOf<SChapter>()
-        val elements = doc.select("ul.chapters li, .chapter-list li, .chapter-item, a.chapter")
-        for (el in elements) {
-            val link = el.selectFirst("a") ?: el
-            val ch = SChapter.create()
-            ch.name = link.text().orEmpty()
-            ch.url = link.attr("href").orEmpty()
-            // ch.date_upload = ... (parse jika tersedia)
-            chapters.add(ch)
-        }
-        return chapters
+    // -------------------
+    // Chapters
+    // -------------------
+    override fun chapterListSelector(): String = "ul.chapters li a, .chapter-list a, .wp-manga-chapter a, .chapters a"
+
+    override fun chapterFromElement(element: Element): SChapter {
+        val chapter = SChapter.create()
+        // element might be an <a> or contain <a>
+        val a = if (element.tagName() == "a") element else element.selectFirst("a") ?: element
+        chapter.name = a.text().orEmpty()
+        chapter.url = a.attr("href").orEmpty()
+        // date parsing optional
+        return chapter
     }
 
-    override fun pageListParse(response: Response): List<Page> {
-        val doc = responseToDoc(response)
-        val pages = mutableListOf<Page>()
-        val imgs = doc.select("div#chapter_body img, .main-reading-area img, .page img, img.wp-manga-chapter-img")
-        imgs.forEachIndexed { i, img ->
-            val imgUrl = img.absUrl("data-src").ifEmpty { img.absUrl("src") }
-            pages.add(Page(i, "", imgUrl))
+    // -------------------
+    // Pages
+    // -------------------
+    override fun pageListParse(document: Document): List<Page> {
+        // Ambil gambar pembaca (SSR area)
+        val imgs = document.select("div#chapter_body img, .main-reading-area img, .page img, img.wp-manga-chapter-img")
+        if (imgs.isEmpty()) {
+            // fallback: ambil semua img di konten
+            return document.select("img").mapIndexed { i, el ->
+                val src = el.absUrl("data-src").ifEmpty { el.absUrl("src") }
+                Page(i, "", src)
+            }
         }
-        return pages
+        return imgs.mapIndexed { i, el ->
+            val src = el.absUrl("data-src").ifEmpty { el.absUrl("src") }
+            Page(i, "", src)
+        }
     }
 
-    // Required by HttpSource
-    protected override fun imageUrlParse(response: Response): String {
-        val doc = responseToDoc(response)
-        return doc.selectFirst("img")?.absUrl("src").orEmpty()
+    // parsed variant of imageUrlParse takes Document
+    override fun imageUrlParse(document: Document): String {
+        return document.selectFirst("img")?.absUrl("data-src").orEmpty()
+            .ifEmpty { document.selectFirst("img")?.absUrl("src").orEmpty() }
     }
 }
 
-// Factory (jika dibutuhkan)
+// Optional: factory if repo expects SourceFactory
 class KomikVFactory : SourceFactory {
     override fun createSources() = listOf(KomikV())
 }
