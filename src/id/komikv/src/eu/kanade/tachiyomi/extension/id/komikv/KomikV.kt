@@ -38,12 +38,41 @@ class KomikV : ParsedHttpSource() {
         }
     }
 
-    // Popular (with dedupe across pages)
+    // 1) resetSeen pada popular request
     override fun popularMangaRequest(page: Int): Request {
-        return GET("$baseUrl/?page=$page", headers)
-    }
+    if (page <= 1) resetSeen()
+    return GET("$baseUrl/?page=$page", headers)
+}
 
-    override fun popularMangaSelector() = "div.grid div.flex.overflow-hidden, div.grid div.neu, .list-update_item, .bsx"
+// 2) perketat next selector
+    override fun popularMangaNextPageSelector() =
+    "a[rel=next], .pagination a[rel=next], .pagination a[href*='page=']:not([href*='page=1']), a.next, a:contains(Next), a:contains(›)"
+
+// 3) override popularMangaParse untuk deteksi next yang lebih andal
+    override fun popularMangaParse(response: Response): MangasPage {
+    val body = response.body?.string().orEmpty()
+    val doc = Jsoup.parse(body, baseUrl)
+
+    // ambil daftar dengan dedupe menggunakan seenUrls (agar tidak duplicate across pages)
+    val list = doc.select(popularMangaSelector())
+        .map { popularMangaFromElement(it) }
+        .filter { it.url.isNotBlank() && seenUrls.add(it.url) }
+
+    // cari page saat ini dari request (fallback ke 1)
+    val currentPage = response.request.url.queryParameter("page")?.toIntOrNull() ?: 1
+
+    // cara pertama: ada elemen next di DOM sesuai selector kita?
+    val hasNextByDom = doc.select(popularMangaNextPageSelector()).isNotEmpty()
+
+    // cara kedua (fallback): cari literal ?page=current+1 di HTML/JS (berguna untuk Qwik/json)
+    val nextPageNumber = currentPage + 1
+    val hasNextByPattern = Regex("""[?&]page=${nextPageNumber}\b""").containsMatchIn(body)
+
+    val hasNext = hasNextByDom || hasNextByPattern
+
+    return MangasPage(list, hasNext)
+}
+
     override fun popularMangaFromElement(element: Element): SManga {
         return SManga.create().apply {
             title = element.selectFirst("h2.font-bold, h2 a, h2")?.text()?.trim().orEmpty()
