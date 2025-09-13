@@ -46,54 +46,8 @@ class KomikV : ParsedHttpSource() {
 
     // Popular (with dedupe across pages)
     // ----------------------
-    override fun popularMangaRequest(page: Int): Request {
-        // reset seen for page 1 so new listing refresh works
-        if (page <= 1) resetSeen()
+        override fun popularMangaRequest(page: Int): Request {
         return GET("$baseUrl/?page=$page", headers)
-    }
-
-    override fun popularMangaParse(response: Response): MangasPage {
-        val body = response.body?.string().orEmpty()
-
-        // try JSON _objs parsing first
-        try {
-            val root = tryParseJSONObject(body)
-            if (root != null) {
-                val parsed = parseQDataObjsToManga(root)
-
-                // filter duplicates using seenUrls
-                val newList = parsed.filter { manga ->
-                    val key = (manga.url ?: manga.title ?: manga.thumbnail_url ?: "").ifEmpty { manga.title }
-                    !seenUrls.contains(key).also { added ->
-                        if (!seenUrls.contains(key)) seenUrls.add(key)
-                    }
-                }
-
-                // hasNext true only if there's new items for this page
-                val hasNext = newList.isNotEmpty()
-                return MangasPage(newList, hasNext)
-            }
-        } catch (_: Exception) {}
-
-        // fallback HTML parse
-        try {
-            val doc = Jsoup.parse(body, baseUrl)
-            val elements = doc.select(popularMangaSelector())
-            val mangas = elements.map { popularMangaFromElement(it) }
-
-            // filter duplicates
-            val newList = mangas.filter { manga ->
-                val key = (manga.url ?: manga.title ?: manga.thumbnail_url ?: "").ifEmpty { manga.title }
-                !seenUrls.contains(key).also { added ->
-                    if (!seenUrls.contains(key)) seenUrls.add(key)
-                }
-            }
-
-            val hasNext = doc.select(popularMangaNextPageSelector()).isNotEmpty() && newList.isNotEmpty()
-            return MangasPage(newList, hasNext)
-        } catch (_: Exception) {
-            return MangasPage(emptyList(), false)
-        }
     }
 
     override fun popularMangaSelector() = "div.grid div.flex.overflow-hidden, div.grid div.neu, .list-update_item, .bsx"
