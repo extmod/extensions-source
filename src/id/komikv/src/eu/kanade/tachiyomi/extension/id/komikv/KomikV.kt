@@ -6,7 +6,6 @@ import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.MangasPage
-import eu.kanade.tachiyomi.util.asJsoup
 import eu.kanade.tachiyomi.source.online.ParsedHttpSource
 import okhttp3.Headers
 import okhttp3.OkHttpClient
@@ -101,11 +100,11 @@ class KomikV : ParsedHttpSource() {
         val document = response.asJsoup()
         val elements = document.select(popularMangaSelector())
         
-        val mangas = elements.mapNotNull { element: Element ->
+        val mangas = elements.mapNotNull { element ->
             try {
                 popularMangaFromElement(element)
             } catch (_: Exception) { null }
-        }.filter { manga: SManga ->
+        }.filter { manga ->
             val key = manga.url.ifEmpty { manga.title }
             if (seenUrls.contains(key)) {
                 false
@@ -115,40 +114,21 @@ class KomikV : ParsedHttpSource() {
             }
         }
 
-        val hasNext = document.select("a:contains(Berikutnya), a:contains(Next), a[href*='page=']:contains(›)").isNotEmpty()
+        val hasNext = document.select("a:contains(Next), a:contains(Selanjutnya), a[href*='page=']:contains(›)").isNotEmpty()
         return MangasPage(mangas, hasNext && mangas.isNotEmpty())
     }
 
-    override fun popularMangaSelector() = "div.grid > div, .manga-item, .bsx, div[class*='grid'] > div:has(img), div:has(h2):has(img)"
+    override fun popularMangaSelector() = "div.grid div.flex.overflow-hidden, div.grid div.neu, .list-update_item, .bsx"
 
-    override fun popularMangaFromElement(element: Element): SManga = SManga.create().apply {
-        // Title - multiple possible selectors
-        title = element.selectFirst("h2, h3, .title, .manga-title")?.text()?.trim()
-            ?: element.selectFirst("a[href*='/manga/']")?.text()?.trim()
-            ?: ""
-
-        // URL
-        val linkElement = element.selectFirst("a[href*='/manga/'], a[href*='/comic/']")
-        url = linkElement?.attr("href")?.let { href ->
-            when {
-                href.startsWith(baseUrl) -> href.removePrefix(baseUrl)
-                href.startsWith("/") -> href
-                else -> "/manga/$href"
-            }
-        } ?: ""
-
-        // Thumbnail
-        val imgElement = element.selectFirst("img")
-        thumbnail_url = imgElement?.let { img ->
-            img.attr("data-src").ifEmpty { 
-                img.attr("src").ifEmpty {
-                    img.attr("data-lazy-src")
-                }
-            }
-        } ?: ""
-
-        // Basic description from any text content
-        description = element.selectFirst(".synopsis, .summary")?.text()?.trim() ?: ""
+    override fun popularMangaFromElement(element: Element): SManga {
+        return SManga.create().apply {
+            title = element.selectFirst("h2.font-bold, h2 a, h2")?.text()?.trim().orEmpty()
+            val link = element.selectFirst("a[href*='/comic/'], a[href*='/manga/']") ?: element.selectFirst("a")
+            val linkHref = link?.attr("href").orEmpty()
+            url = if (linkHref.startsWith(baseUrl)) linkHref.removePrefix(baseUrl) else linkHref
+            val img = element.selectFirst("img[data-src], img.lazyimage, img")
+            thumbnail_url = img?.attr("data-src")?.ifEmpty { img.attr("src") }.orEmpty()
+        }
     }
 
     override fun popularMangaNextPageSelector() = "a:contains(Next), a:contains(Selanjutnya), a[href*='page=']:contains(›)"
