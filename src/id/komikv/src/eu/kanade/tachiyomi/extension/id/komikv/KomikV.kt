@@ -19,7 +19,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 
 class KomikV : HttpSource() {
-    override val name = "KomikAV (example)"
+    override val name = "Komikv"
     override val baseUrl = "https://komikav.net"
     override val lang = "id"
     override val supportsLatest = true
