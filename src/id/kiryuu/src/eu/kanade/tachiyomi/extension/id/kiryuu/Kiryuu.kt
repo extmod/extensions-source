@@ -1,42 +1,98 @@
 package eu.kanade.tachiyomi.extension.id.kiryuu
 
+import android.app.Application
 import eu.kanade.tachiyomi.multisrc.mangathemesia.MangaThemesia
+import androidx.preference.EditTextPreference
+import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
-import okhttp3.MediaType.Companion.toMediaType
+import eu.kanade.tachiyomi.source.ConfigurableSource
+import eu.kanade.tachiyomi.source.model.Page
+import eu.kanade.tachiyomi.source.model.SManga
 import okhttp3.OkHttpClient
-import okhttp3.ResponseBody.Companion.asResponseBody
 import org.jsoup.nodes.Document
+import org.jsoup.nodes.Element
+import eu.kanade.tachiyomi.util.asJsoup
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 import java.text.SimpleDateFormat
 import java.util.Locale
 
-class Kiryuu : MangaThemesia("Kiryuu", "https://kiryuu02.com", "id", dateFormat = SimpleDateFormat("MMMM dd, yyyy", Locale("id"))) {
-    // Formerly "Kiryuu (WP Manga Stream)"
-    override val id = 3639673976007021338
+class Kiryuu : MangaThemesia(
+    "Kiryuu",
+    "https://kiryuu02.com",
+    "id",
+    "/manga",
+    dateFormat = SimpleDateFormat("MMMM dd, yyyy", Locale("id"))
+), ConfigurableSource {
+
+    private val preferences = Injekt.get<Application>().getSharedPreferences("source_$id", 0x0000)
+
+    private val resizeCover = "https://wsrv.nl/?w=110&h=150&url="
+
+    override var baseUrl = preferences.getString("overrideBaseUrl", super.baseUrl)!!
 
     override val client: OkHttpClient = super.client.newBuilder()
-        .addInterceptor { chain ->
-            val response = chain.proceed(chain.request())
-            val mime = response.headers["Content-Type"]
-            if (response.isSuccessful) {
-                if (mime != "application/octet-stream") {
-                    return@addInterceptor response
-                }
-                // Fix image content type
-                val type = IMG_CONTENT_TYPE.toMediaType()
-                val body = response.body.source().asResponseBody(type)
-                return@addInterceptor response.newBuilder().body(body).build()
-            }
-            response
-        }
         .rateLimit(4)
         .build()
 
-    // manga details
-    override fun mangaDetailsParse(document: Document) = super.mangaDetailsParse(document).apply {
-        title = document.selectFirst(seriesThumbnailSelector)!!.attr("title")
+    override fun searchMangaFromElement(element: Element): SManga {
+    return super.searchMangaFromElement(element).apply {
+        thumbnail_url = "$resizeCover$thumbnail_url"
+    }
+}
+
+    override fun mangaDetailsParse(document: Document): SManga {
+    val manga = super.mangaDetailsParse(document)
+
+    val img = document.select(seriesThumbnailSelector).firstOrNull()
+    if (img != null) {
+        val originalUrl = img.imgAttr().trim()
+        manga.thumbnail_url = "$resizeCover$originalUrl"
+        manga.title = img.attr("alt").trim()
     }
 
-    override val hasProjectPage = true
+    return manga
+}
+
+    override fun pageListParse(response: okhttp3.Response): List<Page> {
+    val doc = response.asJsoup()
+    val service = preferences.getString("resize_service_url", "")
+
+    return doc.select(pageSelector).mapIndexed { i, img ->
+        val src = img.imgAttr().trim()
+        val finalUrl = "$service$src"
+        Page(i, "", finalUrl)
+    }
+}
+
+    override fun setupPreferenceScreen(screen: PreferenceScreen) {
+        val resizeServicePref = EditTextPreference(screen.context).apply {
+            key = "resize_service_url"
+            title = "Resize Service URL (Pages)"
+            summary = "Masukkan URL layanan resize gambar untuk halaman (page list)."
+            setDefaultValue(null)
+            dialogTitle = "Resize Service URL"
+        }
+        screen.addPreference(resizeServicePref)
+
+        val baseUrlPref = EditTextPreference(screen.context).apply {
+            key = "overrideBaseUrl"
+            title = "Ubah Domain"
+            summary = "Update domain untuk ekstensi ini"
+            setDefaultValue(baseUrl)
+            dialogTitle = "Update domain untuk ekstensi ini"
+            dialogMessage = "Original: $baseUrl"
+
+            setOnPreferenceChangeListener { _, newValue ->
+                val newUrl = newValue as String
+                baseUrl = newUrl
+                preferences.edit().putString("overrideBaseUrl", newUrl).apply()
+                summary = "Current domain: $newUrl"
+                true
+            }
+        }
+        screen.addPreference(baseUrlPref)
+    }
 }
 
 private const val IMG_CONTENT_TYPE = "image/jpeg"
