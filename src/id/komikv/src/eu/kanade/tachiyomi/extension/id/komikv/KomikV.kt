@@ -54,6 +54,8 @@ class KomikV : ParsedHttpSource() {
         }
     }
 
+    override fun popularMangaNextPageSelector(): String? = null
+
     override fun popularMangaParse(response: Response): MangasPage {
         val document = Jsoup.parse(response.body?.string().orEmpty(), baseUrl)
         val mangas = document.select(popularMangaSelector())
