@@ -141,51 +141,52 @@ class KomikV : ParsedHttpSource() {
     }
 
     // === CHAPTER LIST SECTION ===
-    override fun chapterListSelector() = "#chapter_list li"
+    override fun chapterListSelector() = "div.mt-4.flex.max-h-96.flex-col > a"
 
-    override fun chapterFromElement(element: Element): SChapter {
-    val urlElement = element.selectFirst(".lchx a") ?: element.selectFirst("a") ?: throw Exception("No link element")
+override fun chapterFromElement(element: Element): SChapter {
     val chapter = SChapter.create()
-    chapter.setUrlWithoutDomain(urlElement.attr("href"))
-    chapter.name = urlElement.text().trim()
-    // Kirim Element, bukan String
-    chapter.date_upload = element.selectFirst(".dt a")?.let { parseChapterDate(it) } ?: 0L
+
+    // jika chapterListSelector() mengembalikan "div... > a", element sudah <a>
+    val url = element.attr("href")
+    chapter.setUrlWithoutDomain(url)
+
+    // judul/nama chapter: <div><p>Chapter 4</p>...</div> atau langsung <p>
+    val titleEl = element.selectFirst("div > p:first-of-type") ?: element.selectFirst("p:first-of-type")
+    chapter.name = titleEl?.text()?.trim() ?: element.text().trim()
+
+    // tanggal/waktu: biasanya di <p class="text-xs font-medium">35 mnt lalu</p>
+    val dateText = element.selectFirst("p.text-xs, p.text-xs.font-medium")?.text()?.trim() ?: ""
+    chapter.date_upload = parseRelativeDateToTimestamp(dateText)
+
     return chapter
 }
 
-private fun parseChapterDate(element: Element): Long {
-    // Cari teks tanggal dari element atau parent jika perlu
-    val dateText = element.selectFirst(".chapter-date, .date, .time")?.text()?.trim()
-        ?: element.parent()?.selectFirst(".chapter-date, .date, .time")?.text()?.trim()
-        ?: element.text().split(" - ").getOrNull(1)?.trim()
+// Simple parser untuk teks seperti "35 mnt lalu", "2 jam lalu", "1 hari lalu", dlsb.
+// Mengembalikan epoch millis. Jika gagal parse, kembalikan 0L.
+    private fun parseRelativeDateToTimestamp(text: String): Long {
+    if (text.isBlank()) return 0L
+    val now = System.currentTimeMillis()
+    val lower = text.lowercase().trim()
 
-    if (dateText.isNullOrEmpty()) return 0L
-
-    return try {
-        when {
-            dateText.contains("hari", ignoreCase = true) && dateText.contains("lalu", ignoreCase = true) -> {
-                val days = dateText.replace(Regex("[^0-9]"), "").toIntOrNull() ?: 0
-                System.currentTimeMillis() - (days * 24 * 60 * 60 * 1000L)
-            }
-            dateText.contains("jam", ignoreCase = true) && dateText.contains("lalu", ignoreCase = true) -> {
-                val hours = dateText.replace(Regex("[^0-9]"), "").toIntOrNull() ?: 0
-                System.currentTimeMillis() - (hours * 60 * 60 * 1000L)
-            }
-            dateText.contains("menit", ignoreCase = true) && dateText.contains("lalu", ignoreCase = true) -> {
-                val minutes = dateText.replace(Regex("[^0-9]"), "").toIntOrNull() ?: 0
-                System.currentTimeMillis() - (minutes * 60 * 1000L)
-            }
-            dateText.contains("detik", ignoreCase = true) && dateText.contains("lalu", ignoreCase = true) -> {
-                System.currentTimeMillis()
-            }
-            else -> {
-                // Kalau ada format absolut (mis. "12 Jan 2025"), bisa di-parse di sini.
-                0L
-            }
+    // contoh: "35 mnt lalu", "35 menit lalu", "2 jam lalu", "3 hari lalu"
+    val r = Regex("""(\d+)\s*(mnt|menit|jam|hari|minggu|bulan|thn|tahun)""")
+    val m = r.find(lower)
+    if (m != null) {
+        val value = m.groupValues[1].toLong()
+        val unit = m.groupValues[2]
+        val delta = when (unit) {
+            "mnt", "menit" -> value * 60_000L
+            "jam" -> value * 3_600_000L
+            "hari" -> value * 86_400_000L
+            "minggu" -> value * 604_800_000L
+            "bulan" -> value * 2_592_000_000L   // asumsi 30 hari
+            "thn", "tahun" -> value * 31_536_000_000L // asumsi 365 hari
+            else -> 0L
         }
-    } catch (e: Exception) {
-        0L
+        return now - delta
     }
+    
+    return 0L
 }
 
     override fun chapterListParse(response: Response): List<SChapter> {
