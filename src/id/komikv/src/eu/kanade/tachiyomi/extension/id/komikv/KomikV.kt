@@ -41,7 +41,7 @@ class KomikV : ParsedHttpSource() {
     // === POPULAR MANGA SECTION ===
     override fun popularMangaRequest(page: Int): Request {
         if (page <= 1) resetSeen()
-        return GET("$baseUrl/?page=$page", headers)
+        return GET("$baseUrl/popular/?page=$page", headers)
     }
 
     override fun popularMangaSelector(): String = "div.grid div.flex.overflow-hidden"
@@ -62,7 +62,7 @@ class KomikV : ParsedHttpSource() {
         val mangas = document.select(popularMangaSelector())
             .map { popularMangaFromElement(it) }
             .filter { it.url.isNotBlank() && it.title.isNotBlank() && seenUrls.add(it.url) }
-        
+
         // Selalu kembalikan true untuk hasNextPage karena kita menggunakan custom pagination logic
         return MangasPage(mangas, true)
     }
@@ -79,7 +79,7 @@ class KomikV : ParsedHttpSource() {
         return SManga.create().apply {
             title = element.selectFirst("h2 a")?.text()?.trim().orEmpty()
             url = element.selectFirst("a")?.attr("href").orEmpty()
-            thumbnail_url = element.selectFirst("img")?.absUrl("src").orEmpty()
+            thumbnail_url = element.selectFirst("img")?.absUrl("data-src").orEmpty()
         }
     }
 
@@ -104,7 +104,7 @@ class KomikV : ParsedHttpSource() {
 
     override fun searchMangaSelector(): String = popularMangaSelector()
     override fun searchMangaFromElement(element: Element): SManga = popularMangaFromElement(element)
-    
+
     // INI adalah method yang menyebabkan error - harus diimplementasikan
     override fun searchMangaNextPageSelector(): String? = null
 
@@ -112,28 +112,29 @@ class KomikV : ParsedHttpSource() {
         val document = Jsoup.parse(response.body?.string().orEmpty(), baseUrl)
         val mangas = document.select(searchMangaSelector())
             .map { popularMangaFromElement(it) }
-        
+
         return MangasPage(mangas, true)
     }
 
     // === MANGA DETAILS SECTION ===
     override fun mangaDetailsParse(document: Document): SManga {
-        return SManga.create().apply {
-            title = document.selectFirst("h1")?.text()?.trim().orEmpty()
-            author = document.selectFirst(".author")?.text()?.trim().orEmpty()
-            description = document.selectFirst(".description p")?.text()?.trim().orEmpty()
-            genre = document.select(".genre a").joinToString(", ") { it.text().trim() }
-            status = parseStatus(document.selectFirst(".status")?.text().orEmpty())
-            thumbnail_url = document.selectFirst("img")?.absUrl("src").orEmpty()
-        }
+    return SManga.create().apply {
+        title = document.selectFirst("h1.text-xl")?.text()?.trim().orEmpty()
+        author = document.select("a[href*=\"/tax/author/\"]").joinToString(", ") { it.text().trim() }
+        description = document.selectFirst(".mt-4.w-full p")?.text()?.trim().orEmpty()
+        genre = (document.select(".mt-4.w-full a.text-md.mb-1").map { it.text().trim() } + 
+                 document.select(".bg-red-800").map { it.text().trim() })
+            .joinToString(", ")
+        status = parseStatus(document.selectFirst(".bg-green-800")?.text().orEmpty())
+        thumbnail_url = document.selectFirst("img.neu-active")?.absUrl("src").orEmpty()
     }
+}
 
     private fun parseStatus(statusString: String): Int = when {
-        statusString.contains("ongoing", ignoreCase = true) -> SManga.ONGOING
-        statusString.contains("completed", ignoreCase = true) || statusString.contains("tamat", ignoreCase = true) -> SManga.COMPLETED
-        statusString.contains("hiatus", ignoreCase = true) -> SManga.ON_HIATUS
-        else -> SManga.UNKNOWN
-    }
+    statusString.contains("on-going", ignoreCase = true) -> SManga.ONGOING
+    statusString.contains("complete", ignoreCase = true) -> SManga.COMPLETED
+    else -> SManga.UNKNOWN
+}
 
     // === CHAPTER LIST SECTION ===
     override fun chapterListSelector(): String = ".chapter-list a"
