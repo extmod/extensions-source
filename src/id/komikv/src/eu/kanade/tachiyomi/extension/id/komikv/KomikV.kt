@@ -54,6 +54,7 @@ class KomikV : ParsedHttpSource() {
         }
     }
 
+    // Method ini diperlukan oleh ParsedHttpSource - mengembalikan null berarti tidak ada pagination
     override fun popularMangaNextPageSelector(): String? = null
 
     override fun popularMangaParse(response: Response): MangasPage {
@@ -62,8 +63,8 @@ class KomikV : ParsedHttpSource() {
             .map { popularMangaFromElement(it) }
             .filter { it.url.isNotBlank() && it.title.isNotBlank() && seenUrls.add(it.url) }
         
-        // Hilangkan kode untuk pagination di sini
-        return MangasPage(mangas, true) // Selalu kembalikan true untuk hasNextPage
+        // Selalu kembalikan true untuk hasNextPage karena kita menggunakan custom pagination logic
+        return MangasPage(mangas, true)
     }
 
     // === LATEST UPDATES SECTION ===
@@ -82,6 +83,7 @@ class KomikV : ParsedHttpSource() {
         }
     }
 
+    // Method ini juga diperlukan untuk latest updates
     override fun latestUpdatesNextPageSelector(): String? = null
 
     override fun latestUpdatesParse(response: Response): MangasPage {
@@ -90,8 +92,7 @@ class KomikV : ParsedHttpSource() {
             .map { latestUpdatesFromElement(it) }
             .filter { it.url.isNotBlank() && it.title.isNotBlank() && seenUrls.add(it.url) }
 
-        // Hilangkan kode untuk pagination di sini
-        return MangasPage(mangas, true) // Selalu kembalikan true untuk hasNextPage
+        return MangasPage(mangas, true)
     }
 
     // === SEARCH SECTION ===
@@ -103,6 +104,9 @@ class KomikV : ParsedHttpSource() {
 
     override fun searchMangaSelector(): String = popularMangaSelector()
     override fun searchMangaFromElement(element: Element): SManga = popularMangaFromElement(element)
+    
+    // INI adalah method yang menyebabkan error - harus diimplementasikan
+    override fun searchMangaNextPageSelector(): String? = null
 
     override fun searchMangaParse(response: Response): MangasPage {
         val document = Jsoup.parse(response.body?.string().orEmpty(), baseUrl)
