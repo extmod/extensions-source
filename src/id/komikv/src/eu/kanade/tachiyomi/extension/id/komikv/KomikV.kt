@@ -97,12 +97,17 @@ class KomikV : ParsedHttpSource() {
     // === SEARCH SECTION ===
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
         if (page <= 1) resetSeen()
-        val url = "$baseUrl/search?q=${java.net.URLEncoder.encode(query, "UTF-8")}&page=$page"
+        val encodedQuery = java.net.URLEncoder.encode(query, "UTF-8")
+        val url = if (page > 1) {
+            "$baseUrl/search/$encodedQuery/?page=$page"
+        } else {
+            "$baseUrl/search/$encodedQuery/"
+        }
         return GET(url, headers)
     }
 
-    override fun searchMangaSelector(): String = "div.grid div.flex.overflow-hidden"
-    override fun searchMangaFromElement(element: Element): SManga = latestUpdatesFromElement(element)
+    override fun searchMangaSelector(): String = "div.grid div.overflow-hidden"
+    override fun searchMangaFromElement(element: Element): SManga = popularMangaFromElement(element)
 
     override fun searchMangaNextPageSelector(): String? = null
 
@@ -110,6 +115,7 @@ class KomikV : ParsedHttpSource() {
         val document = Jsoup.parse(response.body?.string().orEmpty(), baseUrl)
         val mangas = document.select(searchMangaSelector())
             .map { searchMangaFromElement(it) }
+            .filter { it.url.isNotBlank() && it.title.isNotBlank() && seenUrls.add(it.url) }
 
         return MangasPage(mangas, true)
     }
@@ -135,12 +141,52 @@ class KomikV : ParsedHttpSource() {
     }
 
     // === CHAPTER LIST SECTION ===
-    override fun chapterListSelector(): String = ".chapter-list a"
+    override fun chapterListSelector(): String = "a[href*='/chapter/']"
 
     override fun chapterFromElement(element: Element): SChapter {
         return SChapter.create().apply {
-            name = element.text()?.trim().orEmpty()
+            name = element.selectFirst(".chapter-title, h3, .title")?.text()?.trim() ?: 
+                   element.text().split(" - ").firstOrNull()?.trim().orEmpty()
             url = element.attr("href").orEmpty()
+            
+            // Parse date yang terpisah dari chapter title
+            date_upload = parseChapterDate(element)
+        }
+    }
+
+    private fun parseChapterDate(element: Element): Long {
+        // Cari tanggal dari berbagai kemungkinan selector
+        val dateText = element.selectFirst(".chapter-date, .date, .time")?.text()?.trim() ?:
+                      element.parent()?.selectFirst(".chapter-date, .date, .time")?.text()?.trim() ?:
+                      element.text().split(" - ").getOrNull(1)?.trim()
+        
+        if (dateText.isNullOrEmpty()) return 0L
+        
+        return try {
+            // Parse format tanggal Indonesia
+            when {
+                dateText.contains("hari yang lalu") -> {
+                    val days = dateText.replace("hari yang lalu", "").trim().toIntOrNull() ?: 0
+                    System.currentTimeMillis() - (days * 24 * 60 * 60 * 1000L)
+                }
+                dateText.contains("jam yang lalu") -> {
+                    val hours = dateText.replace("jam yang lalu", "").trim().toIntOrNull() ?: 0
+                    System.currentTimeMillis() - (hours * 60 * 60 * 1000L)
+                }
+                dateText.contains("menit yang lalu") -> {
+                    val minutes = dateText.replace("menit yang lalu", "").trim().toIntOrNull() ?: 0
+                    System.currentTimeMillis() - (minutes * 60 * 1000L)
+                }
+                dateText.contains("detik yang lalu") -> {
+                    System.currentTimeMillis()
+                }
+                else -> {
+                    // Parse format tanggal absolut jika ada
+                    0L
+                }
+            }
+        } catch (e: Exception) {
+            0L
         }
     }
 
