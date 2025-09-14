@@ -141,52 +141,52 @@ class KomikV : ParsedHttpSource() {
     }
 
     // === CHAPTER LIST SECTION ===
-        override fun chapterListSelector() = "#chapter_list li"
+    override fun chapterListSelector() = "#chapter_list li"
 
     override fun chapterFromElement(element: Element): SChapter {
-        val urlElement = element.select(".lchx a").first()!!
-        val chapter = SChapter.create()
-        chapter.setUrlWithoutDomain(urlElement.attr("href"))
-        chapter.name = urlElement.text()
-        chapter.date_upload = element.select(".dt a").first()?.text()?.let { parseChapterDate(it) } ?: 0
-        return chapter
-    }
+    val urlElement = element.selectFirst(".lchx a") ?: element.selectFirst("a") ?: throw Exception("No link element")
+    val chapter = SChapter.create()
+    chapter.setUrlWithoutDomain(urlElement.attr("href"))
+    chapter.name = urlElement.text().trim()
+    // Kirim Element, bukan String
+    chapter.date_upload = element.selectFirst(".dt a")?.let { parseChapterDate(it) } ?: 0L
+    return chapter
+}
 
-    private fun parseChapterDate(element: Element): Long {
-        // Cari tanggal dari berbagai kemungkinan selector
-        val dateText = element.selectFirst(".chapter-date, .date, .time")?.text()?.trim() ?:
-                      element.parent()?.selectFirst(".chapter-date, .date, .time")?.text()?.trim() ?:
-                      element.text().split(" - ").getOrNull(1)?.trim()
-        
-        if (dateText.isNullOrEmpty()) return 0L
-        
-        return try {
-            // Parse format tanggal Indonesia
-            when {
-                dateText.contains("hari yang lalu") -> {
-                    val days = dateText.replace("hari yang lalu", "").trim().toIntOrNull() ?: 0
-                    System.currentTimeMillis() - (days * 24 * 60 * 60 * 1000L)
-                }
-                dateText.contains("jam yang lalu") -> {
-                    val hours = dateText.replace("jam yang lalu", "").trim().toIntOrNull() ?: 0
-                    System.currentTimeMillis() - (hours * 60 * 60 * 1000L)
-                }
-                dateText.contains("menit yang lalu") -> {
-                    val minutes = dateText.replace("menit yang lalu", "").trim().toIntOrNull() ?: 0
-                    System.currentTimeMillis() - (minutes * 60 * 1000L)
-                }
-                dateText.contains("detik yang lalu") -> {
-                    System.currentTimeMillis()
-                }
-                else -> {
-                    // Parse format tanggal absolut jika ada
-                    0L
-                }
+private fun parseChapterDate(element: Element): Long {
+    // Cari teks tanggal dari element atau parent jika perlu
+    val dateText = element.selectFirst(".chapter-date, .date, .time")?.text()?.trim()
+        ?: element.parent()?.selectFirst(".chapter-date, .date, .time")?.text()?.trim()
+        ?: element.text().split(" - ").getOrNull(1)?.trim()
+
+    if (dateText.isNullOrEmpty()) return 0L
+
+    return try {
+        when {
+            dateText.contains("hari", ignoreCase = true) && dateText.contains("lalu", ignoreCase = true) -> {
+                val days = dateText.replace(Regex("[^0-9]"), "").toIntOrNull() ?: 0
+                System.currentTimeMillis() - (days * 24 * 60 * 60 * 1000L)
             }
-        } catch (e: Exception) {
-            0L
+            dateText.contains("jam", ignoreCase = true) && dateText.contains("lalu", ignoreCase = true) -> {
+                val hours = dateText.replace(Regex("[^0-9]"), "").toIntOrNull() ?: 0
+                System.currentTimeMillis() - (hours * 60 * 60 * 1000L)
+            }
+            dateText.contains("menit", ignoreCase = true) && dateText.contains("lalu", ignoreCase = true) -> {
+                val minutes = dateText.replace(Regex("[^0-9]"), "").toIntOrNull() ?: 0
+                System.currentTimeMillis() - (minutes * 60 * 1000L)
+            }
+            dateText.contains("detik", ignoreCase = true) && dateText.contains("lalu", ignoreCase = true) -> {
+                System.currentTimeMillis()
+            }
+            else -> {
+                // Kalau ada format absolut (mis. "12 Jan 2025"), bisa di-parse di sini.
+                0L
+            }
         }
+    } catch (e: Exception) {
+        0L
     }
+}
 
     override fun chapterListParse(response: Response): List<SChapter> {
         val document = Jsoup.parse(response.body?.string().orEmpty(), baseUrl)
