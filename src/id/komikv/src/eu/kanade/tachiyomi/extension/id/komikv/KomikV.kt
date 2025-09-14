@@ -44,17 +44,18 @@ class KomikV : ParsedHttpSource() {
         return GET("$baseUrl/popular/?page=$page", headers)
     }
 
-    override fun popularMangaSelector(): String = "div.grid div.flex.overflow-hidden"
+    override fun popularMangaSelector(): String = "div.grid div.overflow-hidden"
 
     override fun popularMangaFromElement(element: Element): SManga {
         return SManga.create().apply {
-            title = element.selectFirst("h2 a")?.text()?.trim().orEmpty()
+            title = element.selectFirst("h2")?.text()?.trim().orEmpty()
             url = element.selectFirst("a")?.attr("href").orEmpty()
-            thumbnail_url = element.selectFirst("img")?.absUrl("src").orEmpty()
+            thumbnail_url = element.selectFirst("img")?.let { img ->
+                img.absUrl("data-src").ifEmpty { img.absUrl("src") }
+            }.orEmpty()
         }
     }
 
-    // Method ini diperlukan oleh ParsedHttpSource - mengembalikan null berarti tidak ada pagination
     override fun popularMangaNextPageSelector(): String? = null
 
     override fun popularMangaParse(response: Response): MangasPage {
@@ -63,7 +64,6 @@ class KomikV : ParsedHttpSource() {
             .map { popularMangaFromElement(it) }
             .filter { it.url.isNotBlank() && it.title.isNotBlank() && seenUrls.add(it.url) }
 
-        // Selalu kembalikan true untuk hasNextPage karena kita menggunakan custom pagination logic
         return MangasPage(mangas, true)
     }
 
@@ -73,7 +73,7 @@ class KomikV : ParsedHttpSource() {
         return GET("$baseUrl/?page=$page&latest=1", headers)
     }
 
-    override fun latestUpdatesSelector(): String = popularMangaSelector()
+    override fun latestUpdatesSelector(): String = "div.grid div.flex.overflow-hidden"
 
     override fun latestUpdatesFromElement(element: Element): SManga {
         return SManga.create().apply {
@@ -83,7 +83,6 @@ class KomikV : ParsedHttpSource() {
         }
     }
 
-    // Method ini juga diperlukan untuk latest updates
     override fun latestUpdatesNextPageSelector(): String? = null
 
     override fun latestUpdatesParse(response: Response): MangasPage {
@@ -102,39 +101,38 @@ class KomikV : ParsedHttpSource() {
         return GET(url, headers)
     }
 
-    override fun searchMangaSelector(): String = popularMangaSelector()
-    override fun searchMangaFromElement(element: Element): SManga = popularMangaFromElement(element)
+    override fun searchMangaSelector(): String = "div.grid div.flex.overflow-hidden"
+    override fun searchMangaFromElement(element: Element): SManga = latestUpdatesFromElement(element)
 
-    // INI adalah method yang menyebabkan error - harus diimplementasikan
     override fun searchMangaNextPageSelector(): String? = null
 
     override fun searchMangaParse(response: Response): MangasPage {
         val document = Jsoup.parse(response.body?.string().orEmpty(), baseUrl)
         val mangas = document.select(searchMangaSelector())
-            .map { popularMangaFromElement(it) }
+            .map { searchMangaFromElement(it) }
 
         return MangasPage(mangas, true)
     }
 
     // === MANGA DETAILS SECTION ===
     override fun mangaDetailsParse(document: Document): SManga {
-    return SManga.create().apply {
-        title = document.selectFirst("h1.text-xl")?.text()?.trim().orEmpty()
-        author = document.select("a[href*=\"/tax/author/\"]").joinToString(", ") { it.text().trim() }
-        description = document.selectFirst(".mt-4.w-full p")?.text()?.trim().orEmpty()
-        genre = (document.select(".mt-4.w-full a.text-md.mb-1").map { it.text().trim() } + 
-                 document.select(".bg-red-800").map { it.text().trim() })
-            .joinToString(", ")
-        status = parseStatus(document.selectFirst(".bg-green-800")?.text().orEmpty())
-        thumbnail_url = document.selectFirst("img.neu-active")?.absUrl("src").orEmpty()
+        return SManga.create().apply {
+            title = document.selectFirst("h1.text-xl")?.text()?.trim().orEmpty()
+            author = document.select("a[href*=\"/tax/author/\"]").joinToString(", ") { it.text().trim() }
+            description = document.selectFirst(".mt-4.w-full p")?.text()?.trim().orEmpty()
+            genre = (document.select(".mt-4.w-full a.text-md.mb-1").map { it.text().trim() } + 
+                     document.select(".bg-red-800").map { it.text().trim() })
+                .joinToString(", ")
+            status = parseStatus(document.selectFirst(".bg-green-800")?.text().orEmpty())
+            thumbnail_url = document.selectFirst("img.neu-active")?.absUrl("src").orEmpty()
+        }
     }
-}
 
     private fun parseStatus(statusString: String): Int = when {
-    statusString.contains("on-going", ignoreCase = true) -> SManga.ONGOING
-    statusString.contains("complete", ignoreCase = true) -> SManga.COMPLETED
-    else -> SManga.UNKNOWN
-}
+        statusString.contains("on-going", ignoreCase = true) -> SManga.ONGOING
+        statusString.contains("complete", ignoreCase = true) -> SManga.COMPLETED
+        else -> SManga.UNKNOWN
+    }
 
     // === CHAPTER LIST SECTION ===
     override fun chapterListSelector(): String = ".chapter-list a"
