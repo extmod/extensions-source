@@ -54,31 +54,40 @@ class KomikV : ParsedHttpSource() {
         }
     }
 
-    override fun popularMangaNextPageSelector(): String =
-        "a[rel=next], .pagination a[rel=next], .next, a:contains(Next), a:contains(›)"
-
     override fun popularMangaParse(response: Response): MangasPage {
         val document = Jsoup.parse(response.body?.string().orEmpty(), baseUrl)
         val mangas = document.select(popularMangaSelector())
             .map { popularMangaFromElement(it) }
             .filter { it.url.isNotBlank() && it.title.isNotBlank() && seenUrls.add(it.url) }
-        val hasNextPage = document.selectFirst(popularMangaNextPageSelector()) != null
-        return MangasPage(mangas, hasNextPage)
+        
+        // Hilangkan kode untuk pagination di sini
+        return MangasPage(mangas, true) // Selalu kembalikan true untuk hasNextPage
     }
 
     // === LATEST UPDATES SECTION ===
-    override fun latestUpdatesRequest(page: Int): Request = popularMangaRequest(page)
+    override fun latestUpdatesRequest(page: Int): Request {
+        if (page <= 1) resetSeen()
+        return GET("$baseUrl/?page=$page&latest=1", headers)
+    }
+
     override fun latestUpdatesSelector(): String = popularMangaSelector()
-    override fun latestUpdatesFromElement(element: Element): SManga = popularMangaFromElement(element)
-    override fun latestUpdatesNextPageSelector(): String =
-        "a[rel=next], .pagination a[rel=next], .next, a:contains(Next), a:contains(›)"
+
+    override fun latestUpdatesFromElement(element: Element): SManga {
+        return SManga.create().apply {
+            title = element.selectFirst("h2 a")?.text()?.trim().orEmpty()
+            url = element.selectFirst("a")?.attr("href").orEmpty()
+            thumbnail_url = element.selectFirst("img")?.absUrl("src").orEmpty()
+        }
+    }
+
     override fun latestUpdatesParse(response: Response): MangasPage {
         val document = Jsoup.parse(response.body?.string().orEmpty(), baseUrl)
         val mangas = document.select(latestUpdatesSelector())
             .map { latestUpdatesFromElement(it) }
             .filter { it.url.isNotBlank() && it.title.isNotBlank() && seenUrls.add(it.url) }
-        val hasNextPage = document.selectFirst(latestUpdatesNextPageSelector()) != null
-        return MangasPage(mangas, hasNextPage)
+
+        // Hilangkan kode untuk pagination di sini
+        return MangasPage(mangas, true) // Selalu kembalikan true untuk hasNextPage
     }
 
     // === SEARCH SECTION ===
@@ -90,9 +99,14 @@ class KomikV : ParsedHttpSource() {
 
     override fun searchMangaSelector(): String = popularMangaSelector()
     override fun searchMangaFromElement(element: Element): SManga = popularMangaFromElement(element)
-    override fun searchMangaNextPageSelector(): String =
-        "a[rel=next], .pagination a[rel=next], .next, a:contains(Next), a:contains(›)"
-    override fun searchMangaParse(response: Response): MangasPage = popularMangaParse(response)
+
+    override fun searchMangaParse(response: Response): MangasPage {
+        val document = Jsoup.parse(response.body?.string().orEmpty(), baseUrl)
+        val mangas = document.select(searchMangaSelector())
+            .map { popularMangaFromElement(it) }
+        
+        return MangasPage(mangas, true)
+    }
 
     // === MANGA DETAILS SECTION ===
     override fun mangaDetailsParse(document: Document): SManga {
