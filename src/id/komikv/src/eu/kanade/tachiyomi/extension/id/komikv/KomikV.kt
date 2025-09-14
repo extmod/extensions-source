@@ -41,6 +41,9 @@ class KomikV : ParsedHttpSource() {
         }
     }
 
+    // dateFormat untuk parsing tanggal absolut (sesuaikan pattern & locale bila perlu)
+    private val dateFormat = SimpleDateFormat("dd MMM yyyy", Locale("id"))
+
     // === POPULAR MANGA SECTION ===
     override fun popularMangaRequest(page: Int): Request {
         if (page <= 1) resetSeen()
@@ -129,7 +132,7 @@ class KomikV : ParsedHttpSource() {
             title = document.selectFirst("h1.text-xl")?.text()?.trim().orEmpty()
             author = document.select("a[href*=\"/tax/author/\"]").joinToString(", ") { it.text().trim() }
             description = document.selectFirst(".mt-4.w-full p")?.text()?.trim().orEmpty()
-            genre = (document.select(".mt-4.w-full a.text-md.mb-1").map { it.text().trim() } + 
+            genre = (document.select(".mt-4.w-full a.text-md.mb-1").map { it.text().trim() } +
                      document.select(".bg-red-800").map { it.text().trim() })
                 .joinToString(", ")
             status = parseStatus(document.selectFirst(".bg-green-800")?.text().orEmpty())
@@ -147,58 +150,82 @@ class KomikV : ParsedHttpSource() {
     override fun chapterListSelector() = "div.mt-4.flex.max-h-96.flex-col > a"
 
     override fun chapterFromElement(element: Element): SChapter {
-    val chapter = SChapter.create()
+        val chapter = SChapter.create()
 
-    // jika chapterListSelector() mengembalikan "div... > a", element sudah <a>
-    val url = element.attr("href")
-    chapter.setUrlWithoutDomain(url)
+        // url
+        val url = element.attr("href")
+        chapter.setUrlWithoutDomain(url)
 
-    // judul/nama chapter: <div><p>Chapter 4</p>...</div> atau langsung <p>
-    val titleEl = element.selectFirst("div > p:first-of-type") ?: element.selectFirst("p:first-of-type")
-    chapter.name = titleEl?.text()?.trim() ?: element.text().trim()
+        // Judul: p pertama di dalam <a> atau fallback ke teks elemen
+        val titleEl = element.selectFirst("div > p:first-of-type, p:first-of-type")
+        chapter.name = titleEl?.text()?.trim() ?: element.text().trim()
 
-    // tanggal/waktu: biasanya di <p class="text-xs font-medium">35 mnt lalu</p>
-    val dateText = element.selectFirst("p.text-xs, p.text-xs.font-medium")?.text()?.trim() ?: ""
-    chapter.date_upload = parseRelativeDateToTimestamp(dateText)
-
-    return chapter
-}
-
-// Simple parser untuk teks seperti "35 mnt lalu", "2 jam lalu", "1 hari lalu", dlsb.
-// Mengembalikan epoch millis. Jika gagal parse, kembalikan 0L.
-    private fun parseChapterDate(date: String): Long {
-    val txt = date.lowercase().trim()
-
-    // regex: angka opsional + satuan (menit/mnt, jam, hari, mgg/minggu, bln/bulan, thn/tahun, detik)
-    val regex = Regex("""(?:(\d+)\s*)?(detik|dtk|menit|mnt|jam|hari|mgg|minggu|bln|bulan|thn|tahun)\b""")
-    val match = regex.find(txt)
-
-    if (match != null) {
-        val valueStr = match.groupValues[1]
-        val value = if (valueStr.isBlank()) 1 else valueStr.toInt() // kalau nggak ada angka -> asumsi 1
-        val unit = match.groupValues[2]
-
-        val cal = Calendar.getInstance()
-        when (unit) {
-            "detik", "dtk" -> cal.add(Calendar.SECOND, -value)
-            "menit", "mnt" -> cal.add(Calendar.MINUTE, -value)
-            "jam" -> cal.add(Calendar.HOUR_OF_DAY, -value)
-            "hari" -> cal.add(Calendar.DATE, -value)
-            "mgg", "minggu" -> cal.add(Calendar.DATE, -value * 7)
-            "bln", "bulan" -> cal.add(Calendar.MONTH, -value)
-            "thn", "tahun" -> cal.add(Calendar.YEAR, -value)
-            else -> return 0L
+        // Cari teks tanggal di beberapa kemungkinan selector
+        val dateCandidates = listOf(
+            "p.text-xs.font-medium",
+            "p.text-xs",
+            "div > p:nth-of-type(2)",
+            "time",
+            "span.time",
+            "small"
+        )
+        var dateText: String? = null
+        for (sel in dateCandidates) {
+            val e = element.selectFirst(sel)
+            if (e != null && e.text().isNotBlank()) {
+                dateText = e.text().trim()
+                break
+            }
         }
-        return cal.timeInMillis
+
+        // Fallback: cari pola relatif waktu di keseluruhan teks elemen (contoh: "35 mnt lalu", "2 jam")
+        if (dateText.isNullOrBlank()) {
+            val r = Regex("""(?:(\d+)\s*)?(detik|dtk|menit|mnt|jam|hari|mgg|minggu|bln|bulan|thn|tahun)\b""", RegexOption.IGNORE_CASE)
+            val m = r.find(element.text())
+            if (m != null) dateText = m.value
+        }
+
+        // Set tanggal (epoch millis). Jika null/invalid -> 0L
+        chapter.date_upload = parseChapterDate(dateText ?: "")
+
+        return chapter
     }
 
-    // Jika tidak cocok pola relatif, coba parse sebagai tanggal absolut pake dateFormat (pakai dateFormat yang sudah ada)
-    return try {
-        dateFormat.parse(date)?.time ?: 0L
-    } catch (_: Exception) {
-        0L
+    private fun parseChapterDate(date: String): Long {
+        val txt = date.lowercase().trim()
+
+        // Regex yang menangkap angka opsional + satuan
+        val regex = Regex("""(?:(\d+)\s*)?(detik|dtk|menit|mnt|jam|hari|mgg|minggu|bln|bulan|thn|tahun)\b""")
+        val match = regex.find(txt)
+
+        if (match != null) {
+            val valueStr = match.groupValues[1]
+            val value = if (valueStr.isBlank()) 1 else {
+                try { valueStr.toInt() } catch (_: Exception) { 1 }
+            }
+
+            val unit = match.groupValues[2]
+            val cal = Calendar.getInstance()
+            when (unit) {
+                "detik", "dtk" -> cal.add(Calendar.SECOND, -value)
+                "menit", "mnt" -> cal.add(Calendar.MINUTE, -value)
+                "jam" -> cal.add(Calendar.HOUR_OF_DAY, -value)
+                "hari" -> cal.add(Calendar.DATE, -value)
+                "mgg", "minggu" -> cal.add(Calendar.DATE, -value * 7)
+                "bln", "bulan" -> cal.add(Calendar.MONTH, -value)
+                "thn", "tahun" -> cal.add(Calendar.YEAR, -value)
+                else -> return 0L
+            }
+            return cal.timeInMillis
+        }
+
+        // Jika tidak cocok pola relatif, coba parse sebagai tanggal absolut
+        return try {
+            dateFormat.parse(date)?.time ?: 0L
+        } catch (_: Exception) {
+            0L
+        }
     }
-}
 
     override fun chapterListParse(response: Response): List<SChapter> {
         val document = Jsoup.parse(response.body?.string().orEmpty(), baseUrl)
