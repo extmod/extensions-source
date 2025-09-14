@@ -16,6 +16,7 @@ import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
 class KomikV : ParsedHttpSource() {
+
     override val name = "KomikV"
     override val baseUrl = "https://komikav.net"
     override val lang = "id"
@@ -31,12 +32,21 @@ class KomikV : ParsedHttpSource() {
 
     companion object {
         private val seenUrls = mutableSetOf<String>()
-        fun resetSeen() { seenUrls.clear() }
+        private val qrlByPage = mutableMapOf<Int, String>()
+        @Volatile private var lastPopularPageRequested = 1
+        @Volatile private var lastLatestPageRequested = 1
+        fun resetSeen() { seenUrls.clear() ; qrlByPage.clear() }
     }
 
     override fun popularMangaRequest(page: Int): Request {
         if (page <= 1) resetSeen()
-        return if (page <= 1) GET(baseUrl, headers) else GET("$baseUrl/?page=$page", headers)
+        lastPopularPageRequested = page
+        return if (page <= 1) {
+            GET(baseUrl, headers)
+        } else {
+            val qrl = qrlByPage[page]
+            if (!qrl.isNullOrBlank()) GET("$baseUrl/?qfunc=$qrl", headers) else GET("$baseUrl/?page=$page", headers)
+        }
     }
 
     override fun popularMangaSelector(): String =
@@ -60,18 +70,28 @@ class KomikV : ParsedHttpSource() {
     override fun popularMangaNextPageSelector(): String? = "a[rel=next], .pagination a[rel=next], .next, a:contains(Next), a:contains(›)"
 
     override fun popularMangaParse(response: Response): MangasPage {
-        val body = response.body?.string().orEmpty()
-        val doc = Jsoup.parse(body, baseUrl)
+        val raw = response.body?.string().orEmpty()
+        val doc = if (response.header("content-type")?.contains("application/qwik-json", true) == true) {
+            parseQwikJsonToDoc(raw)
+        } else {
+            Jsoup.parse(raw, baseUrl)
+        }
         val allMangas = doc.select(popularMangaSelector())
             .map { popularMangaFromElement(it) }
             .filter { it.url.isNotBlank() && it.title.isNotBlank() && seenUrls.add(it.url) }
-        val hasNext = doc.selectFirst("a[rel=next], a.next, .pagination a[rel=next]") != null
+        val currentPage = lastPopularPageRequested
+        val qrlFound = extractQrlAndStore(currentPage, raw, doc)
+        val hasNext = qrlFound
         return MangasPage(allMangas, hasNext)
     }
 
     override fun latestUpdatesRequest(page: Int): Request {
         if (page <= 1) resetSeen()
-        return if (page <= 1) GET("$baseUrl/?latest=1", headers) else GET("$baseUrl/?page=$page&latest=1", headers)
+        lastLatestPageRequested = page
+        return if (page <= 1) GET("$baseUrl/?latest=1", headers) else {
+            val qrl = qrlByPage[page]
+            if (!qrl.isNullOrBlank()) GET("$baseUrl/?qfunc=$qrl", headers) else GET("$baseUrl/?page=$page&latest=1", headers)
+        }
     }
 
     override fun latestUpdatesSelector(): String = popularMangaSelector()
@@ -79,12 +99,18 @@ class KomikV : ParsedHttpSource() {
     override fun latestUpdatesNextPageSelector(): String? = popularMangaNextPageSelector()
 
     override fun latestUpdatesParse(response: Response): MangasPage {
-        val body = response.body?.string().orEmpty()
-        val doc = Jsoup.parse(body, baseUrl)
+        val raw = response.body?.string().orEmpty()
+        val doc = if (response.header("content-type")?.contains("application/qwik-json", true) == true) {
+            parseQwikJsonToDoc(raw)
+        } else {
+            Jsoup.parse(raw, baseUrl)
+        }
         val allMangas = doc.select(latestUpdatesSelector())
             .map { latestUpdatesFromElement(it) }
             .filter { it.url.isNotBlank() && it.title.isNotBlank() && seenUrls.add(it.url) }
-        val hasNext = doc.selectFirst("a[rel=next], a.next, .pagination a[rel=next]") != null
+        val currentPage = lastLatestPageRequested
+        val qrlFound = extractQrlAndStore(currentPage, raw, doc)
+        val hasNext = qrlFound
         return MangasPage(allMangas, hasNext)
     }
 
@@ -181,5 +207,37 @@ class KomikV : ParsedHttpSource() {
         return document.selectFirst("img[data-src], img")?.let { img ->
             img.absUrl("data-src").ifEmpty { img.absUrl("src") }
         }.orEmpty()
+    }
+
+    private fun parseQwikJsonToDoc(body: String): Document {
+        var s = body
+        s = s.replace("\\u003C", "<")
+            .replace("\\u003E", ">")
+            .replace("\\u002F", "/")
+            .replace("\\\"", "\"")
+            .replace("\\n", "")
+            .replace("\\r", "")
+        val firstTag = s.indexOf("<")
+        val html = if (firstTag >= 0) s.substring(firstTag) else s
+        return Jsoup.parse(html, baseUrl)
+    }
+
+    private fun extractQrlAndStore(currentPage: Int, raw: String, doc: Document): Boolean {
+        val combined = raw + "\n" + doc.html()
+        val r1 = Regex("#s_([A-Za-z0-9_-]{8,})")
+        val m1 = r1.find(combined)
+        if (m1 != null) {
+            val q = m1.groupValues[1]
+            qrlByPage[currentPage + 1] = q
+            return true
+        }
+        val r2 = Regex("qfunc=([A-Za-z0-9_-]{8,})")
+        val m2 = r2.find(combined)
+        if (m2 != null) {
+            val q = m2.groupValues[1]
+            qrlByPage[currentPage + 1] = q
+            return true
+        }
+        return false
     }
 }
