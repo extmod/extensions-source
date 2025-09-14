@@ -22,7 +22,6 @@ class KomikV : ParsedHttpSource() {
     override val lang = "id"
     override val supportsLatest = true
 
-    // Menggunakan cloudflareClient untuk handle protection jika ada
     override val client: OkHttpClient = network.cloudflareClient
 
     override fun headersBuilder(): Headers.Builder = Headers.Builder()
@@ -32,7 +31,6 @@ class KomikV : ParsedHttpSource() {
         .add("Referer", baseUrl)
 
     companion object {
-        // Simple deduplication untuk avoid duplicate manga entries
         private val seenUrls = mutableSetOf<String>()
 
         fun resetSeen() {
@@ -44,7 +42,6 @@ class KomikV : ParsedHttpSource() {
     override fun popularMangaRequest(page: Int): Request {
         if (page <= 1) resetSeen()
         
-        // Halaman pertama menggunakan base URL sesuai observasi bahwa komikav.net sama dengan komikav.net/?page=1
         return if (page <= 1) {
             GET(baseUrl, headers)
         } else {
@@ -57,22 +54,18 @@ class KomikV : ParsedHttpSource() {
 
     override fun popularMangaFromElement(element: Element): SManga {
         return SManga.create().apply {
-            // Extract title dari multiple possible selectors
             title = element.selectFirst("h2.font-bold, h2 a, h2, .title, .entry-title")?.text()?.trim().orEmpty()
             
-            // Extract manga URL dengan priority pada pattern yang umum
             val link = element.selectFirst("a[href*='/comic/'], a[href*='/manga/'], a[href*='/series/']") 
                 ?: element.selectFirst("a")
             val linkHref = link?.attr("href").orEmpty()
             
-            // Normalize URL untuk consistency
             url = if (linkHref.startsWith(baseUrl)) {
                 linkHref.removePrefix(baseUrl)
             } else {
                 linkHref
             }
             
-            // Extract thumbnail dengan priority pada lazy loading attributes
             val img = element.selectFirst("img[data-src], img.lazyimage, img")
             thumbnail_url = when {
                 img?.attr("data-src")?.isNotEmpty() == true -> img.absUrl("data-src")
@@ -82,19 +75,25 @@ class KomikV : ParsedHttpSource() {
         }
     }
 
-    override fun popularMangaNextPageSelector(): String = ""
+    override fun popularMangaNextPageSelector(): String =
+        "a[rel=next], .pagination a[rel=next], .next, a:contains(Next), a:contains(›)"
 
     /**
-     * OPTIMIZED PATTERN MATCHING DETECTION
-     * Berdasarkan testing, kita tahu bahwa pattern matching berhasil untuk situs ini.
-     * Versi ini dioptimize dengan focus pada patterns yang paling reliable dan
-     * menghilangkan complexity yang tidak diperlukan.
+     * STRATEGI 2: PATTERN MATCHING DETECTION ONLY
+     * 
+     * Pendekatan ini bekerja dengan mencari indikasi dalam source code HTML bahwa terdapat
+     * functionality untuk memuat konten tambahan. Berbeda dari DOM detection yang mencari
+     * elemen yang terlihat, pattern matching mencari "jejak" atau "petunjuk" dalam kode
+     * yang menunjukkan adanya sistem pagination atau infinite scroll.
+     * 
+     * Konsep ini penting untuk situs modern yang menggunakan JavaScript frameworks seperti
+     * Qwik.js, dimana functionality sering tersembunyi dalam script atau data attributes
+     * yang tidak terlihat sebagai elemen HTML tradisional.
      */
     override fun popularMangaParse(response: Response): MangasPage {
         val body = response.body?.string().orEmpty()
         val doc = Jsoup.parse(body, baseUrl)
 
-        // Parse manga list dengan filtering yang robust
         val allMangas = doc.select(popularMangaSelector())
             .map { popularMangaFromElement(it) }
             .filter { 
@@ -104,28 +103,156 @@ class KomikV : ParsedHttpSource() {
         val currentPage = response.request.url.queryParameter("page")?.toIntOrNull() ?: 1
         val nextPageNumber = currentPage + 1
 
-        // Streamlined pattern detection - focus pada patterns yang terbukti bekerja
+        // Inisialisasi variabel untuk tracking hasil detection
         var hasNext = false
+        val foundPatterns = mutableListOf<String>()
 
-        // Pattern 1: URL-based detection (most reliable untuk server-side pagination)
+        // === PATTERN 1: URL-based Pattern Detection ===
+        // Mencari referensi eksplisit ke nomor halaman selanjutnya dalam URL atau query parameters
+        // Ini mengindikasikan bahwa situs mendukung pagination melalui URL parameters
         if (Regex("""[?&]page=${nextPageNumber}\b""").containsMatchIn(body)) {
             hasNext = true
+            foundPatterns.add("URL query pattern: ?page=${nextPageNumber}")
+        }
+        
+        // Mencari pattern dalam path URL yang menunjukkan struktur pagination
+        if (Regex("""/page/${nextPageNumber}(/|["'])""").containsMatchIn(body)) {
+            hasNext = true
+            foundPatterns.add("URL path pattern: /page/${nextPageNumber}")
         }
 
-        // Pattern 2: Qwik.js specific pattern (terbukti effective untuk situs ini)
+        // === PATTERN 2: Load More Functionality Detection ===
+        // Mencari keywords yang umum digunakan untuk infinite scroll atau pagination manual
+        // "Load More" adalah pattern yang sangat umum untuk situs dengan infinite scroll
+        if (body.contains("Load More", ignoreCase = true)) {
+            hasNext = true
+            foundPatterns.add("Load More button text detected")
+        }
+        
+        // Mencari CSS class names yang umum digunakan untuk load more functionality
+        if (body.contains("load-more", ignoreCase = true)) {
+            hasNext = true
+            foundPatterns.add("load-more CSS class detected")
+        }
+
+        // === PATTERN 3: Infinite Scroll Keywords Detection ===
+        // Situs dengan infinite scroll sering memiliki keywords tertentu dalam source code
+        // yang mengindikasikan functionality ini
+        if (body.contains("infinite", ignoreCase = true) && body.contains("scroll", ignoreCase = true)) {
+            hasNext = true
+            foundPatterns.add("Infinite scroll keywords combination")
+        }
+
+        // === PATTERN 4: Qwik.js Specific Pattern Detection ===
+        // Berdasarkan analisis sebelumnya, situs ini menggunakan Qwik.js dengan scroll-based loading
+        // Kombinasi "qwik" dan "scroll" dalam source code mengindikasikan dynamic loading capability
         if (body.contains("qwik", ignoreCase = true) && body.contains("scroll", ignoreCase = true)) {
             hasNext = true
+            foundPatterns.add("Qwik.js scroll-based loading pattern")
         }
 
-        // Pattern 3: Load more indicators (backup detection)
-        if (body.contains("Load More", ignoreCase = true) || body.contains("load-more", ignoreCase = true)) {
+        // === PATTERN 5: JavaScript Function Pattern Detection ===
+        // Mencari function calls JavaScript yang mengindikasikan pagination functionality
+        // Pattern ini mencari function dengan nama seperti loadPage() dengan parameter page number
+        if (Regex("""loadPage\s*\(\s*${nextPageNumber}\s*\)""").containsMatchIn(body)) {
             hasNext = true
+            foundPatterns.add("JavaScript loadPage(${nextPageNumber}) function call")
         }
 
-        // Optional debug logging (bisa dicomment jika tidak diperlukan)
-        if (allMangas.isNotEmpty()) {
-            println("KomikV Page $currentPage: ${allMangas.size} manga, hasNext=$hasNext")
+        // Mencari function calls lain yang umum untuk pagination
+        if (Regex("""loadNextPage\s*\(""").containsMatchIn(body)) {
+            hasNext = true
+            foundPatterns.add("JavaScript loadNextPage() function detected")
         }
+
+        // === PATTERN 6: Data Attributes Pattern Detection ===
+        // Modern web applications sering menggunakan data attributes untuk menyimpan
+        // informasi pagination yang akan digunakan oleh JavaScript
+        if (Regex("""data-page\s*=\s*["']${nextPageNumber}["']""").containsMatchIn(body)) {
+            hasNext = true
+            foundPatterns.add("HTML data-page=${nextPageNumber} attribute")
+        }
+
+        // Mencari data attributes lain yang mengindikasikan pagination capability
+        if (body.contains("data-next-page", ignoreCase = true)) {
+            hasNext = true
+            foundPatterns.add("data-next-page attribute detected")
+        }
+
+        // === PATTERN 7: JSON Data Structure Detection ===
+        // Situs modern sering embed JSON data dalam HTML yang berisi informasi pagination
+        // Pattern ini mencari struktur JSON yang mengandung informasi page
+        if (body.contains("\"page\":${nextPageNumber}") || body.contains("'page':${nextPageNumber}")) {
+            hasNext = true
+            foundPatterns.add("JSON pagination data: page:${nextPageNumber}")
+        }
+
+        // Mencari structure JSON yang mengindikasikan ada halaman selanjutnya
+        if (body.contains("\"hasNextPage\":true", ignoreCase = true) || 
+            body.contains("\"has_next\":true", ignoreCase = true)) {
+            hasNext = true
+            foundPatterns.add("JSON hasNextPage:true flag")
+        }
+
+        // === PATTERN 8: Framework-specific Patterns ===
+        // Mencari pattern yang spesifik untuk framework atau library tertentu
+        // yang umum digunakan untuk infinite scroll atau pagination
+        
+        // Pattern untuk intersection observer API (umum untuk infinite scroll)
+        if (body.contains("IntersectionObserver", ignoreCase = true)) {
+            hasNext = true
+            foundPatterns.add("IntersectionObserver API detected (infinite scroll)")
+        }
+
+        // Pattern untuk event listeners yang terkait dengan scroll
+        if (body.contains("addEventListener", ignoreCase = true) && 
+            body.contains("scroll", ignoreCase = true)) {
+            hasNext = true
+            foundPatterns.add("Scroll event listener detected")
+        }
+
+        // === ENHANCED DEBUG LOGGING ===
+        // Logging yang comprehensive untuk memahami behavior pattern matching
+        println("=== KomikV PATTERN-ONLY DEBUG ANALYSIS ===")
+        println("Current page: $currentPage")
+        println("Looking for next page: $nextPageNumber")
+        println("Manga successfully parsed: ${allMangas.size}")
+        println("Total DOM elements found: ${doc.select(popularMangaSelector()).size}")
+        
+        // Analisis source code characteristics
+        println("\n--- Source Code Analysis ---")
+        println("HTML body size: ${body.length} characters")
+        val scriptTags = doc.select("script").size
+        println("JavaScript <script> tags found: $scriptTags")
+        val totalLinks = doc.select("a").size
+        println("Total <a> links found: $totalLinks")
+        
+        // Pattern detection results
+        println("\n--- Pattern Detection Results ---")
+        println("Patterns found: ${foundPatterns.size}")
+        if (foundPatterns.isEmpty()) {
+            println("No pagination patterns detected in source code")
+        } else {
+            foundPatterns.forEach { pattern ->
+                println("  ✓ $pattern")
+            }
+        }
+        
+        println("\n--- Final Decision ---")
+        println("Has next page: $hasNext")
+        println("Decision basis: ${if (hasNext) "Pattern-based evidence found" else "No supporting patterns detected"}")
+        
+        // Additional diagnostic information
+        if (!hasNext && allMangas.isNotEmpty()) {
+            println("\n--- Diagnostic Info ---")
+            println("WARNING: Found manga but no pagination patterns")
+            println("This might indicate:")
+            println("  - Site uses non-standard pagination method")
+            println("  - Patterns need adjustment for this site")
+            println("  - Site might be using pure client-side rendering")
+        }
+        
+        println("==========================================")
 
         return MangasPage(allMangas, hasNext)
     }
@@ -134,7 +261,6 @@ class KomikV : ParsedHttpSource() {
     override fun latestUpdatesRequest(page: Int): Request {
         if (page <= 1) resetSeen()
         
-        // Latest updates bisa menggunakan parameter khusus atau endpoint berbeda
         return if (page <= 1) {
             GET("$baseUrl/?latest=1", headers)
         } else {
@@ -144,20 +270,30 @@ class KomikV : ParsedHttpSource() {
 
     override fun latestUpdatesSelector(): String = popularMangaSelector()
     override fun latestUpdatesFromElement(element: Element): SManga = popularMangaFromElement(element)
-    override fun latestUpdatesNextPageSelector(): String = ""
+    override fun latestUpdatesNextPageSelector(): String = popularMangaNextPageSelector()
 
-    // Latest updates menggunakan logic yang sama dengan popular manga
-    override fun latestUpdatesParse(response: Response): MangasPage = popularMangaParse(response)
+    override fun latestUpdatesParse(response: Response): MangasPage {
+    val body = response.body?.string().orEmpty()
+    val doc = Jsoup.parse(body, baseUrl)
+
+    val allMangas = doc.select(latestUpdatesSelector())
+        .map { latestUpdatesFromElement(it) }
+        .filter { it.url.isNotBlank() && it.title.isNotBlank() && seenUrls.add(it.url) }
+
+    // Satu metode: regex tunggal cari indikator qwik / load-more / page / cursor
+    val hasNext = Regex("(?i)qwik|load-?more|[?&]page=\\d+|nextcursor|hasmore|cursor")
+        .containsMatchIn(body)
+
+    return MangasPage(allMangas, hasNext)
+}
 
     // === SEARCH SECTION ===
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
         if (page <= 1) resetSeen()
         
         return if (query.isNotEmpty()) {
-            // Search dengan query parameter
             GET("$baseUrl/search?q=${java.net.URLEncoder.encode(query, "UTF-8")}&page=$page", headers)
         } else {
-            // Browse all manga jika tidak ada query
             if (page <= 1) {
                 GET("$baseUrl/comic-list/", headers)
             } else {
@@ -168,126 +304,37 @@ class KomikV : ParsedHttpSource() {
 
     override fun searchMangaSelector(): String = popularMangaSelector()
     override fun searchMangaFromElement(element: Element): SManga = popularMangaFromElement(element)
-    override fun searchMangaNextPageSelector(): String = ""
+    override fun searchMangaNextPageSelector(): String = popularMangaNextPageSelector()
     override fun searchMangaParse(response: Response): MangasPage = popularMangaParse(response)
 
     // === MANGA DETAILS SECTION ===
-    /**
-     * ENHANCED MANGA DETAILS PARSING
-     * Diperbaiki untuk memastikan status parsing bekerja dengan baik.
-     * Menggunakan multiple selectors dan fallback logic untuk robustness.
-     */
     override fun mangaDetailsParse(document: Document): SManga {
         return SManga.create().apply {
-            // Title extraction dengan multiple fallbacks
-            title = document.selectFirst("h1, .entry-title, .post-title, .manga-title, .comic-title")?.text()?.trim().orEmpty()
-
-            // Author/Artist extraction - expanded selectors untuk better coverage
-            author = document.selectFirst(
-                ".author, .mt-4 .text-sm a, .manga-author, .artist, " +
-                ".info-item:contains(Author) + .info-value, " +
-                ".details .author, [class*='author']"
-            )?.text()?.trim().orEmpty()
-
-            // Description extraction dengan preference untuk paragraph yang substantial
-            val descriptionSelectors = listOf(
-                ".description p", ".summary p", ".mt-4.w-full p", 
-                ".manga-summary p", ".synopsis p", ".content p"
-            )
+            title = document.selectFirst("h1, .entry-title, .post-title, .manga-title")?.text()?.trim().orEmpty()
+            author = document.selectFirst(".author, .mt-4 .text-sm a, .manga-author")?.text()?.trim().orEmpty()
             
-            for (selector in descriptionSelectors) {
-                val desc = document.selectFirst(selector)?.text()?.trim()
-                if (!desc.isNullOrBlank() && desc.length > 50) {
-                    description = desc
-                    break
-                }
-            }
+            val descElements = document.select(".description p, .summary p, .mt-4.w-full p")
+            description = descElements.firstOrNull { it.text().length > 50 }?.text()?.trim().orEmpty()
 
-            // Genre extraction dengan comprehensive approach
             val genres = mutableListOf<String>()
-            
-            // Extract dari berbagai possible genre containers
-            document.select(
-                ".genre a, .genres a, .tag a, .tags a, " +
-                ".manga-genres a, .categories a, [class*='genre'] a"
-            ).forEach { element ->
-                val genreText = element.text().trim()
-                if (genreText.isNotEmpty()) {
-                    genres.add(genreText)
-                }
-            }
-            
-            // Tambahkan type/format sebagai genre jika ada
-            val typeSelectors = listOf(
-                ".type", ".manga-type", ".format", 
-                ".w-full.rounded-l-full.bg-red-800", // specific untuk situs ini
-                "[class*='type']"
-            )
-            
-            for (selector in typeSelectors) {
-                val typeText = document.selectFirst(selector)?.text()?.trim()
-                if (!typeText.isNullOrBlank()) {
-                    genres.add(typeText)
-                    break
-                }
-            }
-            
+            document.select(".genre a, .genres a, .tag a").forEach { genres.add(it.text().trim()) }
+            val type = document.selectFirst(".type, .w-full.rounded-l-full.bg-red-800")?.text()?.trim()
+            if (!type.isNullOrBlank()) genres.add(type)
             genre = genres.filter { it.isNotEmpty() }.distinct().joinToString(", ")
 
-            // ENHANCED STATUS PARSING - ini adalah bagian yang diperbaiki
-            val statusSelectors = listOf(
-                ".status", ".manga-status", ".publication-status",
-                ".w-full.rounded-r-full", ".bg-green-800", // specific selectors untuk situs ini
-                ".info-item:contains(Status) + .info-value",
-                "[class*='status']", ".details .status"
-            )
-            
-            var statusText = ""
-            for (selector in statusSelectors) {
-                val element = document.selectFirst(selector)
-                if (element != null) {
-                    statusText = element.text().lowercase().trim()
-                    if (statusText.isNotEmpty()) break
-                }
-            }
-            
-            // Improved status mapping dengan lebih banyak variations
+            val statusText = document.selectFirst(".status, .manga-status, .w-full.rounded-r-full, .bg-green-800")?.text()?.lowercase().orEmpty()
             status = when {
-                statusText.contains("ongoing") || statusText.contains("on-going") || 
-                statusText.contains("berlanjut") || statusText.contains("update") -> SManga.ONGOING
-                
-                statusText.contains("completed") || statusText.contains("complete") ||
-                statusText.contains("tamat") || statusText.contains("selesai") || 
-                statusText.contains("finished") -> SManga.COMPLETED
-                
-                statusText.contains("hiatus") || statusText.contains("pause") ||
-                statusText.contains("stopped") -> SManga.ON_HIATUS
-                
-                statusText.contains("dropped") || statusText.contains("cancelled") ||
-                statusText.contains("dibatalkan") -> SManga.CANCELLED
-                
+                statusText.contains("ongoing") -> SManga.ONGOING
+                statusText.contains("completed") || statusText.contains("tamat") -> SManga.COMPLETED
+                statusText.contains("hiatus") -> SManga.ON_HIATUS
                 else -> SManga.UNKNOWN
             }
 
-            // Thumbnail extraction dengan comprehensive fallbacks
-            val thumbnailSelectors = listOf(
-                "img.cover", ".manga-cover img", ".thumbnail img",
-                ".poster img", ".comic-cover img", "img[data-src]", "img"
-            )
-            
-            for (selector in thumbnailSelectors) {
-                val imgElement = document.selectFirst(selector)
-                if (imgElement != null) {
-                    val thumbUrl = when {
-                        imgElement.absUrl("data-src").isNotEmpty() -> imgElement.absUrl("data-src")
-                        imgElement.absUrl("src").isNotEmpty() -> imgElement.absUrl("src")
-                        else -> ""
-                    }
-                    if (thumbUrl.isNotEmpty()) {
-                        thumbnail_url = thumbUrl
-                        break
-                    }
-                }
+            val imgElement = document.selectFirst("img.cover, .manga-cover img, img[data-src], img")
+            thumbnail_url = when {
+                imgElement?.absUrl("data-src")?.isNotEmpty() == true -> imgElement.absUrl("data-src")
+                imgElement?.absUrl("src")?.isNotEmpty() == true -> imgElement.absUrl("src")
+                else -> ""
             }
         }
     }
@@ -308,7 +355,7 @@ class KomikV : ParsedHttpSource() {
         }
         
         return SChapter.create().apply {
-            this.name = if (name.isNotEmpty()) name else "Chapter ${link.attr("data-chapter") ?: "Unknown"}"
+            this.name = name.ifEmpty { "Chapter ${link.attr("data-chapter") ?: "Unknown"}" }
             this.url = url
         }
     }
@@ -322,17 +369,15 @@ class KomikV : ParsedHttpSource() {
                 try {
                     chapterFromElement(element)
                 } catch (e: Exception) {
-                    // Skip chapters yang error parsing
                     null
                 }
             }
             .filter { it.url.isNotEmpty() && it.name.isNotEmpty() }
-            .reversed() // Reverse untuk urutan chronological yang benar
+            .reversed()
     }
 
     // === PAGE LIST SECTION ===
     override fun pageListParse(document: Document): List<Page> {
-        // Comprehensive selector untuk berbagai kemungkinan structure
         val images = document.select(
             "img.lazyimage, .reader-area img, #chapter img, .main-reading-area img, " +
             ".page-break img, .entry-content img, .chapter-content img, " +
@@ -348,7 +393,6 @@ class KomikV : ParsedHttpSource() {
                 else -> ""
             }
             
-            // Filter untuk memastikan hanya image URLs yang valid
             if (imageUrl.isNotEmpty() && 
                 (imageUrl.contains(".jpg") || imageUrl.contains(".png") || 
                  imageUrl.contains(".webp") || imageUrl.contains(".jpeg"))) {
@@ -360,7 +404,6 @@ class KomikV : ParsedHttpSource() {
     }
 
     override fun imageUrlParse(document: Document): String {
-        // Fallback method untuk single image extraction
         return document.selectFirst("img[data-src], img")?.let { img ->
             img.absUrl("data-src").ifEmpty { img.absUrl("src") }
         }.orEmpty()
