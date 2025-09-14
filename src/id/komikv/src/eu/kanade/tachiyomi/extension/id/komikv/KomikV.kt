@@ -141,17 +141,15 @@ class KomikV : ParsedHttpSource() {
     }
 
     // === CHAPTER LIST SECTION ===
-    override fun chapterListSelector(): String = "a[href*='/chapter/']"
+        override fun chapterListSelector() = "#chapter_list li"
 
     override fun chapterFromElement(element: Element): SChapter {
-        return SChapter.create().apply {
-            name = element.selectFirst(".chapter-title, h3, .title")?.text()?.trim() ?: 
-                   element.text().split(" - ").firstOrNull()?.trim().orEmpty()
-            url = element.attr("href").orEmpty()
-            
-            // Parse date yang terpisah dari chapter title
-            date_upload = parseChapterDate(element)
-        }
+        val urlElement = element.select(".lchx a").first()!!
+        val chapter = SChapter.create()
+        chapter.setUrlWithoutDomain(urlElement.attr("href"))
+        chapter.name = urlElement.text()
+        chapter.date_upload = element.select(".dt a").first()?.text()?.let { parseChapterDate(it) } ?: 0
+        return chapter
     }
 
     private fun parseChapterDate(element: Element): Long {
