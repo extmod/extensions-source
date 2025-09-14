@@ -7,8 +7,6 @@ import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.online.ParsedHttpSource
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Headers
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -18,6 +16,7 @@ import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
 class KomikV : ParsedHttpSource() {
+
     override val name = "KomikV"
     override val baseUrl = "https://komikav.net"
     override val lang = "id"
@@ -33,193 +32,119 @@ class KomikV : ParsedHttpSource() {
 
     companion object {
         private val seenUrls = mutableSetOf<String>()
-        fun resetSeen() { seenUrls.clear() }
-    }
 
-    override fun popularMangaRequest(page: Int): Request {
-    if (page <= 1) resetSeen()
-    lastPopularPageRequested = page
-    return if (page <= 1) {
-        GET(baseUrl, headers)
-    } else {
-        val qrl = qrlByPage[page]
-        if (!qrl.isNullOrBlank()) {
-            val json = """{"_entry":"2","_objs":["\\u0002_#s_$qrl",$page,["0","1"]]}"""
-            val mediaType = "application/qwik-json".toMediaType()
-            val body = json.toRequestBody(mediaType)
-            Request.Builder()
-                .url("$baseUrl/?qfunc=$qrl")
-                .post(body)
-                .headers(headers)
-                .addHeader("Content-Type", "application/qwik-json")
-                .addHeader("X-QRL", qrl)
-                .build()
-        } else {
-            GET("$baseUrl/?page=$page", headers)
+        fun resetSeen() {
+            seenUrls.clear()
         }
     }
-}
 
-    override fun popularMangaSelector(): String =
-        "div.grid div.flex.overflow-hidden, div.grid div.neu, .list-update_item, .bsx, div[class*='grid'] > div"
+    // === POPULAR MANGA SECTION ===
+    override fun popularMangaRequest(page: Int): Request {
+        if (page <= 1) resetSeen()
+        return GET("$baseUrl/?page=$page", headers)
+    }
+
+    override fun popularMangaSelector(): String = "div.grid div.flex.overflow-hidden"
 
     override fun popularMangaFromElement(element: Element): SManga {
         return SManga.create().apply {
-            title = element.selectFirst("h2.font-bold, h2 a, h2, .title, .entry-title")?.text()?.trim().orEmpty()
-            val link = element.selectFirst("a[href*='/comic/'], a[href*='/manga/'], a[href*='/series/']") ?: element.selectFirst("a")
-            val linkHref = link?.attr("href").orEmpty()
-            url = if (linkHref.startsWith(baseUrl)) linkHref.removePrefix(baseUrl) else linkHref
-            val img = element.selectFirst("img[data-src], img.lazyimage, img")
-            thumbnail_url = when {
-                img?.attr("data-src")?.isNotEmpty() == true -> img.absUrl("data-src")
-                img?.attr("src")?.isNotEmpty() == true -> img.absUrl("src")
-                else -> ""
-            }
+            title = element.selectFirst("h2 a")?.text()?.trim().orEmpty()
+            url = element.selectFirst("a")?.attr("href").orEmpty()
+            thumbnail_url = element.selectFirst("img")?.absUrl("src").orEmpty()
         }
     }
 
-    override fun popularMangaNextPageSelector(): String? = "a[rel=next], .pagination a[rel=next], .next, a:contains(Next), a:contains(›)"
+    override fun popularMangaNextPageSelector(): String =
+        "a[rel=next], .pagination a[rel=next], .next, a:contains(Next), a:contains(›)"
 
     override fun popularMangaParse(response: Response): MangasPage {
-        val body = response.body?.string().orEmpty()
-        val doc = Jsoup.parse(body, baseUrl)
-        val allMangas = doc.select(popularMangaSelector())
+        val document = Jsoup.parse(response.body?.string().orEmpty(), baseUrl)
+        val mangas = document.select(popularMangaSelector())
             .map { popularMangaFromElement(it) }
             .filter { it.url.isNotBlank() && it.title.isNotBlank() && seenUrls.add(it.url) }
-        val hasNext = doc.selectFirst("a[rel=next], a.next, .pagination a[rel=next]") != null
-        return MangasPage(allMangas, hasNext)
+        val hasNextPage = document.selectFirst(popularMangaNextPageSelector()) != null
+        return MangasPage(mangas, hasNextPage)
     }
 
-    override fun latestUpdatesRequest(page: Int): Request {
-    if (page <= 1) resetSeen()
-    lastLatestPageRequested = page
-    return if (page <= 1) {
-        GET("$baseUrl/?latest=1", headers)
-    } else {
-        val qrl = qrlByPage[page]
-        if (!qrl.isNullOrBlank()) {
-            val json = """{"_entry":"2","_objs":["\\u0002_#s_$qrl",$page,["0","1"]]}"""
-            val mediaType = "application/qwik-json".toMediaType()
-            val body = json.toRequestBody(mediaType)
-            Request.Builder()
-                .url("$baseUrl/?qfunc=$qrl")
-                .post(body)
-                .headers(headers)
-                .addHeader("Content-Type", "application/qwik-json")
-                .addHeader("X-QRL", qrl)
-                .build()
-        } else {
-            GET("$baseUrl/?page=$page&latest=1", headers)
-        }
-    }
-}
-
+    // === LATEST UPDATES SECTION ===
+    override fun latestUpdatesRequest(page: Int): Request = popularMangaRequest(page)
     override fun latestUpdatesSelector(): String = popularMangaSelector()
     override fun latestUpdatesFromElement(element: Element): SManga = popularMangaFromElement(element)
-    override fun latestUpdatesNextPageSelector(): String? = popularMangaNextPageSelector()
-
+    override fun latestUpdatesNextPageSelector(): String =
+        "a[rel=next], .pagination a[rel=next], .next, a:contains(Next), a:contains(›)"
     override fun latestUpdatesParse(response: Response): MangasPage {
-        val body = response.body?.string().orEmpty()
-        val doc = Jsoup.parse(body, baseUrl)
-        val allMangas = doc.select(latestUpdatesSelector())
+        val document = Jsoup.parse(response.body?.string().orEmpty(), baseUrl)
+        val mangas = document.select(latestUpdatesSelector())
             .map { latestUpdatesFromElement(it) }
             .filter { it.url.isNotBlank() && it.title.isNotBlank() && seenUrls.add(it.url) }
-        val hasNext = doc.selectFirst("a[rel=next], a.next, .pagination a[rel=next]") != null
-        return MangasPage(allMangas, hasNext)
+        val hasNextPage = document.selectFirst(latestUpdatesNextPageSelector()) != null
+        return MangasPage(mangas, hasNextPage)
     }
 
+    // === SEARCH SECTION ===
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
         if (page <= 1) resetSeen()
-        return if (query.isNotEmpty()) {
-            GET("$baseUrl/search?q=${java.net.URLEncoder.encode(query, "UTF-8")}&page=$page", headers)
-        } else {
-            if (page <= 1) GET("$baseUrl/comic-list/", headers) else GET("$baseUrl/comic-list/?page=$page", headers)
-        }
+        val url = "$baseUrl/search?q=${java.net.URLEncoder.encode(query, "UTF-8")}&page=$page"
+        return GET(url, headers)
     }
 
     override fun searchMangaSelector(): String = popularMangaSelector()
     override fun searchMangaFromElement(element: Element): SManga = popularMangaFromElement(element)
-    override fun searchMangaNextPageSelector(): String? = popularMangaNextPageSelector()
+    override fun searchMangaNextPageSelector(): String =
+        "a[rel=next], .pagination a[rel=next], .next, a:contains(Next), a:contains(›)"
     override fun searchMangaParse(response: Response): MangasPage = popularMangaParse(response)
 
+    // === MANGA DETAILS SECTION ===
     override fun mangaDetailsParse(document: Document): SManga {
         return SManga.create().apply {
-            title = document.selectFirst("h1, .entry-title, .post-title, .manga-title")?.text()?.trim().orEmpty()
-            author = document.selectFirst(".author, .mt-4 .text-sm a, .manga-author")?.text()?.trim().orEmpty()
-            val descElements = document.select(".description p, .summary p, .mt-4.w-full p")
-            description = descElements.firstOrNull { it.text().length > 50 }?.text()?.trim().orEmpty()
-            val genres = mutableListOf<String>()
-            document.select(".genre a, .genres a, .tag a").forEach { genres.add(it.text().trim()) }
-            val type = document.selectFirst(".type, .w-full.rounded-l-full.bg-red-800")?.text()?.trim()
-            if (!type.isNullOrBlank()) genres.add(type)
-            genre = genres.filter { it.isNotEmpty() }.distinct().joinToString(", ")
-            val statusText = document.selectFirst(".status, .manga-status, .w-full.rounded-r-full, .bg-green-800")?.text()?.lowercase().orEmpty()
-            status = when {
-                statusText.contains("ongoing") -> SManga.ONGOING
-                statusText.contains("completed") || statusText.contains("tamat") -> SManga.COMPLETED
-                statusText.contains("hiatus") -> SManga.ON_HIATUS
-                else -> SManga.UNKNOWN
-            }
-            val imgElement = document.selectFirst("img.cover, .manga-cover img, img[data-src], img")
-            thumbnail_url = when {
-                imgElement?.absUrl("data-src")?.isNotEmpty() == true -> imgElement.absUrl("data-src")
-                imgElement?.absUrl("src")?.isNotEmpty() == true -> imgElement.absUrl("src")
-                else -> ""
-            }
+            title = document.selectFirst("h1")?.text()?.trim().orEmpty()
+            author = document.selectFirst(".author")?.text()?.trim().orEmpty()
+            description = document.selectFirst(".description p")?.text()?.trim().orEmpty()
+            genre = document.select(".genre a").joinToString(", ") { it.text().trim() }
+            status = parseStatus(document.selectFirst(".status")?.text().orEmpty())
+            thumbnail_url = document.selectFirst("img")?.absUrl("src").orEmpty()
         }
     }
 
-    override fun chapterListSelector(): String =
-        ".chapter-list a, .chapters a, ul.chapters li a, .wp-manga-chapter a, a[href*='/chapter/'], .episode-list a"
+    private fun parseStatus(statusString: String): Int = when {
+        statusString.contains("ongoing", ignoreCase = true) -> SManga.ONGOING
+        statusString.contains("completed", ignoreCase = true) || statusString.contains("tamat", ignoreCase = true) -> SManga.COMPLETED
+        statusString.contains("hiatus", ignoreCase = true) -> SManga.ON_HIATUS
+        else -> SManga.UNKNOWN
+    }
+
+    // === CHAPTER LIST SECTION ===
+    override fun chapterListSelector(): String = ".chapter-list a"
 
     override fun chapterFromElement(element: Element): SChapter {
-        val link = if (element.tagName() == "a") element else element.selectFirst("a")!!
-        val name = link.text()?.trim().orEmpty()
-        val hrefRaw = link.attr("href").orEmpty()
-        val url = if (hrefRaw.startsWith(baseUrl)) hrefRaw.removePrefix(baseUrl) else hrefRaw
         return SChapter.create().apply {
-            this.name = name.ifEmpty { "Chapter ${link.attr("data-chapter") ?: "Unknown"}" }
-            this.url = url
+            name = element.text()?.trim().orEmpty()
+            url = element.attr("href").orEmpty()
         }
     }
 
     override fun chapterListParse(response: Response): List<SChapter> {
-        val body = response.body?.string().orEmpty()
-        val doc = Jsoup.parse(body, baseUrl)
-        return doc.select(chapterListSelector())
-            .mapNotNull { element ->
-                try { chapterFromElement(element) } catch (e: Exception) { null }
-            }
+        val document = Jsoup.parse(response.body?.string().orEmpty(), baseUrl)
+        return document.select(chapterListSelector())
+            .map { chapterFromElement(it) }
             .filter { it.url.isNotEmpty() && it.name.isNotEmpty() }
             .reversed()
     }
 
+    // === PAGE LIST SECTION ===
     override fun pageListParse(document: Document): List<Page> {
-        val images = document.select(
-            "img.lazyimage, .reader-area img, #chapter img, .main-reading-area img, " +
-            ".page-break img, .entry-content img, .chapter-content img, " +
-            "img[data-src*='.jpg'], img[data-src*='.png'], img[data-src*='.webp'], " +
-            "img[src*='.jpg'], img[src*='.png'], img[src*='.webp']"
-        )
         val pages = mutableListOf<Page>()
-        images.forEachIndexed { index, img ->
-            val imageUrl = when {
-                img.absUrl("data-src").isNotEmpty() -> img.absUrl("data-src")
-                img.absUrl("src").isNotEmpty() -> img.absUrl("src")
-                else -> ""
+        document.select("img[src*='.jpg'], img[src*='.png'], img[src*='.webp']")
+            .forEachIndexed { index, img ->
+                val imageUrl = img.absUrl("src")
+                if (imageUrl.isNotEmpty()) {
+                    pages.add(Page(index, "", imageUrl))
+                }
             }
-            if (imageUrl.isNotEmpty() &&
-                (imageUrl.contains(".jpg") || imageUrl.contains(".png") ||
-                 imageUrl.contains(".webp") || imageUrl.contains(".jpeg"))) {
-                pages.add(Page(index, "", imageUrl))
-            }
-        }
         return pages
     }
 
     override fun imageUrlParse(document: Document): String {
-        return document.selectFirst("img[data-src], img")?.let { img ->
-            img.absUrl("data-src").ifEmpty { img.absUrl("src") }
-        }.orEmpty()
+        return document.selectFirst("img")?.absUrl("src").orEmpty()
     }
 }
