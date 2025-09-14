@@ -80,6 +80,8 @@ class KomikV : ParsedHttpSource() {
         }
     }
 
+    override fun latestUpdatesNextPageSelector(): String? = null
+
     override fun latestUpdatesParse(response: Response): MangasPage {
         val document = Jsoup.parse(response.body?.string().orEmpty(), baseUrl)
         val mangas = document.select(latestUpdatesSelector())
