@@ -70,6 +70,7 @@ class KomikV : ParsedHttpSource() {
             .map { popularMangaFromElement(it) }
             .filter { it.url.isNotBlank() && it.title.isNotBlank() && seenUrls.add(it.url) }
 
+        // jika ingin atur hasNext bisa mirip search (tidak diubah supaya aman)
         return MangasPage(mangas, true)
     }
 
@@ -115,7 +116,15 @@ class KomikV : ParsedHttpSource() {
     override fun searchMangaSelector(): String = "div.grid div.overflow-hidden"
     override fun searchMangaFromElement(element: Element): SManga = popularMangaFromElement(element)
 
-    override fun searchMangaNextPageSelector(): String? = null
+    // --- Perbaikan: buat selector next page yang lebih permisif untuk pagination pencarian ---
+    override fun searchMangaNextPageSelector(): String? = """
+        a[rel=next],
+        a[aria-label=Next],
+        .pagination a:contains(next),
+        .pagination a:contains(Lanjut),
+        .pagination a:contains(›),
+        .pagination a:contains(»)
+    """.trimIndent()
 
     override fun searchMangaParse(response: Response): MangasPage {
         val document = Jsoup.parse(response.body?.string().orEmpty(), baseUrl)
@@ -123,7 +132,12 @@ class KomikV : ParsedHttpSource() {
             .map { searchMangaFromElement(it) }
             .filter { it.url.isNotBlank() && it.title.isNotBlank() && seenUrls.add(it.url) }
 
-        return MangasPage(mangas, true)
+        val hasNext = searchMangaNextPageSelector()?.let { sel ->
+            // apabila selector null -> tidak ada next
+            document.select(sel).isNotEmpty()
+        } ?: false
+
+        return MangasPage(mangas, hasNext)
     }
 
     // === MANGA DETAILS SECTION ===
@@ -188,6 +202,11 @@ class KomikV : ParsedHttpSource() {
         // Set tanggal (epoch millis). Jika null/invalid -> 0L
         chapter.date_upload = parseChapterDate(dateText ?: "")
 
+        // --- Parse chapter number dari judul (jika ada) agar urutan bisa diatur dengan tepat ---
+        val numberRegex = Regex("""(\d+(?:[.,]\d+)?)""")
+        val numberMatch = numberRegex.find(chapter.name)
+        chapter.chapter_number = numberMatch?.value?.replace(",", ".")?.toFloatOrNull() ?: 0f
+
         return chapter
     }
 
@@ -229,10 +248,19 @@ class KomikV : ParsedHttpSource() {
 
     override fun chapterListParse(response: Response): List<SChapter> {
         val document = Jsoup.parse(response.body?.string().orEmpty(), baseUrl)
-        return document.select(chapterListSelector())
+        val chapters = document.select(chapterListSelector())
             .map { chapterFromElement(it) }
             .filter { it.url.isNotEmpty() && it.name.isNotEmpty() }
-            .reversed()
+
+        // Urutkan:
+        // 1) jika ada chapter_number -> urutkan berdasarkan chapter_number desc
+        // 2) jika tidak ada, tapi ada date_upload -> urutkan berdasarkan date_upload desc
+        // 3) fallback -> reversed()
+        return when {
+            chapters.any { it.chapter_number != 0f } -> chapters.sortedByDescending { it.chapter_number }
+            chapters.any { it.date_upload > 0L } -> chapters.sortedByDescending { it.date_upload }
+            else -> chapters.reversed()
+        }
     }
 
     // === PAGE LIST SECTION ===
