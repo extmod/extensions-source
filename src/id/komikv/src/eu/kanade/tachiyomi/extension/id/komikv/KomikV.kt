@@ -7,6 +7,8 @@ import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.online.ParsedHttpSource
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Headers
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -16,7 +18,6 @@ import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
 class KomikV : ParsedHttpSource() {
-
     override val name = "KomikV"
     override val baseUrl = "https://komikav.net"
     override val lang = "id"
@@ -32,22 +33,32 @@ class KomikV : ParsedHttpSource() {
 
     companion object {
         private val seenUrls = mutableSetOf<String>()
-        private val qrlByPage = mutableMapOf<Int, String>()
-        @Volatile private var lastPopularPageRequested = 1
-        @Volatile private var lastLatestPageRequested = 1
-        fun resetSeen() { seenUrls.clear() ; qrlByPage.clear() }
+        fun resetSeen() { seenUrls.clear() }
     }
 
     override fun popularMangaRequest(page: Int): Request {
-        if (page <= 1) resetSeen()
-        lastPopularPageRequested = page
-        return if (page <= 1) {
-            GET(baseUrl, headers)
+    if (page <= 1) resetSeen()
+    lastPopularPageRequested = page
+    return if (page <= 1) {
+        GET(baseUrl, headers)
+    } else {
+        val qrl = qrlByPage[page]
+        if (!qrl.isNullOrBlank()) {
+            val json = """{"_entry":"2","_objs":["\\u0002_#s_$qrl",$page,["0","1"]]}"""
+            val mediaType = "application/qwik-json".toMediaType()
+            val body = json.toRequestBody(mediaType)
+            Request.Builder()
+                .url("$baseUrl/?qfunc=$qrl")
+                .post(body)
+                .headers(headers)
+                .addHeader("Content-Type", "application/qwik-json")
+                .addHeader("X-QRL", qrl)
+                .build()
         } else {
-            val qrl = qrlByPage[page]
-            if (!qrl.isNullOrBlank()) GET("$baseUrl/?qfunc=$qrl", headers) else GET("$baseUrl/?page=$page", headers)
+            GET("$baseUrl/?page=$page", headers)
         }
     }
+}
 
     override fun popularMangaSelector(): String =
         "div.grid div.flex.overflow-hidden, div.grid div.neu, .list-update_item, .bsx, div[class*='grid'] > div"
@@ -70,47 +81,50 @@ class KomikV : ParsedHttpSource() {
     override fun popularMangaNextPageSelector(): String? = "a[rel=next], .pagination a[rel=next], .next, a:contains(Next), a:contains(›)"
 
     override fun popularMangaParse(response: Response): MangasPage {
-        val raw = response.body?.string().orEmpty()
-        val doc = if (response.header("content-type")?.contains("application/qwik-json", true) == true) {
-            parseQwikJsonToDoc(raw)
-        } else {
-            Jsoup.parse(raw, baseUrl)
-        }
+        val body = response.body?.string().orEmpty()
+        val doc = Jsoup.parse(body, baseUrl)
         val allMangas = doc.select(popularMangaSelector())
             .map { popularMangaFromElement(it) }
             .filter { it.url.isNotBlank() && it.title.isNotBlank() && seenUrls.add(it.url) }
-        val currentPage = lastPopularPageRequested
-        val qrlFound = extractQrlAndStore(currentPage, raw, doc)
-        val hasNext = qrlFound
+        val hasNext = doc.selectFirst("a[rel=next], a.next, .pagination a[rel=next]") != null
         return MangasPage(allMangas, hasNext)
     }
 
     override fun latestUpdatesRequest(page: Int): Request {
-        if (page <= 1) resetSeen()
-        lastLatestPageRequested = page
-        return if (page <= 1) GET("$baseUrl/?latest=1", headers) else {
-            val qrl = qrlByPage[page]
-            if (!qrl.isNullOrBlank()) GET("$baseUrl/?qfunc=$qrl", headers) else GET("$baseUrl/?page=$page&latest=1", headers)
+    if (page <= 1) resetSeen()
+    lastLatestPageRequested = page
+    return if (page <= 1) {
+        GET("$baseUrl/?latest=1", headers)
+    } else {
+        val qrl = qrlByPage[page]
+        if (!qrl.isNullOrBlank()) {
+            val json = """{"_entry":"2","_objs":["\\u0002_#s_$qrl",$page,["0","1"]]}"""
+            val mediaType = "application/qwik-json".toMediaType()
+            val body = json.toRequestBody(mediaType)
+            Request.Builder()
+                .url("$baseUrl/?qfunc=$qrl")
+                .post(body)
+                .headers(headers)
+                .addHeader("Content-Type", "application/qwik-json")
+                .addHeader("X-QRL", qrl)
+                .build()
+        } else {
+            GET("$baseUrl/?page=$page&latest=1", headers)
         }
     }
+}
 
     override fun latestUpdatesSelector(): String = popularMangaSelector()
     override fun latestUpdatesFromElement(element: Element): SManga = popularMangaFromElement(element)
     override fun latestUpdatesNextPageSelector(): String? = popularMangaNextPageSelector()
 
     override fun latestUpdatesParse(response: Response): MangasPage {
-        val raw = response.body?.string().orEmpty()
-        val doc = if (response.header("content-type")?.contains("application/qwik-json", true) == true) {
-            parseQwikJsonToDoc(raw)
-        } else {
-            Jsoup.parse(raw, baseUrl)
-        }
+        val body = response.body?.string().orEmpty()
+        val doc = Jsoup.parse(body, baseUrl)
         val allMangas = doc.select(latestUpdatesSelector())
             .map { latestUpdatesFromElement(it) }
             .filter { it.url.isNotBlank() && it.title.isNotBlank() && seenUrls.add(it.url) }
-        val currentPage = lastLatestPageRequested
-        val qrlFound = extractQrlAndStore(currentPage, raw, doc)
-        val hasNext = qrlFound
+        val hasNext = doc.selectFirst("a[rel=next], a.next, .pagination a[rel=next]") != null
         return MangasPage(allMangas, hasNext)
     }
 
@@ -207,37 +221,5 @@ class KomikV : ParsedHttpSource() {
         return document.selectFirst("img[data-src], img")?.let { img ->
             img.absUrl("data-src").ifEmpty { img.absUrl("src") }
         }.orEmpty()
-    }
-
-    private fun parseQwikJsonToDoc(body: String): Document {
-        var s = body
-        s = s.replace("\\u003C", "<")
-            .replace("\\u003E", ">")
-            .replace("\\u002F", "/")
-            .replace("\\\"", "\"")
-            .replace("\\n", "")
-            .replace("\\r", "")
-        val firstTag = s.indexOf("<")
-        val html = if (firstTag >= 0) s.substring(firstTag) else s
-        return Jsoup.parse(html, baseUrl)
-    }
-
-    private fun extractQrlAndStore(currentPage: Int, raw: String, doc: Document): Boolean {
-        val combined = raw + "\n" + doc.html()
-        val r1 = Regex("#s_([A-Za-z0-9_-]{8,})")
-        val m1 = r1.find(combined)
-        if (m1 != null) {
-            val q = m1.groupValues[1]
-            qrlByPage[currentPage + 1] = q
-            return true
-        }
-        val r2 = Regex("qfunc=([A-Za-z0-9_-]{8,})")
-        val m2 = r2.find(combined)
-        if (m2 != null) {
-            val q = m2.groupValues[1]
-            qrlByPage[currentPage + 1] = q
-            return true
-        }
-        return false
     }
 }
