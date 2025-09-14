@@ -14,6 +14,9 @@ import okhttp3.Response
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Locale
 
 class KomikV : ParsedHttpSource() {
 
@@ -143,7 +146,7 @@ class KomikV : ParsedHttpSource() {
     // === CHAPTER LIST SECTION ===
     override fun chapterListSelector() = "div.mt-4.flex.max-h-96.flex-col > a"
 
-override fun chapterFromElement(element: Element): SChapter {
+    override fun chapterFromElement(element: Element): SChapter {
     val chapter = SChapter.create()
 
     // jika chapterListSelector() mengembalikan "div... > a", element sudah <a>
@@ -163,30 +166,38 @@ override fun chapterFromElement(element: Element): SChapter {
 
 // Simple parser untuk teks seperti "35 mnt lalu", "2 jam lalu", "1 hari lalu", dlsb.
 // Mengembalikan epoch millis. Jika gagal parse, kembalikan 0L.
-    private fun parseRelativeDateToTimestamp(text: String): Long {
-    if (text.isBlank()) return 0L
-    val now = System.currentTimeMillis()
-    val lower = text.lowercase().trim()
+    private fun parseChapterDate(date: String): Long {
+    val txt = date.lowercase().trim()
 
-    // contoh: "35 mnt lalu", "35 menit lalu", "2 jam lalu", "3 hari lalu"
-    val r = Regex("""(\d+)\s*(mnt|menit|jam|hari|minggu|bulan|thn|tahun)""")
-    val m = r.find(lower)
-    if (m != null) {
-        val value = m.groupValues[1].toLong()
-        val unit = m.groupValues[2]
-        val delta = when (unit) {
-            "mnt", "menit" -> value * 60_000L
-            "jam" -> value * 3_600_000L
-            "hari" -> value * 86_400_000L
-            "minggu" -> value * 604_800_000L
-            "bulan" -> value * 2_592_000_000L   // asumsi 30 hari
-            "thn", "tahun" -> value * 31_536_000_000L // asumsi 365 hari
-            else -> 0L
+    // regex: angka opsional + satuan (menit/mnt, jam, hari, mgg/minggu, bln/bulan, thn/tahun, detik)
+    val regex = Regex("""(?:(\d+)\s*)?(detik|dtk|menit|mnt|jam|hari|mgg|minggu|bln|bulan|thn|tahun)\b""")
+    val match = regex.find(txt)
+
+    if (match != null) {
+        val valueStr = match.groupValues[1]
+        val value = if (valueStr.isBlank()) 1 else valueStr.toInt() // kalau nggak ada angka -> asumsi 1
+        val unit = match.groupValues[2]
+
+        val cal = Calendar.getInstance()
+        when (unit) {
+            "detik", "dtk" -> cal.add(Calendar.SECOND, -value)
+            "menit", "mnt" -> cal.add(Calendar.MINUTE, -value)
+            "jam" -> cal.add(Calendar.HOUR_OF_DAY, -value)
+            "hari" -> cal.add(Calendar.DATE, -value)
+            "mgg", "minggu" -> cal.add(Calendar.DATE, -value * 7)
+            "bln", "bulan" -> cal.add(Calendar.MONTH, -value)
+            "thn", "tahun" -> cal.add(Calendar.YEAR, -value)
+            else -> return 0L
         }
-        return now - delta
+        return cal.timeInMillis
     }
-    
-    return 0L
+
+    // Jika tidak cocok pola relatif, coba parse sebagai tanggal absolut pake dateFormat (pakai dateFormat yang sudah ada)
+    return try {
+        dateFormat.parse(date)?.time ?: 0L
+    } catch (_: Exception) {
+        0L
+    }
 }
 
     override fun chapterListParse(response: Response): List<SChapter> {
