@@ -58,17 +58,32 @@ class Komik : MangaThemesia("Komik", "https://komikcast.li", "id", "/daftar-komi
     override fun popularMangaRequest(page: Int) = customPageRequest(page, "orderby", "popular")
     override fun latestUpdatesRequest(page: Int) = customPageRequest(page, "sortby", "update")
 
-    override fun latestUpdatesParse(response: Response): MangasPage = searchMangaParse(response)
+    // Popular manga parse - shows all comic types
+    override fun popularMangaParse(response: Response): MangasPage {
+        val document = response.asJsoup()
 
-    private fun customPageRequest(page: Int, filterKey: String, filterValue: String): Request {
-        val pagePath = if (page > 1) "page/$page/" else ""
+        val mangas = document.select(searchMangaSelector()).map { element ->
+            searchMangaFromElement(element)
+        }
 
-        return GET("$baseUrl$mangaUrlDirectory/$pagePath?$filterKey=$filterValue", headers)
+        val hasNextPage = document.selectFirst(searchMangaNextPageSelector()) != null
+        return MangasPage(mangas, hasNextPage)
     }
 
-    override fun searchMangaSelector() = "div.list-update_item"
-
+    // Search manga parse - shows all comic types (no filter)
     override fun searchMangaParse(response: Response): MangasPage {
+        val document = response.asJsoup()
+
+        val mangas = document.select(searchMangaSelector()).map { element ->
+            searchMangaFromElement(element)
+        }
+
+        val hasNextPage = document.selectFirst(searchMangaNextPageSelector()) != null
+        return MangasPage(mangas, hasNextPage)
+    }
+
+    // Latest updates parse - uses whitelist filter
+    override fun latestUpdatesParse(response: Response): MangasPage {
         val document = response.asJsoup()
         val whitelistTitles = preferences.getString("manga_whitelist", "")?.split(",")?.map { it.trim().lowercase() }?.filter { it.isNotEmpty() } ?: emptyList()
 
@@ -95,6 +110,14 @@ class Komik : MangaThemesia("Komik", "https://komikcast.li", "id", "/daftar-komi
         val hasNextPage = document.selectFirst(searchMangaNextPageSelector()) != null
         return MangasPage(mangas, hasNextPage)
     }
+
+    private fun customPageRequest(page: Int, filterKey: String, filterValue: String): Request {
+        val pagePath = if (page > 1) "page/$page/" else ""
+
+        return GET("$baseUrl$mangaUrlDirectory/$pagePath?$filterKey=$filterValue", headers)
+    }
+
+    override fun searchMangaSelector() = "div.list-update_item"
 
     override fun searchMangaFromElement(element: Element) = super.searchMangaFromElement(element).apply {
         title = element.selectFirst("h3.title")?.ownText() ?: ""
