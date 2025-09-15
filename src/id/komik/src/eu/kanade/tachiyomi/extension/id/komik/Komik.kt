@@ -34,7 +34,7 @@ class Komik : MangaThemesia("Komik", "https://komikcast.li", "id", "/daftar-komi
     override val client: OkHttpClient = super.client.newBuilder()
         .rateLimit(3)
         .build()
-        
+
     private val preferences = Injekt.get<Application>().getSharedPreferences("source_$id", 0)
     override var baseUrl: String = preferences.getString("overrideBaseUrl", "https://komikcast.li") ?: "https://komikcast.li"
 
@@ -57,8 +57,7 @@ class Komik : MangaThemesia("Komik", "https://komikcast.li", "id", "/daftar-komi
 
     override fun popularMangaRequest(page: Int) = customPageRequest(page, "orderby", "popular")
     override fun latestUpdatesRequest(page: Int) = customPageRequest(page, "sortby", "update")
-    
-    override fun popularMangaParse(response: Response): MangasPage = searchMangaParse(response)
+
     override fun latestUpdatesParse(response: Response): MangasPage = searchMangaParse(response)
 
     private fun customPageRequest(page: Int, filterKey: String, filterValue: String): Request {
@@ -76,12 +75,12 @@ class Komik : MangaThemesia("Komik", "https://komikcast.li", "id", "/daftar-komi
         val mangas = document.select(searchMangaSelector()).mapNotNull { element ->
             val manga = searchMangaFromElement(element)
             val titleLower = manga.title.lowercase()
-            
+
             // Get type from element
             val typeElement = element.selectFirst("span.type")
             val mangaType = typeElement?.ownText()?.lowercase() ?: ""
             val isManga = mangaType.contains("manga")
-            
+
             // Filter logic: Show manhwa + manhua + whitelisted manga
             when {
                 // Always show manhwa and manhua
@@ -224,7 +223,7 @@ class Komik : MangaThemesia("Komik", "https://komikcast.li", "id", "/daftar-komi
         )
         return FilterList(filters)
     }
-    
+
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
         screen.addPreference(EditTextPreference(screen.context).apply {
             key = "resize_url_gambar"
