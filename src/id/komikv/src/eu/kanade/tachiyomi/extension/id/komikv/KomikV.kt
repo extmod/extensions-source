@@ -136,39 +136,33 @@ class KomikV : ParsedHttpSource() {
     // ---------------------------
     // Search
     // ---------------------------
+    private var qfuncId: String? = null // Simpan qfunc yang ditemukan
+    private var currentSearchQuery: String? = null // Simpan query saat ini
+
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
-    val words = query.trim().split("\\s+".toRegex())
-
-    if (page <= 1) {
-        resetSeen()
-        searchFinished = false
-        currentSearchQuery = query
-    }
-
-    if (page > 1 && searchFinished || words.isEmpty()) {
-        return GET("about:blank", headers)
-    }
-
-    val firstWord = words.first()
-    val encodedFirstWord = URLEncoder.encode(firstWord, "UTF-8")
-        .replace("+", "%20")
-
-    // URL yang benar untuk pencarian
-    val url = "$baseUrl/search/$encodedFirstWord"
-
-    // Jika ini halaman pertama, gunakan GET seperti biasa
     if (page == 1) {
-        return GET(url, headers)
+        resetSeen()
+        currentSearchQuery = query // Perbarui query
+        qfuncId = null // Atur ulang qfuncId
     }
 
-    // Jika halaman berikutnya, kita perlu kirim POST
-    // Kita membutuhkan data dari halaman pertama untuk memicu POST yang benar
-    val qfuncId = "HbSA6nELNQs" // Ambil dari hasil inspeksi DevTools
+    val words = currentSearchQuery?.trim()?.split("\\s+".toRegex()) ?: listOf("")
+    val firstWord = words.first()
+    val encodedFirstWord = URLEncoder.encode(firstWord, "UTF-8").replace("+", "%20")
+    
+    // Permintaan GET untuk halaman pertama
+    if (page == 1) {
+        return GET("$baseUrl/search/$encodedFirstWord", headers)
+    }
 
-    val requestBody = "{\"_entry\":\"2\",\"_objs\":[\"\\u0002_#s_$qfuncId\",2,[\"0\",\"${page - 1}\"]]}"
-        .toRequestBody("application/qwik-json".toMediaType())
-
-    val requestUrl = "$baseUrl/search/$encodedFirstWord/?qfunc=$qfuncId"
+    // Permintaan POST untuk halaman berikutnya
+    val qfunc = qfuncId ?: throw IllegalStateException("qfuncId not available")
+    
+    // Payload untuk permintaan POST
+    val payload = "{\"_entry\":\"2\",\"_objs\":[\"\\u0002_#s_$qfunc\",$page,[\"0\",\"${page - 1}\"]]}"
+    val requestBody = payload.toRequestBody("application/qwik-json".toMediaType())
+    
+    val requestUrl = "$baseUrl/search/$encodedFirstWord?qfunc=$qfunc"
 
     return Request.Builder()
         .url(requestUrl)
@@ -192,7 +186,7 @@ class KomikV : ParsedHttpSource() {
     }
 
     val document = Jsoup.parse(response.body?.string().orEmpty(), baseUrl)
-
+    
     val allResults = document.select(searchMangaSelector())
         .map { searchMangaFromElement(it) }
         .filter { it.url.isNotBlank() && it.title.isNotBlank() }
@@ -202,15 +196,16 @@ class KomikV : ParsedHttpSource() {
         .filter { seenUrls.add(it.url) }
 
     val hasNextPage = document.selectFirst("span.mx-auto.mt-4.cursor-pointer") != null
-    if (!hasNextPage) {
-        searchFinished = true
-    }
-
-    // Ekstrak qfunc dari halaman pertama
-    if (response.request.url.queryParameter("page") == null) {
-        qfuncId = document.selectFirst("div.my-4.grid > span[data-qrl]")?.attr("data-qrl")
-            ?.split('_')
-            ?.last()
+    
+    // Hanya ambil qfuncId saat memproses halaman pertama (page=1)
+    if (response.request.method == "GET" && response.request.url.queryParameter("page") == null) {
+        // Cari elemen tombol "Load More"
+        val loadMoreButton = document.selectFirst("span.mx-auto.mt-4.cursor-pointer[data-qrl]")
+        if (loadMoreButton != null) {
+            val qrlAttr = loadMoreButton.attr("data-qrl")
+            // qfuncId biasanya ada setelah _#s_
+            qfuncId = qrlAttr.substringAfter("_#s_")
+        }
     }
 
     return MangasPage(newMangas, hasNextPage)
