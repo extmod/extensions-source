@@ -9,6 +9,7 @@ on:
         required: false
       extension:
         description: Target extension name
+        default: 'komikv'
         required: true
       git-repo:
         description: Git repo (Optional, defaults to <your name>/aniyomi-extensions
