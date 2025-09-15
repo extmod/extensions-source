@@ -192,7 +192,8 @@ class KomikCast : MangaThemesia("Komik Cast", "https://komikcast.li", "id", "/da
             .mapIndexed { i, img ->
                 val originalUrl = img.imgAttr()
                 val resizedUrl = if (resizeTemplate.isNotEmpty()) {
-                    resizeTemplate.format(originalUrl)
+                    // Simply concatenate resize service URL with original URL
+                    "$resizeTemplate$originalUrl"
                 } else {
                     originalUrl
                 }
@@ -229,8 +230,8 @@ class KomikCast : MangaThemesia("Komik Cast", "https://komikcast.li", "id", "/da
             key = "resize_url_gambar"
             title = "Layanan resize"
             dialogTitle = "Layanan resize"
-            dialogMessage = "Gunakan layanan resize URL gambar"
-            summary = "Gunakan layanan resize URL gambar"
+            dialogMessage = "Masukkan URL layanan resize (tanpa URL gambar)\nContoh: https://images.weserv.nl/?w=300&q=70&url="
+            summary = "URL layanan resize untuk memperkecil gambar"
             setDefaultValue("")
         })
         screen.addPreference(EditTextPreference(screen.context).apply {
