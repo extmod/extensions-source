@@ -151,20 +151,18 @@ class KomikV : ParsedHttpSource() {
 
     // Perbaikan untuk search pagination
 
-    override fun searchMangaNextPageSelector(): String? {
-    // Kembalikan selector untuk tombol/link "Next" atau pagination
-    // Sesuaikan dengan struktur HTML website KomikV
-    return "a[href*='page=']:contains('Next'), a[href*='page=']:contains('›'), .pagination a:last-child:not(.disabled), span:contains('Load More').bg-blue-700"
-}
+    // Perbaikan untuk search pagination
+
+// Perbaikan untuk search pagination
+
+    override fun searchMangaNextPageSelector(): String? = null
 
     override fun searchMangaParse(response: Response): MangasPage {
     val document = Jsoup.parse(response.body?.string().orEmpty(), baseUrl)
     val currentUrl = response.request.url.toString()
     
-    // Extract current page number untuk analisis
-    val currentPageRegex = Regex("""page=(\d+)""")
-    val currentPageMatch = currentPageRegex.find(currentUrl)
-    val currentPage = currentPageMatch?.groupValues?.get(1)?.toIntOrNull() ?: 1
+    // Extract current page number
+    val currentPage = Regex("""page=(\d+)""").find(currentUrl)?.groupValues?.get(1)?.toIntOrNull() ?: 1
     
     // Ambil semua hasil dari halaman ini
     val allResults = document.select(searchMangaSelector())
@@ -176,27 +174,15 @@ class KomikV : ParsedHttpSource() {
         .distinctBy { it.url }
         .filter { seenUrls.add(it.url) }
     
-    // Deteksi hasNextPage dengan multiple methods:
+    // Logic sederhana untuk hasNextPage
     val hasNextPage = when {
-        // Method 1: Cek menggunakan searchMangaNextPageSelector
-        document.selectFirst(searchMangaNextPageSelector()) != null -> true
+        // Jika tidak ada hasil sama sekali, stop
+        allResults.isEmpty() -> false
         
-        // Method 2: Cek apakah ada elemen pagination next page
-        document.selectFirst("a[href*='page=${currentPage + 1}']") != null -> true
-        document.selectFirst(".pagination .next:not(.disabled)") != null -> true
-        
-        // Method 3: Cek berdasarkan jumlah results per halaman
-        // Jika jumlah hasil sama dengan expected per page, kemungkinan ada halaman berikutnya
-        newMangas.size >= 10 -> true // Sesuaikan dengan jumlah per halaman KomikV
-        
-        // Method 4: Cek apakah ada text indicator
-        document.text().contains("Halaman selanjutnya", ignoreCase = true) -> true
-        document.text().contains("Next", ignoreCase = true) -> true
-        
-        // Method 5: Jika tidak ada hasil baru sama sekali dan bukan halaman pertama, stop pagination
+        // Jika tidak ada manga baru dan bukan halaman pertama, stop
         newMangas.isEmpty() && currentPage > 1 -> false
         
-        // Default: jika ada hasil, asumsi ada halaman berikutnya
+        // Default: jika ada hasil baru, coba halaman berikutnya
         else -> newMangas.isNotEmpty()
     }
     
