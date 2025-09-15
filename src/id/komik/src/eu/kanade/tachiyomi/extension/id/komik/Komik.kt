@@ -1,4 +1,4 @@
-package eu.kanade.tachiyomi.extension.id.komikcast
+package eu.kanade.tachiyomi.extension.id.komik
 
 import android.app.Application
 import eu.kanade.tachiyomi.multisrc.mangathemesia.MangaThemesia
@@ -26,7 +26,7 @@ import uy.kohesive.injekt.api.get
 import java.util.Calendar
 import java.util.Locale
 
-class KomikCast : MangaThemesia("Komik Cast", "https://komikcast.li", "id", "/daftar-komik"), ConfigurableSource {
+class Komik : MangaThemesia("Komik", "https://komikcast.li", "id", "/daftar-komik"), ConfigurableSource {
 
     // Formerly "Komik Cast (WP Manga Stream)"
     override val id = 972717448578983812
