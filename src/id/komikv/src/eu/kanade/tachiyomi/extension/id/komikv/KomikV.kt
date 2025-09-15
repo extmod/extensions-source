@@ -133,12 +133,17 @@ class KomikV : ParsedHttpSource() {
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
     if (page <= 1) resetSeen()
     
-    val encodedQuery = URLEncoder.encode(query, "UTF-8")
-    val url = if (page > 1) {
-        "$baseUrl/search/$encodedQuery/page/$page/"
-    } else {
-        "$baseUrl/search/$encodedQuery/"
+    // Jika page > 1, kemungkinan tidak ada pagination, jadi return request kosong
+    if (page > 1) {
+        return GET("about:blank", headers) // Return empty request
     }
+    
+    // Untuk multi-kata, ganti spasi dengan + atau %20
+    val processedQuery = query.trim().replace("\\s+".toRegex(), "+")
+    val encodedQuery = URLEncoder.encode(processedQuery, "UTF-8")
+        .replace("+", "%20") // Beberapa site lebih suka %20
+    
+    val url = "$baseUrl/search/$encodedQuery/"
     
     return GET(url, headers)
 }
@@ -150,27 +155,41 @@ class KomikV : ParsedHttpSource() {
         "span.mx-auto.mt-4.cursor-pointer"
 
     override fun searchMangaParse(response: Response): MangasPage {
+    // Jika request kosong (about:blank), return empty tanpa error
+    if (response.request.url.toString().contains("about:blank")) {
+        return MangasPage(emptyList(), false)
+    }
+    
     val document = Jsoup.parse(response.body?.string().orEmpty(), baseUrl)
     
-    // Ambil query pencarian dari URL
-    val searchQuery = response.request.url.queryParameter("q")?.lowercase()?.trim()
+    // Ambil query pencarian dari URL path
+    val urlPath = response.request.url.encodedPath
+    val searchQuery = urlPath.removePrefix("/search/")
+        .removeSuffix("/")
+        .let { URLDecoder.decode(it, "UTF-8") }
+        .lowercase()
+        .trim()
     
     // Ambil semua hasil dari halaman
     val allResults = document.select(searchMangaSelector())
         .map { searchMangaFromElement(it) }
         .filter { it.url.isNotBlank() && it.title.isNotBlank() }
     
-    // Jika tidak ada hasil sama sekali, page habis
+    // Jika tidak ada hasil sama sekali, selesai
     if (allResults.isEmpty()) {
         return MangasPage(emptyList(), false)
     }
     
-    // Filter hanya yang judulnya mengandung kata kunci pencarian
-    val filteredResults = if (searchQuery.isNullOrBlank()) {
+    // Filter berdasarkan title yang mengandung kata kunci pencarian
+    val filteredResults = if (searchQuery.isBlank()) {
         allResults
     } else {
         allResults.filter { manga ->
-            manga.title.lowercase().contains(searchQuery)
+            val title = manga.title.lowercase()
+            // Cek apakah semua kata dalam query ada di title
+            searchQuery.split("\\s+".toRegex()).all { word ->
+                title.contains(word)
+            }
         }
     }
     
@@ -179,10 +198,8 @@ class KomikV : ParsedHttpSource() {
         .distinctBy { it.url }
         .filter { seenUrls.add(it.url) }
     
-    // Jika tidak ada manga baru yang sesuai, page habis
-    val hasNext = newMangas.isNotEmpty()
-    
-    return MangasPage(newMangas, hasNext)
+    // Karena tidak ada pagination, selalu return hasNext = false
+    return MangasPage(newMangas, false)
 }
 
     // ---------------------------
