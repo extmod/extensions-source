@@ -177,9 +177,6 @@ class KomikV : ParsedHttpSource() {
     override fun searchMangaNextPageSelector(): String? =
         "span.mx-auto.mt-4.cursor-pointer"
 
-    // Perlu menyimpan qfunc yang ditemukan
-    private var qfuncId: String? = null
-
     override fun searchMangaParse(response: Response): MangasPage {
     if (response.request.url.toString().contains("about:blank")) {
         return MangasPage(emptyList(), false)
