@@ -1,19 +1,20 @@
-package eu.kanade.tachiyomi.extension.id.komik
+package eu.kanade.tachiyomi.extension.id.komikcast
 
 import android.app.Application
-import androidx.preference.EditTextPreference
-import androidx.preference.PreferenceScreen
+import eu.kanade.tachiyomi.multisrc.mangathemesia.MangaThemesia
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
 import eu.kanade.tachiyomi.source.ConfigurableSource
+import eu.kanade.tachiyomi.util.asJsoup
+import androidx.preference.EditTextPreference
+import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.source.model.Filter
 import eu.kanade.tachiyomi.source.model.FilterList
+import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
-import eu.kanade.tachiyomi.source.model.MangasPage
-import eu.kanade.tachiyomi.source.online.ParsedHttpSource
-import eu.kanade.tachiyomi.util.asJsoup
+import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -22,177 +23,215 @@ import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
-import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
 
-class Komik : ParsedHttpSource(), ConfigurableSource {
-    override val name = "Komik"
-    override val lang = "id"
-    override val supportsLatest = true
+class KomikCast : MangaThemesia("Komik Cast", "https://komikcast.li", "id", "/daftar-komik"), ConfigurableSource {
 
-    override val client: OkHttpClient = network.cloudflareClient.newBuilder()
+    // Formerly "Komik Cast (WP Manga Stream)"
+    override val id = 972717448578983812
+
+    override val client: OkHttpClient = super.client.newBuilder()
         .rateLimit(3)
         .build()
-
+        
     private val preferences = Injekt.get<Application>().getSharedPreferences("source_$id", 0)
-    override var baseUrl: String = preferences.getString("overrideBaseUrl", "https://komikcast")!!
+    override var baseUrl: String = preferences.getString("overrideBaseUrl", "https://komikcast.li") ?: "https://komikcast.li"
 
     private fun ResizeCover(originalUrl: String): String {
         return "https://wsrv.nl/?w=110&h=150&url=$originalUrl"
     }
 
-    // Popular
-    override fun popularMangaRequest(page: Int): Request =
-        GET("$baseUrl/komik/?orderby=update&page=$page", headers)
+    override fun headersBuilder(): Headers.Builder = super.headersBuilder()
+        .add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9")
+        .add("Accept-language", "en-US,en;q=0.9,id;q=0.8")
 
-    override fun popularMangaSelector() = "div.list-update_item"
-    override fun popularMangaFromElement(element: Element): SManga = searchMangaFromElement(element)
-    override fun popularMangaNextPageSelector(): String = "a.next.page-numbers"
+    override fun imageRequest(page: Page): Request {
+        val newHeaders = headersBuilder()
+            .set("Accept", "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8")
+            .set("Referer", "$baseUrl/")
+            .build()
 
-    // Latest
-    override fun latestUpdatesRequest(page: Int): Request =
-        GET("$baseUrl/komik/page/$page/?&orderby=update", headers)
+        return GET(page.imageUrl!!, newHeaders)
+    }
 
-    override fun latestUpdatesSelector() = popularMangaSelector()
-    override fun latestUpdatesFromElement(element: Element): SManga = searchMangaFromElement(element)
-    override fun latestUpdatesNextPageSelector(): String = popularMangaNextPageSelector()
+    override fun popularMangaRequest(page: Int) = customPageRequest(page, "orderby", "popular")
+    override fun latestUpdatesRequest(page: Int) = customPageRequest(page, "sortby", "update")
+    
+    override fun popularMangaParse(response: Response): MangasPage = searchMangaParse(response)
+    override fun latestUpdatesParse(response: Response): MangasPage = searchMangaParse(response)
 
-    override fun latestUpdatesParse(response: Response): MangasPage {
+    private fun customPageRequest(page: Int, filterKey: String, filterValue: String): Request {
+        val pagePath = if (page > 1) "page/$page/" else ""
+
+        return GET("$baseUrl$mangaUrlDirectory/$pagePath?$filterKey=$filterValue", headers)
+    }
+
+    override fun searchMangaSelector() = "div.list-update_item"
+
+    override fun searchMangaParse(response: Response): MangasPage {
         val document = response.asJsoup()
-        val rawList = preferences.getString("manga_whitelist", "")
-        val allowedManga = rawList
-            ?.split(",")
-            ?.map { it.trim() }
-            ?.filter { it.isNotEmpty() }
-            ?: emptyList()
+        val whitelistTitles = preferences.getString("manga_whitelist", "")?.split(",")?.map { it.trim().lowercase() }?.filter { it.isNotEmpty() } ?: emptyList()
 
-        val mangas = document.select(latestUpdatesSelector()).mapNotNull { element ->
-            val typeText = element.selectFirst("span.type")?.text()?.trim() ?: return@mapNotNull null
+        val mangas = document.select(searchMangaSelector()).mapNotNull { element ->
+            val manga = searchMangaFromElement(element)
+            val titleLower = manga.title.lowercase()
+            
+            // Get type from element
+            val typeElement = element.selectFirst("span.type")
+            val mangaType = typeElement?.ownText()?.lowercase() ?: ""
+            val isManga = mangaType.contains("manga")
+            
+            // Filter logic: Show manhwa + manhua + whitelisted manga
             when {
-                typeText.equals("Manhwa", true) || typeText.equals("Manhua", true) ->
-                    searchMangaFromElement(element)
-                typeText.equals("Manga", true) -> {
-                    val titleText = element.selectFirst("h3.title")?.text()?.trim()
-                    if (titleText != null && allowedManga.any { it.equals(titleText, true) }) {
-                        searchMangaFromElement(element)
-                    } else null
-                }
+                // Always show manhwa and manhua
+                !isManga -> manga
+                // Show manga only if it's in whitelist
+                isManga && whitelistTitles.any { titleLower.contains(it) } -> manga
+                // Hide other manga
                 else -> null
             }
         }
-        val hasNext = document.select(latestUpdatesNextPageSelector()).firstOrNull() != null
-        return MangasPage(mangas, hasNext)
+
+        val hasNextPage = document.selectFirst(searchMangaNextPageSelector()) != null
+        return MangasPage(mangas, hasNextPage)
     }
 
-    // Search
-    override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
-        val url = "$baseUrl/?s=$query&page=$page".toHttpUrl().newBuilder().build()
-        return GET(url, headers)
+    override fun searchMangaFromElement(element: Element) = super.searchMangaFromElement(element).apply {
+        title = element.selectFirst("h3.title")?.ownText() ?: ""
+        thumbnail_url = ResizeCover(thumbnail_url ?: "")
     }
 
-    override fun searchMangaSelector() = popularMangaSelector()
-    override fun searchMangaFromElement(element: Element): SManga {
-        val manga = SManga.create()
-        manga.thumbnail_url = element.select("img").attr("abs:src")?.let { ResizeCover(it) }
-        manga.title = element.select("h3.title").text().substringBefore("(").trim()
-        element.select("a").first()!!.let {
-            manga.setUrlWithoutDomain(it.attr("href"))
-        }
-        return manga
-    }
-    override fun searchMangaNextPageSelector(): String = popularMangaNextPageSelector()
+    override val seriesDetailsSelector = "div.komik_info:has(.komik_info-content)"
+    override val seriesTitleSelector = "h1.komik_info-content-body-title"
+    override val seriesDescriptionSelector = ".komik_info-description-sinopsis"
+    override val seriesAltNameSelector = ".komik_info-content-native"
+    override val seriesGenreSelector = ".komik_info-content-genre a"
+    override val seriesThumbnailSelector = ".komik_info-content-thumbnail img"
+    override val seriesStatusSelector = ".komik_info-content-info:contains(Status)"
 
-    // Details
-    override fun mangaDetailsParse(document: Document): SManga {
-        val manga = SManga.create()
-        val info = document.selectFirst("div.komik_info") ?: return manga.apply { title = "Judul Tidak Diketahui" }
-
-        manga.title = info.selectFirst("h1.komik_info-content-body-title")?.text().orEmpty()
-            .replace("bahasa indonesia", "", ignoreCase = true)
-            .substringBeforeLast("(").trim()
-            .ifEmpty { "Judul Tidak Diketahui" }
-
-        manga.thumbnail_url = document.select("div.komik_info-cover-image img").attr("abs:src")
-            ?.let { ResizeCover(it) }
-
-        val parts = info.selectFirst("span.komik_info-content-info:has(b:contains(Author))")
-            ?.ownText().orEmpty().split(",")
-        manga.author = parts.getOrNull(0)?.trim().orEmpty()
-        manga.artist = parts.getOrNull(1)?.trim().orEmpty()
-
-        val synopsis = info.select("div.komik_info-description-sinopsis p").eachText().joinToString("\n\n")
-        val altTitle = info.selectFirst("span.komik_info-content-native")?.text().orEmpty().trim()
-        manga.description = buildString {
-            append(synopsis)
-            if (altTitle.isNotEmpty()) append("\n\nAlternative Title: $altTitle")
-        }
-
-        val genres = info.select("span.komik_info-content-genre a.genre-item").eachText().toMutableList()
-        info.selectFirst("span.komik_info-content-info-type a")?.text()?.takeIf(String::isNotBlank)?.let { genres.add(it) }
-        manga.genre = genres.joinToString(", ")
-
-        val statusText = info.selectFirst("span.komik_info-content-info:has(b:contains(Status))")
-            ?.text()?.replaceFirst("Status:", "", true).orEmpty().trim()
-        manga.status = when {
-            statusText.contains("Ongoing", true) -> SManga.ONGOING
-            statusText.contains("Completed", true) -> SManga.COMPLETED
-            else -> SManga.UNKNOWN
-        }
-
-        return manga
-    }
-
-    // Chapters
-    override fun chapterListSelector() = "div.komik_info-chapters li"
-    override fun chapterFromElement(element: Element) = SChapter.create().apply {
-        setUrlWithoutDomain(element.selectFirst("a")!!.attr("href"))
-        name = element.select(".chapter-link-item").text()
-        date_upload = parseChapterDate(element.select(".chapter-link-time").text())
-    }
-
-    private val dateFormat = SimpleDateFormat("dd MMM yyyy", Locale("id"))
-    private fun parseChapterDate(date: String): Long = if (date.endsWith("ago")) {
-        val v = date.split(' ')[0].toInt()
-        Calendar.getInstance().apply {
-            when {
-                "min" in date  -> add(Calendar.MINUTE, -v)
-                "hour" in date -> add(Calendar.HOUR_OF_DAY, -v)
-                "day" in date  -> add(Calendar.DATE, -v)
-                "week" in date -> add(Calendar.DATE, -v * 7)
-                "month" in date-> add(Calendar.MONTH, -v)
-                "year" in date -> add(Calendar.YEAR, -v)
+    override fun mangaDetailsParse(document: Document) = SManga.create().apply {
+        document.selectFirst(seriesDetailsSelector)?.let { seriesDetails ->
+            title = seriesDetails.selectFirst(seriesTitleSelector)?.text()
+                ?.replace("bahasa indonesia", "", ignoreCase = true)?.trim() ?: ""
+            artist = seriesDetails.selectFirst(seriesArtistSelector)?.ownText().removeEmptyPlaceholder()
+            author = seriesDetails.selectFirst(seriesAuthorSelector)?.ownText().removeEmptyPlaceholder()
+            description = seriesDetails.select(seriesDescriptionSelector).joinToString("\n") { it.text() }.trim()
+            // Add alternative name to manga description
+            val altName = seriesDetails.selectFirst(seriesAltNameSelector)?.ownText().takeIf { it.isNullOrBlank().not() }
+            altName?.let {
+                description = "$description\n\n$altNamePrefix$altName".trim()
             }
-        }.timeInMillis
-    } else dateFormat.parse(date)?.time ?: 0L
+            val genres = seriesDetails.select(seriesGenreSelector).map { it.text() }.toMutableList()
+            // Add series type (manga/manhwa/manhua/other) to genre
+            seriesDetails.selectFirst(seriesTypeSelector)?.ownText().takeIf { it.isNullOrBlank().not() }?.let { genres.add(it) }
+            genre = genres.map { genre ->
+                genre.lowercase(Locale.forLanguageTag(lang)).replaceFirstChar { char ->
+                    if (char.isLowerCase()) {
+                        char.titlecase(Locale.forLanguageTag(lang))
+                    } else {
+                        char.toString()
+                    }
+                }
+            }
+                .joinToString { it.trim() }
 
-    // Pages
-    override fun pageListParse(document: Document): List<Page> {
-    val serviceUrl = preferences.getString("resize_url_gambar", null)
-    return document.select("div#chapter_body .main-reading-area img.size-full")
-        .mapIndexedNotNull { i, img ->
-            val url = img.absUrl("src").takeIf { 
-                it.isNotBlank() && !it.lowercase().endsWith("999.jpg") 
-            } ?: return@mapIndexedNotNull null
-            
-            val finalUrl = serviceUrl?.let { "$it$url" } ?: url
-            Page(i, document.location(), finalUrl)
+            status = seriesDetails.selectFirst(seriesStatusSelector)?.text().parseStatus()
+            thumbnail_url = ResizeCover(seriesDetails.select(seriesThumbnailSelector).imgAttr())
         }
-}
+    }
 
-    override fun imageUrlParse(document: Document): String = throw UnsupportedOperationException()
+    override fun chapterListSelector() = "div.komik_info-chapters li"
 
-    // Filters
-    override fun getFilterList(): FilterList = FilterList(Filter.Header("No filters"))
+    override fun chapterFromElement(element: Element) = SChapter.create().apply {
+        val urlElements = element.select("a")
+        setUrlWithoutDomain(urlElements.attr("href"))
+        name = element.select(".chapter-link-item").text()
+        date_upload = parseChapterDate2(element.select(".chapter-link-time").text())
+    }
 
-    // Preferences
+    private fun parseChapterDate2(date: String): Long {
+        return if (date.endsWith("ago")) {
+            val value = date.split(' ')[0].toInt()
+            when {
+                "min" in date -> Calendar.getInstance().apply {
+                    add(Calendar.MINUTE, -value)
+                }.timeInMillis
+                "hour" in date -> Calendar.getInstance().apply {
+                    add(Calendar.HOUR_OF_DAY, -value)
+                }.timeInMillis
+                "day" in date -> Calendar.getInstance().apply {
+                    add(Calendar.DATE, -value)
+                }.timeInMillis
+                "week" in date -> Calendar.getInstance().apply {
+                    add(Calendar.DATE, -value * 7)
+                }.timeInMillis
+                "month" in date -> Calendar.getInstance().apply {
+                    add(Calendar.MONTH, -value)
+                }.timeInMillis
+                "year" in date -> Calendar.getInstance().apply {
+                    add(Calendar.YEAR, -value)
+                }.timeInMillis
+                else -> {
+                    0L
+                }
+            }
+        } else {
+            try {
+                dateFormat.parse(date)?.time ?: 0
+            } catch (_: Exception) {
+                0L
+            }
+        }
+    }
+
+    override fun pageListParse(document: Document): List<Page> {
+        val resizeTemplate = preferences.getString("resize_url_gambar", "") ?: ""
+        return document.select("div#chapter_body .main-reading-area img.size-full")
+            .distinctBy { img -> img.imgAttr() }
+            .mapIndexed { i, img ->
+                val originalUrl = img.imgAttr()
+                val resizedUrl = if (resizeTemplate.isNotEmpty()) {
+                    // Simply concatenate resize service URL with original URL
+                    "$resizeTemplate$originalUrl"
+                } else {
+                    originalUrl
+                }
+                Page(i, document.location(), resizedUrl)
+            }
+    }
+
+    override val hasProjectPage: Boolean = true
+    override val projectPageString = "/project-list"
+
+    override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
+        val url = baseUrl.toHttpUrl().newBuilder()
+
+        if (query.isNotEmpty()) {
+            url.addPathSegments("page/$page/").addQueryParameter("s", query)
+            return GET(url.build(), headers)
+        }
+
+        url.addPathSegment(mangaUrlDirectory.substring(1))
+            .addPathSegments("page/$page/")
+
+        return GET(url.build(), headers)
+    }
+
+    override fun getFilterList(): FilterList {
+        val filters = mutableListOf<Filter<*>>(
+            Filter.Separator()
+        )
+        return FilterList(filters)
+    }
+    
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
         screen.addPreference(EditTextPreference(screen.context).apply {
             key = "resize_url_gambar"
             title = "Layanan resize"
             dialogTitle = "Layanan resize"
-            dialogMessage = "Gunakan layanan resize URL gambar"
-            summary = "Gunakan layanan resize URL gambar"
+            dialogMessage = "Masukkan URL layanan resize (tanpa URL gambar)\nContoh: https://images.weserv.nl/?w=300&q=70&url="
+            summary = "URL layanan resize untuk memperkecil gambar"
             setDefaultValue("")
         })
         screen.addPreference(EditTextPreference(screen.context).apply {
