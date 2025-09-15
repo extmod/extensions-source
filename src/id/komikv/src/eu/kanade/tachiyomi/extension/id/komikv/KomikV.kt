@@ -131,16 +131,17 @@ class KomikV : ParsedHttpSource() {
     // Search
     // ---------------------------
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
-        if (page <= 1) resetSeen()
-        // Kita tetap kirim path-style default; parse akan melakukan fallback bila perlu.
-        val encodedQuery = URLEncoder.encode(query, "UTF-8")
-        val url = if (page > 1) {
-            "$baseUrl/search/$encodedQuery/?page=$page"
-        } else {
-            "$baseUrl/search/$encodedQuery/"
-        }
-        return GET(url, headers)
+    if (page <= 1) resetSeen()
+    
+    val encodedQuery = URLEncoder.encode(query, "UTF-8")
+    val url = if (page > 1) {
+        "$baseUrl/search/$encodedQuery/page/$page/"
+    } else {
+        "$baseUrl/search/$encodedQuery/"
     }
+    
+    return GET(url, headers)
+}
 
     override fun searchMangaSelector(): String = "div.grid div.overflow-hidden"
 
