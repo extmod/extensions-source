@@ -135,23 +135,27 @@ class KomikV : ParsedHttpSource() {
     // Search
     // ---------------------------
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
+    // Memecah query menjadi kata-kata
+    val words = query.trim().split("\\s+".toRegex())
+    
     if (page <= 1) {
         resetSeen()
         searchFinished = false
-        currentSearchQuery = query
+        currentSearchQuery = query // Simpan query asli untuk filtering nanti
     }
 
-    if (page > 1 && searchFinished) {
+    // Jika sudah selesai atau tidak ada kata, hentikan permintaan
+    if (page > 1 && searchFinished || words.isEmpty()) {
         return GET("about:blank", headers)
     }
 
-    // Mengganti spasi dengan + untuk encoding URL
-    val processedQuery = query.trim().replace("\\s+".toRegex(), "+")
-    val encodedQuery = URLEncoder.encode(processedQuery, "UTF-8")
-        .replace("+", "%20") // Beberapa situs lebih suka %20, gunakan yang paling kompatibel
+    // Gunakan hanya kata pertama untuk permintaan awal
+    val firstWord = words.first()
+    val encodedFirstWord = URLEncoder.encode(firstWord, "UTF-8")
+        .replace("+", "%20")
 
-    // Gunakan format URL yang benar: /search/<query>?page=<nomor>
-    val url = "$baseUrl/search/$encodedQuery?page=$page"
+    // Gunakan format URL yang benar
+    val url = "$baseUrl/search/$encodedFirstWord?page=$page"
 
     return GET(url, headers)
 }
@@ -173,12 +177,27 @@ class KomikV : ParsedHttpSource() {
         .map { searchMangaFromElement(it) }
         .filter { it.url.isNotBlank() && it.title.isNotBlank() }
 
-    val newMangas = allResults
+    // Jika ini bukan halaman pertama, atau jika query hanya satu kata,
+    // tidak perlu filtering tambahan.
+    val filteredResults = if (response.request.url.queryParameter("page") == null && currentSearchQuery != null) {
+        val queryWords = currentSearchQuery!!.trim().split("\\s+".toRegex()).map { it.lowercase() }
+        
+        allResults.filter { manga ->
+            // Pastikan semua kata kunci ada di judul
+            queryWords.all { word ->
+                manga.title.lowercase().contains(word)
+            }
+        }
+    } else {
+        allResults
+    }
+
+    val newMangas = filteredResults
         .distinctBy { it.url }
         .filter { seenUrls.add(it.url) }
 
     // Jika jumlah hasil kurang dari 30, asumsikan ini halaman terakhir.
-    val hasNextPage = newMangas.size >= 30 // Sesuaikan nilai 30 jika jumlah per halaman berbeda
+    val hasNextPage = newMangas.size >= 30 // Sesuaikan nilai 30
 
     if (!hasNextPage) {
         searchFinished = true
