@@ -137,8 +137,7 @@ class KomikV : ParsedHttpSource() {
     // Search
     // ---------------------------
     private var qfuncId: String? = null // Simpan qfunc yang ditemukan
-    private var currentSearchQuery: String? = null // Simpan query saat ini
-
+    
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
     if (page == 1) {
         resetSeen()
