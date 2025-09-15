@@ -15,6 +15,7 @@ import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import java.net.URLDecoder
+import java.net.URLEncoder
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
@@ -47,7 +48,42 @@ class KomikV : ParsedHttpSource() {
     // dateFormat untuk parsing tanggal absolut (sesuaikan pattern & locale bila perlu)
     private val dateFormat = SimpleDateFormat("dd MMM yyyy", Locale("id"))
 
-    // === POPULAR MANGA SECTION ===
+    // ---------------------------
+    // Unified element parser implemented as searchMangaFromElement
+    // popularMangaFromElement & latestUpdatesFromElement call this function
+    // ---------------------------
+    override fun searchMangaFromElement(element: Element): SManga {
+        val manga = SManga.create()
+
+        // Title: coba beberapa selector umum (h2 a, h2, a[title], dll)
+        val title = listOf(
+            "h2 a", "h2", "a.title", "a[title]", "div.title a", "div > a > h2"
+        ).firstNotNullOfOrNull { sel ->
+            element.selectFirst(sel)?.text()?.trim()
+        } ?: element.text().trim()
+
+        // URL: ambil dari <a> pertama yang punya href
+        val url = listOf(
+            "a[href]", "h2 a[href]", "div > a[href]"
+        ).mapNotNull { sel ->
+            element.selectFirst(sel)?.attr("href")
+        }.firstOrNull().orEmpty()
+
+        // Thumbnail: coba data-src lalu src
+        val thumb = element.selectFirst("img")?.let { img ->
+            img.absUrl("data-src").ifEmpty { img.absUrl("src") }
+        }.orEmpty()
+
+        manga.title = title
+        manga.url = url
+        manga.thumbnail_url = thumb
+
+        return manga
+    }
+
+    // ---------------------------
+    // Popular
+    // ---------------------------
     override fun popularMangaRequest(page: Int): Request {
         if (page <= 1) resetSeen()
         return GET("$baseUrl/popular/?page=$page", headers)
@@ -55,15 +91,7 @@ class KomikV : ParsedHttpSource() {
 
     override fun popularMangaSelector(): String = "div.grid div.overflow-hidden"
 
-    override fun popularMangaFromElement(element: Element): SManga {
-        return SManga.create().apply {
-            title = element.selectFirst("h2")?.text()?.trim().orEmpty()
-            url = element.selectFirst("a")?.attr("href").orEmpty()
-            thumbnail_url = element.selectFirst("img")?.let { img ->
-                img.absUrl("data-src").ifEmpty { img.absUrl("src") }
-            }.orEmpty()
-        }
-    }
+    override fun popularMangaFromElement(element: Element): SManga = searchMangaFromElement(element)
 
     override fun popularMangaNextPageSelector(): String? = null
 
@@ -73,11 +101,12 @@ class KomikV : ParsedHttpSource() {
             .map { popularMangaFromElement(it) }
             .filter { it.url.isNotBlank() && it.title.isNotBlank() && seenUrls.add(it.url) }
 
-        // jika ingin atur hasNext bisa mirip search (tidak diubah supaya aman)
         return MangasPage(mangas, true)
     }
 
-    // === LATEST UPDATES SECTION ===
+    // ---------------------------
+    // Latest
+    // ---------------------------
     override fun latestUpdatesRequest(page: Int): Request {
         if (page <= 1) resetSeen()
         return GET("$baseUrl/?page=$page&latest=1", headers)
@@ -85,13 +114,7 @@ class KomikV : ParsedHttpSource() {
 
     override fun latestUpdatesSelector(): String = "div.grid div.flex.overflow-hidden"
 
-    override fun latestUpdatesFromElement(element: Element): SManga {
-        return SManga.create().apply {
-            title = element.selectFirst("h2 a")?.text()?.trim().orEmpty()
-            url = element.selectFirst("a")?.attr("href").orEmpty()
-            thumbnail_url = element.selectFirst("img")?.absUrl("data-src").orEmpty()
-        }
-    }
+    override fun latestUpdatesFromElement(element: Element): SManga = searchMangaFromElement(element)
 
     override fun latestUpdatesNextPageSelector(): String? = null
 
@@ -104,10 +127,13 @@ class KomikV : ParsedHttpSource() {
         return MangasPage(mangas, true)
     }
 
-    // === SEARCH SECTION ===
+    // ---------------------------
+    // Search
+    // ---------------------------
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
         if (page <= 1) resetSeen()
-        val encodedQuery = java.net.URLEncoder.encode(query, "UTF-8")
+        // Kita tetap kirim path-style default; parse akan melakukan fallback bila perlu.
+        val encodedQuery = URLEncoder.encode(query, "UTF-8")
         val url = if (page > 1) {
             "$baseUrl/search/$encodedQuery/?page=$page"
         } else {
@@ -117,52 +143,75 @@ class KomikV : ParsedHttpSource() {
     }
 
     override fun searchMangaSelector(): String = "div.grid div.overflow-hidden"
-    override fun searchMangaFromElement(element: Element): SManga = popularMangaFromElement(element)
 
-    // Selector spesifik untuk tombol "Load More"
+    // Selector spesifik untuk tombol "Load More" (gunakan kelas yang valid dari markup)
     override fun searchMangaNextPageSelector(): String? =
         "span.mx-auto.mt-4.cursor-pointer"
 
     override fun searchMangaParse(response: Response): MangasPage {
-        // Baca body terlebih dahulu
-        val body = response.body?.string().orEmpty()
-        val document = Jsoup.parse(body, baseUrl)
+        val originalBody = response.body?.string().orEmpty()
+        val document = Jsoup.parse(originalBody, baseUrl)
 
-        // Ambil semua hasil mentah
+        // Ambil semua hasil mentah dari halaman ini
         var rawList = document.select(searchMangaSelector())
             .map { searchMangaFromElement(it) }
             .filter { it.url.isNotBlank() && it.title.isNotBlank() }
 
-        // Jika tidak ada hasil sama sekali, coba fallback ke endpoint query param (untuk multi-kata)
+        // Jika kosong -> coba beberapa fallback otomatis (banyak situs beda format untuk multi-kata)
         if (rawList.isEmpty()) {
-            val reqUrl = response.request.url
-            // hanya coba fallback kalau path-style search ada
             try {
+                val reqUrl = response.request.url
                 val pathSegments = reqUrl.encodedPathSegments
-                val idx = pathSegments.indexOf("search")
-                if (idx >= 0 && idx + 1 < pathSegments.size) {
-                    val encodedQuerySegment = pathSegments[idx + 1]
-                    val decodedQuery = URLDecoder.decode(encodedQuerySegment, "UTF-8")
-                    // bangun URL fallback: /search/?q=...  (tambahkan page jika ada)
-                    val pageParam = reqUrl.queryParameter("page")
-                    val fallbackUrl = if (pageParam != null) {
-                        "$baseUrl/search/?q=${java.net.URLEncoder.encode(decodedQuery, "UTF-8")}&page=$pageParam"
-                    } else {
-                        "$baseUrl/search/?q=${java.net.URLEncoder.encode(decodedQuery, "UTF-8")}"
-                    }
+                val fallbackCandidates = mutableListOf<String>()
 
-                    val fallbackRequest = GET(fallbackUrl, headers)
-                    val fallbackResponse = client.newCall(fallbackRequest).execute()
-                    if (fallbackResponse.isSuccessful) {
-                        val fbBody = fallbackResponse.body?.string().orEmpty()
-                        val fbDoc = Jsoup.parse(fbBody, baseUrl)
-                        rawList = fbDoc.select(searchMangaSelector())
-                            .map { searchMangaFromElement(it) }
-                            .filter { it.url.isNotBlank() && it.title.isNotBlank() }
+                val searchIdx = pathSegments.indexOf("search")
+                val queryFromPath = if (searchIdx >= 0 && searchIdx + 1 < pathSegments.size) {
+                    URLDecoder.decode(pathSegments[searchIdx + 1], "UTF-8")
+                } else {
+                    null
+                }
+
+                val q = queryFromPath ?: reqUrl.queryParameter("q") ?: ""
+                if (q.isNotBlank()) {
+                    val encPlus = URLEncoder.encode(q, "UTF-8")
+                    val encPct20 = encPlus.replace("+", "%20")
+                    val slug = q.trim().replace("\\s+".toRegex(), "-")
+                    val encSlug = URLEncoder.encode(slug, "UTF-8")
+
+                    val pageParam = reqUrl.queryParameter("page")?.let { "&page=$it" } ?: ""
+                    fallbackCandidates.add("$baseUrl/search/?q=$encPlus$pageParam")
+                    fallbackCandidates.add("$baseUrl/search/?q=$encPct20$pageParam")
+                    fallbackCandidates.add("$baseUrl/search/$encSlug/$pageParam")
+                    fallbackCandidates.add("$baseUrl/search/${URLEncoder.encode(q.replace(" ", "-"), "UTF-8")}/$pageParam")
+                } else {
+                    val raw = response.request.url.queryParameter("q")
+                    if (!raw.isNullOrBlank()) {
+                        val enc = URLEncoder.encode(raw, "UTF-8")
+                        fallbackCandidates.add("$baseUrl/search/?q=$enc")
+                    }
+                }
+
+                for (candidate in fallbackCandidates) {
+                    try {
+                        val fbReq = GET(candidate, headers)
+                        val fbRes = client.newCall(fbReq).execute()
+                        if (fbRes.isSuccessful) {
+                            val fbBody = fbRes.body?.string().orEmpty()
+                            val fbDoc = Jsoup.parse(fbBody, baseUrl)
+                            val list = fbDoc.select(searchMangaSelector())
+                                .map { searchMangaFromElement(it) }
+                                .filter { it.url.isNotBlank() && it.title.isNotBlank() }
+                            if (list.isNotEmpty()) {
+                                rawList = list
+                                break
+                            }
+                        }
+                    } catch (_: Exception) {
+                        // skip candidate
                     }
                 }
             } catch (_: Exception) {
-                // gagal fallback -> lanjut dengan rawList kosong
+                // gagal fallback -> lanjut (rawList tetap kosong)
             }
         }
 
@@ -183,8 +232,8 @@ class KomikV : ParsedHttpSource() {
                 nextEl.text().lowercase().contains("load") ||
                         nextEl.text().lowercase().contains("muat") ||
                         nextEl.text().lowercase().contains("lanjut")
-                )) || nextEl.hasAttr("on:click") || nextEl.hasAttr("q:id")
-            )
+            )) || nextEl.hasAttr("on:click") || nextEl.hasAttr("q:id")
+        )
 
         // Deteksi "halaman pengulang" (server mengembalikan item yg sama lagi)
         val repeatingPage = lastSearchLastUrl != null && deduped.isNotEmpty() &&
@@ -199,7 +248,9 @@ class KomikV : ParsedHttpSource() {
         return MangasPage(newMangas, hasNext)
     }
 
-    // === MANGA DETAILS SECTION ===
+    // ---------------------------
+    // Manga details / chapters / pages (tetap seperti sebelumnya)
+    // ---------------------------
     override fun mangaDetailsParse(document: Document): SManga {
         return SManga.create().apply {
             title = document.selectFirst("h1.text-xl")?.text()?.trim().orEmpty()
@@ -219,7 +270,6 @@ class KomikV : ParsedHttpSource() {
         else -> SManga.UNKNOWN
     }
 
-    // === CHAPTER LIST SECTION ===
     override fun chapterListSelector() = "div.mt-4.flex.max-h-96.flex-col > a"
 
     override fun chapterFromElement(element: Element): SChapter {
@@ -322,7 +372,6 @@ class KomikV : ParsedHttpSource() {
         }
     }
 
-    // === PAGE LIST SECTION ===
     override fun pageListParse(document: Document): List<Page> {
         val pages = mutableListOf<Page>()
         document.select("img[src*='.jpg'], img[src*='.png'], img[src*='.webp']")
