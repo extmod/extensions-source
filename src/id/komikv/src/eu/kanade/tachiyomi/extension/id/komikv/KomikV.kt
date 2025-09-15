@@ -14,7 +14,6 @@ import okhttp3.Response
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
-import java.net.URLDecoder
 import java.net.URLEncoder
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -35,353 +34,90 @@ class KomikV : ParsedHttpSource() {
         .add("Accept-Language", "id-ID,id;q=0.9,en;q=0.8")
         .add("Referer", baseUrl)
 
-    companion object {
-        private val seenUrls = mutableSetOf<String>()
-        private var lastSearchLastUrl: String? = null
-
-        fun resetSeen() {
-            seenUrls.clear()
-            lastSearchLastUrl = null
-        }
-    }
-
-    // dateFormat untuk parsing tanggal absolut (sesuaikan pattern & locale bila perlu)
     private val dateFormat = SimpleDateFormat("dd MMM yyyy", Locale("id"))
 
-    // ---------------------------
-    // Unified element parser implemented as searchMangaFromElement
-    // popularMangaFromElement & latestUpdatesFromElement call this function
-    // ---------------------------
-    override fun searchMangaFromElement(element: Element): SManga {
-        val manga = SManga.create()
-
-        // Title: coba beberapa selector umum (h2 a, h2, a[title], dll)
-        val title = listOf(
-            "h2 a", "h2", "a.title", "a[title]", "div.title a", "div > a > h2"
-        ).firstNotNullOfOrNull { sel ->
-            element.selectFirst(sel)?.text()?.trim()
-        } ?: element.text().trim()
-
-        // URL: ambil dari <a> pertama yang punya href
-        val url = listOf(
-            "a[href]", "h2 a[href]", "div > a[href]"
-        ).mapNotNull { sel ->
-            element.selectFirst(sel)?.attr("href")
-        }.firstOrNull().orEmpty()
-
-        // Thumbnail: coba data-src lalu src
-        val thumb = element.selectFirst("img")?.let { img ->
-            img.absUrl("data-src").ifEmpty { img.absUrl("src") }
-        }.orEmpty()
-
-        manga.title = title
-        manga.url = url
-        manga.thumbnail_url = thumb
-
-        return manga
+    override fun searchMangaFromElement(element: Element): SManga = SManga.create().apply {
+        title = element.selectFirst("h2 a")?.text()?.trim() ?: element.text().trim()
+        url = element.selectFirst("a[href]")?.attr("href").orEmpty()
+        thumbnail_url = element.selectFirst("img")?.absUrl("data-src")?.takeIf { it.isNotEmpty() } 
+            ?: element.selectFirst("img")?.absUrl("src").orEmpty()
     }
 
-    // ---------------------------
-    // Popular
-    // ---------------------------
-    override fun popularMangaRequest(page: Int): Request {
-        if (page <= 1) resetSeen()
-        return GET("$baseUrl/popular/?page=$page", headers)
-    }
-
+    override fun popularMangaRequest(page: Int): Request = GET("$baseUrl/popular/?page=$page", headers)
     override fun popularMangaSelector(): String = "div.grid div.overflow-hidden"
-
     override fun popularMangaFromElement(element: Element): SManga = searchMangaFromElement(element)
+    override fun popularMangaNextPageSelector(): String = "a[rel=next]"
 
-    override fun popularMangaNextPageSelector(): String? = null
-
-    override fun popularMangaParse(response: Response): MangasPage {
-        val document = Jsoup.parse(response.body?.string().orEmpty(), baseUrl)
-        val mangas = document.select(popularMangaSelector())
-            .map { popularMangaFromElement(it) }
-            .filter { it.url.isNotBlank() && it.title.isNotBlank() && seenUrls.add(it.url) }
-
-        return MangasPage(mangas, true)
-    }
-
-    // ---------------------------
-    // Latest
-    // ---------------------------
-    override fun latestUpdatesRequest(page: Int): Request {
-        if (page <= 1) resetSeen()
-        return GET("$baseUrl/?page=$page&latest=1", headers)
-    }
-
+    override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/?page=$page&latest=1", headers)
     override fun latestUpdatesSelector(): String = "div.grid div.flex.overflow-hidden"
-
     override fun latestUpdatesFromElement(element: Element): SManga = searchMangaFromElement(element)
+    override fun latestUpdatesNextPageSelector(): String = "a[rel=next]"
 
-    override fun latestUpdatesNextPageSelector(): String? = null
-
-    override fun latestUpdatesParse(response: Response): MangasPage {
-        val document = Jsoup.parse(response.body?.string().orEmpty(), baseUrl)
-        val mangas = document.select(latestUpdatesSelector())
-            .map { latestUpdatesFromElement(it) }
-            .filter { it.url.isNotBlank() && it.title.isNotBlank() && seenUrls.add(it.url) }
-
-        return MangasPage(mangas, true)
-    }
-
-    // ---------------------------
-    // Search
-    // ---------------------------
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
-        if (page <= 1) resetSeen()
-        // Kita tetap kirim path-style default; parse akan melakukan fallback bila perlu.
         val encodedQuery = URLEncoder.encode(query, "UTF-8")
-        val url = if (page > 1) {
-            "$baseUrl/search/$encodedQuery/?page=$page"
-        } else {
-            "$baseUrl/search/$encodedQuery/"
-        }
-        return GET(url, headers)
+        return GET("$baseUrl/search/$encodedQuery/?page=$page", headers)
     }
-
     override fun searchMangaSelector(): String = "div.grid div.overflow-hidden"
+    override fun searchMangaNextPageSelector(): String = "a[rel=next]"
 
-    // Selector spesifik untuk tombol "Load More" (gunakan kelas yang valid dari markup)
-    override fun searchMangaNextPageSelector(): String? =
-        "span.mx-auto.mt-4.cursor-pointer"
-
-    override fun searchMangaParse(response: Response): MangasPage {
-        val originalBody = response.body?.string().orEmpty()
-        val document = Jsoup.parse(originalBody, baseUrl)
-
-        // Ambil semua hasil mentah dari halaman ini
-        var rawList = document.select(searchMangaSelector())
-            .map { searchMangaFromElement(it) }
-            .filter { it.url.isNotBlank() && it.title.isNotBlank() }
-
-        // Jika kosong -> coba beberapa fallback otomatis (banyak situs beda format untuk multi-kata)
-        if (rawList.isEmpty()) {
-            try {
-                val reqUrl = response.request.url
-                val pathSegments = reqUrl.encodedPathSegments
-                val fallbackCandidates = mutableListOf<String>()
-
-                val searchIdx = pathSegments.indexOf("search")
-                val queryFromPath = if (searchIdx >= 0 && searchIdx + 1 < pathSegments.size) {
-                    URLDecoder.decode(pathSegments[searchIdx + 1], "UTF-8")
-                } else {
-                    null
-                }
-
-                val q = queryFromPath ?: reqUrl.queryParameter("q") ?: ""
-                if (q.isNotBlank()) {
-                    val encPlus = URLEncoder.encode(q, "UTF-8")
-                    val encPct20 = encPlus.replace("+", "%20")
-                    val slug = q.trim().replace("\\s+".toRegex(), "-")
-                    val encSlug = URLEncoder.encode(slug, "UTF-8")
-
-                    val pageParam = reqUrl.queryParameter("page")?.let { "&page=$it" } ?: ""
-                    fallbackCandidates.add("$baseUrl/search/?q=$encPlus$pageParam")
-                    fallbackCandidates.add("$baseUrl/search/?q=$encPct20$pageParam")
-                    fallbackCandidates.add("$baseUrl/search/$encSlug/$pageParam")
-                    fallbackCandidates.add("$baseUrl/search/${URLEncoder.encode(q.replace(" ", "-"), "UTF-8")}/$pageParam")
-                } else {
-                    val raw = response.request.url.queryParameter("q")
-                    if (!raw.isNullOrBlank()) {
-                        val enc = URLEncoder.encode(raw, "UTF-8")
-                        fallbackCandidates.add("$baseUrl/search/?q=$enc")
-                    }
-                }
-
-                for (candidate in fallbackCandidates) {
-                    try {
-                        val fbReq = GET(candidate, headers)
-                        val fbRes = client.newCall(fbReq).execute()
-                        if (fbRes.isSuccessful) {
-                            val fbBody = fbRes.body?.string().orEmpty()
-                            val fbDoc = Jsoup.parse(fbBody, baseUrl)
-                            val list = fbDoc.select(searchMangaSelector())
-                                .map { searchMangaFromElement(it) }
-                                .filter { it.url.isNotBlank() && it.title.isNotBlank() }
-                            if (list.isNotEmpty()) {
-                                rawList = list
-                                break
-                            }
-                        }
-                    } catch (_: Exception) {
-                        // skip candidate
-                    }
-                }
-            } catch (_: Exception) {
-                // gagal fallback -> lanjut (rawList tetap kosong)
-            }
+    override fun mangaDetailsParse(document: Document): SManga = SManga.create().apply {
+        title = document.selectFirst("h1.text-xl")?.text()?.trim().orEmpty()
+        author = document.select("a[href*=\"/tax/author/\"]").joinToString(", ") { it.text().trim() }
+        description = document.selectFirst(".mt-4.w-full p")?.text()?.trim().orEmpty()
+        genre = document.select(".mt-4.w-full a.text-md.mb-1").joinToString(", ") { it.text().trim() }
+        status = when {
+            document.selectFirst(".bg-green-800")?.text()?.contains("on-going", true) == true -> SManga.ONGOING
+            document.selectFirst(".bg-green-800")?.text()?.contains("complete", true) == true -> SManga.COMPLETED
+            else -> SManga.UNKNOWN
         }
-
-        // Dedupe per-halaman sambil pertahankan urutan
-        val dedupMap = linkedMapOf<String, SManga>()
-        for (m in rawList) {
-            if (!dedupMap.containsKey(m.url)) dedupMap[m.url] = m
-        }
-        val deduped = dedupMap.values.toList()
-
-        // Hanya ambil yang belum pernah dilihat (global)
-        val newMangas = deduped.filter { seenUrls.add(it.url) }
-
-        // Deteksi tombol "next" (Load More) secara aman:
-        val nextEl = searchMangaNextPageSelector()?.let { document.selectFirst(it) }
-        val hasNextFromSelector = nextEl != null && (
-            (nextEl.text().isNotBlank() && (
-                nextEl.text().lowercase().contains("load") ||
-                        nextEl.text().lowercase().contains("muat") ||
-                        nextEl.text().lowercase().contains("lanjut")
-            )) || nextEl.hasAttr("on:click") || nextEl.hasAttr("q:id")
-        )
-
-        // Deteksi "halaman pengulang" (server mengembalikan item yg sama lagi)
-        val repeatingPage = lastSearchLastUrl != null && deduped.isNotEmpty() &&
-                lastSearchLastUrl == deduped.last().url
-
-        // Final hasNext: butuh next element valid + ada hasil baru + bukan repeating + deduped tidak kosong
-        val hasNext = hasNextFromSelector && deduped.isNotEmpty() && newMangas.isNotEmpty() && !repeatingPage
-
-        // update penanda last item untuk pengecekan page berikutnya
-        lastSearchLastUrl = deduped.lastOrNull()?.url
-
-        return MangasPage(newMangas, hasNext)
-    }
-
-    // ---------------------------
-    // Manga details / chapters / pages (tetap seperti sebelumnya)
-    // ---------------------------
-    override fun mangaDetailsParse(document: Document): SManga {
-        return SManga.create().apply {
-            title = document.selectFirst("h1.text-xl")?.text()?.trim().orEmpty()
-            author = document.select("a[href*=\"/tax/author/\"]").joinToString(", ") { it.text().trim() }
-            description = document.selectFirst(".mt-4.w-full p")?.text()?.trim().orEmpty()
-            genre = (document.select(".mt-4.w-full a.text-md.mb-1").map { it.text().trim() } +
-                    document.select(".bg-red-800").map { it.text().trim() })
-                .joinToString(", ")
-            status = parseStatus(document.selectFirst(".bg-green-800")?.text().orEmpty())
-            thumbnail_url = document.selectFirst("img.neu-active")?.absUrl("src").orEmpty()
-        }
-    }
-
-    private fun parseStatus(statusString: String): Int = when {
-        statusString.contains("on-going", ignoreCase = true) -> SManga.ONGOING
-        statusString.contains("complete", ignoreCase = true) -> SManga.COMPLETED
-        else -> SManga.UNKNOWN
+        thumbnail_url = document.selectFirst("img.neu-active")?.absUrl("src").orEmpty()
     }
 
     override fun chapterListSelector() = "div.mt-4.flex.max-h-96.flex-col > a"
 
-    override fun chapterFromElement(element: Element): SChapter {
-        val chapter = SChapter.create()
-
-        // url
-        val url = element.attr("href")
-        chapter.setUrlWithoutDomain(url)
-
-        // Judul: p pertama di dalam <a> atau fallback ke teks elemen
-        val titleEl = element.selectFirst("div > p:first-of-type, p:first-of-type")
-        chapter.name = titleEl?.text()?.trim() ?: element.text().trim()
-
-        // Cari teks tanggal di beberapa kemungkinan selector
-        val dateCandidates = listOf(
-            "p.text-xs.font-medium",
-            "p.text-xs",
-            "div > p:nth-of-type(2)",
-            "time",
-            "span.time",
-            "small"
-        )
-        var dateText: String? = null
-        for (sel in dateCandidates) {
-            val e = element.selectFirst(sel)
-            if (e != null && e.text().isNotBlank()) {
-                dateText = e.text().trim()
-                break
-            }
-        }
-
-        // Fallback: cari pola relatif waktu di keseluruhan teks elemen (contoh: "35 mnt lalu", "2 jam")
-        if (dateText.isNullOrBlank()) {
-            val r = Regex("""(?:(\d+)\s*)?(detik|dtk|menit|mnt|jam|hari|mgg|minggu|bln|bulan|thn|tahun)\b""", RegexOption.IGNORE_CASE)
-            val m = r.find(element.text())
-            if (m != null) dateText = m.value
-        }
-
-        // Set tanggal (epoch millis). Jika null/invalid -> 0L
-        chapter.date_upload = parseChapterDate(dateText ?: "")
-
-        // --- Parse chapter number dari judul (jika ada) agar urutan bisa diatur dengan tepat ---
-        val numberRegex = Regex("""(\d+(?:[.,]\d+)?)""")
-        val numberMatch = numberRegex.find(chapter.name)
-        chapter.chapter_number = numberMatch?.value?.replace(",", ".")?.toFloatOrNull() ?: 0f
-
-        return chapter
+    override fun chapterFromElement(element: Element): SChapter = SChapter.create().apply {
+        setUrlWithoutDomain(element.attr("href"))
+        name = element.selectFirst("p")?.text()?.trim() ?: element.text().trim()
+        
+        val dateText = element.selectFirst("p.text-xs")?.text()?.trim().orEmpty()
+        date_upload = parseChapterDate(dateText)
+        
+        val numberMatch = Regex("""(\d+(?:[.,]\d+)?)""").find(name)
+        chapter_number = numberMatch?.value?.replace(",", ".")?.toFloatOrNull() ?: 0f
     }
 
     private fun parseChapterDate(date: String): Long {
-        val txt = date.lowercase().trim()
-
-        // Regex yang menangkap angka opsional + satuan
-        val regex = Regex("""(?:(\d+)\s*)?(detik|dtk|menit|mnt|jam|hari|mgg|minggu|bln|bulan|thn|tahun)\b""")
-        val match = regex.find(txt)
-
-        if (match != null) {
-            val valueStr = match.groupValues[1]
-            val value = if (valueStr.isBlank()) 1 else {
-                try { valueStr.toInt() } catch (_: Exception) { 1 }
-            }
-
-            val unit = match.groupValues[2]
+        val match = Regex("""(\d+)\s*(detik|menit|jam|hari|minggu|bulan|tahun)""", RegexOption.IGNORE_CASE)
+            .find(date.lowercase())
+        
+        return match?.let {
+            val value = it.groupValues[1].toIntOrNull() ?: 1
             val cal = Calendar.getInstance()
-            when (unit) {
-                "detik", "dtk" -> cal.add(Calendar.SECOND, -value)
-                "menit", "mnt" -> cal.add(Calendar.MINUTE, -value)
+            when (it.groupValues[2]) {
+                "detik" -> cal.add(Calendar.SECOND, -value)
+                "menit" -> cal.add(Calendar.MINUTE, -value)
                 "jam" -> cal.add(Calendar.HOUR_OF_DAY, -value)
                 "hari" -> cal.add(Calendar.DATE, -value)
-                "mgg", "minggu" -> cal.add(Calendar.DATE, -value * 7)
-                "bln", "bulan" -> cal.add(Calendar.MONTH, -value)
-                "thn", "tahun" -> cal.add(Calendar.YEAR, -value)
-                else -> return 0L
+                "minggu" -> cal.add(Calendar.DATE, -value * 7)
+                "bulan" -> cal.add(Calendar.MONTH, -value)
+                "tahun" -> cal.add(Calendar.YEAR, -value)
             }
-            return cal.timeInMillis
-        }
-
-        // Jika tidak cocok pola relatif, coba parse sebagai tanggal absolut
-        return try {
-            dateFormat.parse(date)?.time ?: 0L
-        } catch (_: Exception) {
-            0L
-        }
+            cal.timeInMillis
+        } ?: try { dateFormat.parse(date)?.time ?: 0L } catch (_: Exception) { 0L }
     }
 
     override fun chapterListParse(response: Response): List<SChapter> {
         val document = Jsoup.parse(response.body?.string().orEmpty(), baseUrl)
-        val chapters = document.select(chapterListSelector())
+        return document.select(chapterListSelector())
             .map { chapterFromElement(it) }
             .filter { it.url.isNotEmpty() && it.name.isNotEmpty() }
-
-        // Urutkan:
-        // 1) jika ada chapter_number -> urutkan berdasarkan chapter_number desc
-        // 2) jika tidak ada, tapi ada date_upload -> urutkan berdasarkan date_upload desc
-        // 3) fallback -> reversed()
-        return when {
-            chapters.any { it.chapter_number != 0f } -> chapters.sortedByDescending { it.chapter_number }
-            chapters.any { it.date_upload > 0L } -> chapters.sortedByDescending { it.date_upload }
-            else -> chapters.reversed()
-        }
+            .sortedByDescending { it.chapter_number }
     }
 
     override fun pageListParse(document: Document): List<Page> {
-        val pages = mutableListOf<Page>()
-        document.select("img[src*='.jpg'], img[src*='.png'], img[src*='.webp']")
-            .forEachIndexed { index, img ->
-                val imageUrl = img.absUrl("src")
-                if (imageUrl.isNotEmpty()) {
-                    pages.add(Page(index, "", imageUrl))
-                }
-            }
-        return pages
+        return document.select("img[src*='.jpg'], img[src*='.png'], img[src*='.webp']")
+            .mapIndexed { index, img -> Page(index, "", img.absUrl("src")) }
+            .filter { it.imageUrl?.isNotEmpty() == true }
     }
 
     override fun imageUrlParse(document: Document): String {
