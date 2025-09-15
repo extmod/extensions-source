@@ -137,12 +137,12 @@ class KomikV : ParsedHttpSource() {
     // Search
     // ---------------------------
     private var qfuncId: String? = null // Simpan qfunc yang ditemukan
-    
+
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
     if (page == 1) {
         resetSeen()
-        currentSearchQuery = query // Perbarui query
-        qfuncId = null // Atur ulang qfuncId
+        currentSearchQuery = query
+        qfuncId = null
     }
 
     val words = currentSearchQuery?.trim()?.split("\\s+".toRegex()) ?: listOf("")
@@ -155,9 +155,8 @@ class KomikV : ParsedHttpSource() {
     }
 
     // Permintaan POST untuk halaman berikutnya
-    val qfunc = qfuncId ?: throw IllegalStateException("qfuncId not available")
+    val qfunc = qfuncId ?: return GET("about:blank", headers)
     
-    // Payload untuk permintaan POST
     val payload = "{\"_entry\":\"2\",\"_objs\":[\"\\u0002_#s_$qfunc\",$page,[\"0\",\"${page - 1}\"]]}"
     val requestBody = payload.toRequestBody("application/qwik-json".toMediaType())
     
@@ -176,7 +175,9 @@ class KomikV : ParsedHttpSource() {
     override fun searchMangaNextPageSelector(): String? =
         "span.mx-auto.mt-4.cursor-pointer"
 
-    override fun searchMangaParse(response: Response): MangasPage {
+    // ... (import dan deklarasi lainnya) ...
+
+override fun searchMangaParse(response: Response): MangasPage {
     if (response.request.url.toString().contains("about:blank")) {
         return MangasPage(emptyList(), false)
     }
@@ -191,16 +192,17 @@ class KomikV : ParsedHttpSource() {
         .distinctBy { it.url }
         .filter { seenUrls.add(it.url) }
 
-    val hasNextPage = document.selectFirst("span.mx-auto.mt-4.cursor-pointer") != null
+    val loadMoreButton = document.selectFirst("span.mx-auto.mt-4.cursor-pointer")
+    val hasNextPage = loadMoreButton != null
     
     // Hanya ambil qfuncId saat memproses halaman pertama (page=1)
-    if (response.request.method == "GET" && response.request.url.queryParameter("page") == null) {
-        // Cari elemen tombol "Load More"
-        val loadMoreButton = document.selectFirst("span.mx-auto.mt-4.cursor-pointer[data-qrl]")
-        if (loadMoreButton != null) {
-            val qrlAttr = loadMoreButton.attr("data-qrl")
-            // qfuncId biasanya ada setelah _#s_
-            qfuncId = qrlAttr.substringAfter("_#s_")
+    if (response.request.method == "GET" && response.request.url.queryParameter("page") == null && loadMoreButton != null) {
+        val onClickAttr = loadMoreButton.attr("on:click")
+        if (onClickAttr.isNotEmpty()) {
+            val qfuncPart = onClickAttr.substringAfter("#s_").substringBefore("[")
+            if (qfuncPart.isNotEmpty()) {
+                qfuncId = qfuncPart
+            }
         }
     }
 
