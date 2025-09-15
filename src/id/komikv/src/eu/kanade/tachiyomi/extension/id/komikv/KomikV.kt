@@ -137,44 +137,29 @@ class KomikV : ParsedHttpSource() {
     // Search
     // ---------------------------
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
-    if (page == 1) {
-        resetSeen()
-        // Tidak perlu menyimpan currentSearchQuery atau qfuncId
-    }
-    
+    if (page == 1) resetSeen()
     val encodedQuery = URLEncoder.encode(query.trim(), "UTF-8").replace("+", "%20")
-    
-    // Gunakan pola URL pencarian dengan parameter '?s=' dan '?page='
-    val url = if (page > 1) {
-        "$baseUrl/?s=$encodedQuery&page=$page"
+    val url = if (page == 1) {
+        "$baseUrl/search/$encodedQuery/"
     } else {
-        "$baseUrl/?s=$encodedQuery"
+        "$baseUrl/search/$encodedQuery/?page=$page"
     }
-
     return GET(url, headers)
 }
 
     override fun searchMangaSelector(): String = "div.grid div.overflow-hidden"
 
-    // Selector spesifik untuk tombol "Load More" (gunakan kelas yang valid dari markup)
-    override fun searchMangaNextPageSelector(): String? =
-        "span.mx-auto.mt-4.cursor-pointer"
+    override fun searchMangaNextPageSelector(): String? = null
 
-override fun searchMangaParse(response: Response): MangasPage {
+    override fun searchMangaParse(response: Response): MangasPage {
     val document = Jsoup.parse(response.body?.string().orEmpty(), baseUrl)
-
     val allResults = document.select(searchMangaSelector())
         .map { searchMangaFromElement(it) }
         .filter { it.url.isNotBlank() && it.title.isNotBlank() }
-
     val newMangas = allResults
         .distinctBy { it.url }
         .filter { seenUrls.add(it.url) }
-
-    // Jika jumlah hasil kurang dari 30 (jumlah per halaman standar),
-    // asumsikan ini adalah halaman terakhir.
-    val hasNextPage = newMangas.size >= 30 // Sesuaikan nilai 30 jika perlu
-
+    val hasNextPage = newMangas.size >= 30
     return MangasPage(newMangas, hasNextPage)
 }
 
