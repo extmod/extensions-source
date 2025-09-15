@@ -5,6 +5,7 @@ import eu.kanade.tachiyomi.multisrc.mangathemesia.MangaThemesia
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
 import eu.kanade.tachiyomi.source.ConfigurableSource
+import eu.kanade.tachiyomi.util.asJsoup
 import androidx.preference.EditTextPreference
 import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.source.model.Filter
@@ -14,7 +15,6 @@ import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import okhttp3.Headers
-import eu.kanade.tachiyomi.util.asJsoup
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -72,7 +72,6 @@ class KomikCast : MangaThemesia("Komik Cast", "https://komikcast.li", "id", "/da
     override fun searchMangaParse(response: Response): MangasPage {
         val document = response.asJsoup()
         val whitelistTitles = preferences.getString("manga_whitelist", "")?.split(",")?.map { it.trim().lowercase() }?.filter { it.isNotEmpty() } ?: emptyList()
-        val isWhitelistActive = whitelistTitles.isNotEmpty()
 
         val mangas = document.select(searchMangaSelector()).mapNotNull { element ->
             val manga = searchMangaFromElement(element)
@@ -83,16 +82,14 @@ class KomikCast : MangaThemesia("Komik Cast", "https://komikcast.li", "id", "/da
             val mangaType = typeElement?.ownText()?.lowercase() ?: ""
             val isManga = mangaType.contains("manga")
             
-            // Filter logic
+            // Filter logic: Show manhwa + manhua + whitelisted manga
             when {
-                isWhitelistActive -> {
-                    // If whitelist is active, show only whitelisted titles (any type)
-                    if (whitelistTitles.any { titleLower.contains(it) }) manga else null
-                }
-                else -> {
-                    // If whitelist is not active, show only manhwa and manhua (exclude manga)
-                    if (!isManga) manga else null
-                }
+                // Always show manhwa and manhua
+                !isManga -> manga
+                // Show manga only if it's in whitelist
+                isManga && whitelistTitles.any { titleLower.contains(it) } -> manga
+                // Hide other manga
+                else -> null
             }
         }
 
