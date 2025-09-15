@@ -14,6 +14,7 @@ import okhttp3.Response
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+import java.net.URLDecoder
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
@@ -35,9 +36,11 @@ class KomikV : ParsedHttpSource() {
 
     companion object {
         private val seenUrls = mutableSetOf<String>()
+        private var lastSearchLastUrl: String? = null
 
         fun resetSeen() {
             seenUrls.clear()
+            lastSearchLastUrl = null
         }
     }
 
@@ -116,28 +119,84 @@ class KomikV : ParsedHttpSource() {
     override fun searchMangaSelector(): String = "div.grid div.overflow-hidden"
     override fun searchMangaFromElement(element: Element): SManga = popularMangaFromElement(element)
 
-    // --- Perbaikan: buat selector next page yang lebih permisif untuk pagination pencarian ---
-    override fun searchMangaNextPageSelector(): String? = """
-        a[rel=next],
-        a[aria-label=Next],
-        .pagination a:contains(next),
-        .pagination a:contains(Lanjut),
-        .pagination a:contains(›),
-        .pagination a:contains(»)
-    """.trimIndent()
+    // Selector spesifik untuk tombol "Load More"
+    override fun searchMangaNextPageSelector(): String? =
+        "span.mx-auto.mt-4.cursor-pointer"
 
     override fun searchMangaParse(response: Response): MangasPage {
-        val document = Jsoup.parse(response.body?.string().orEmpty(), baseUrl)
-        val mangas = document.select(searchMangaSelector())
+        // Baca body terlebih dahulu
+        val body = response.body?.string().orEmpty()
+        val document = Jsoup.parse(body, baseUrl)
+
+        // Ambil semua hasil mentah
+        var rawList = document.select(searchMangaSelector())
             .map { searchMangaFromElement(it) }
-            .filter { it.url.isNotBlank() && it.title.isNotBlank() && seenUrls.add(it.url) }
+            .filter { it.url.isNotBlank() && it.title.isNotBlank() }
 
-        val hasNext = searchMangaNextPageSelector()?.let { sel ->
-            // apabila selector null -> tidak ada next
-            document.select(sel).isNotEmpty()
-        } ?: false
+        // Jika tidak ada hasil sama sekali, coba fallback ke endpoint query param (untuk multi-kata)
+        if (rawList.isEmpty()) {
+            val reqUrl = response.request.url
+            // hanya coba fallback kalau path-style search ada
+            try {
+                val pathSegments = reqUrl.encodedPathSegments
+                val idx = pathSegments.indexOf("search")
+                if (idx >= 0 && idx + 1 < pathSegments.size) {
+                    val encodedQuerySegment = pathSegments[idx + 1]
+                    val decodedQuery = URLDecoder.decode(encodedQuerySegment, "UTF-8")
+                    // bangun URL fallback: /search/?q=...  (tambahkan page jika ada)
+                    val pageParam = reqUrl.queryParameter("page")
+                    val fallbackUrl = if (pageParam != null) {
+                        "$baseUrl/search/?q=${java.net.URLEncoder.encode(decodedQuery, "UTF-8")}&page=$pageParam"
+                    } else {
+                        "$baseUrl/search/?q=${java.net.URLEncoder.encode(decodedQuery, "UTF-8")}"
+                    }
 
-        return MangasPage(mangas, hasNext)
+                    val fallbackRequest = GET(fallbackUrl, headers)
+                    val fallbackResponse = client.newCall(fallbackRequest).execute()
+                    if (fallbackResponse.isSuccessful) {
+                        val fbBody = fallbackResponse.body?.string().orEmpty()
+                        val fbDoc = Jsoup.parse(fbBody, baseUrl)
+                        rawList = fbDoc.select(searchMangaSelector())
+                            .map { searchMangaFromElement(it) }
+                            .filter { it.url.isNotBlank() && it.title.isNotBlank() }
+                    }
+                }
+            } catch (_: Exception) {
+                // gagal fallback -> lanjut dengan rawList kosong
+            }
+        }
+
+        // Dedupe per-halaman sambil pertahankan urutan
+        val dedupMap = linkedMapOf<String, SManga>()
+        for (m in rawList) {
+            if (!dedupMap.containsKey(m.url)) dedupMap[m.url] = m
+        }
+        val deduped = dedupMap.values.toList()
+
+        // Hanya ambil yang belum pernah dilihat (global)
+        val newMangas = deduped.filter { seenUrls.add(it.url) }
+
+        // Deteksi tombol "next" (Load More) secara aman:
+        val nextEl = searchMangaNextPageSelector()?.let { document.selectFirst(it) }
+        val hasNextFromSelector = nextEl != null && (
+            (nextEl.text().isNotBlank() && (
+                nextEl.text().lowercase().contains("load") ||
+                        nextEl.text().lowercase().contains("muat") ||
+                        nextEl.text().lowercase().contains("lanjut")
+                )) || nextEl.hasAttr("on:click") || nextEl.hasAttr("q:id")
+            )
+
+        // Deteksi "halaman pengulang" (server mengembalikan item yg sama lagi)
+        val repeatingPage = lastSearchLastUrl != null && deduped.isNotEmpty() &&
+                lastSearchLastUrl == deduped.last().url
+
+        // Final hasNext: butuh next element valid + ada hasil baru + bukan repeating + deduped tidak kosong
+        val hasNext = hasNextFromSelector && deduped.isNotEmpty() && newMangas.isNotEmpty() && !repeatingPage
+
+        // update penanda last item untuk pengecekan page berikutnya
+        lastSearchLastUrl = deduped.lastOrNull()?.url
+
+        return MangasPage(newMangas, hasNext)
     }
 
     // === MANGA DETAILS SECTION ===
@@ -147,7 +206,7 @@ class KomikV : ParsedHttpSource() {
             author = document.select("a[href*=\"/tax/author/\"]").joinToString(", ") { it.text().trim() }
             description = document.selectFirst(".mt-4.w-full p")?.text()?.trim().orEmpty()
             genre = (document.select(".mt-4.w-full a.text-md.mb-1").map { it.text().trim() } +
-                     document.select(".bg-red-800").map { it.text().trim() })
+                    document.select(".bg-red-800").map { it.text().trim() })
                 .joinToString(", ")
             status = parseStatus(document.selectFirst(".bg-green-800")?.text().orEmpty())
             thumbnail_url = document.selectFirst("img.neu-active")?.absUrl("src").orEmpty()
