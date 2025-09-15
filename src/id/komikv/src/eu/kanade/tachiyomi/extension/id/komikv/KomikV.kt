@@ -37,56 +37,105 @@ class KomikV : ParsedHttpSource() {
     private val dateFormat = SimpleDateFormat("dd MMM yyyy", Locale("id"))
 
     override fun searchMangaFromElement(element: Element): SManga = SManga.create().apply {
-        title = element.selectFirst("h2 a")?.text()?.trim() ?: element.text().trim()
-        url = element.selectFirst("a[href]")?.attr("href").orEmpty()
-        thumbnail_url = element.selectFirst("img")?.absUrl("data-src")?.takeIf { it.isNotEmpty() } 
-            ?: element.selectFirst("img")?.absUrl("src").orEmpty()
+        val linkElement = element.selectFirst("a[href]")
+        title = linkElement?.selectFirst("h2")?.text()?.trim() 
+            ?: element.selectFirst("h2")?.text()?.trim()
+            ?: linkElement?.text()?.trim().orEmpty()
+        url = linkElement?.attr("href").orEmpty()
+        thumbnail_url = element.selectFirst("img")?.let { img ->
+            img.absUrl("data-src").takeIf { it.isNotEmpty() } ?: img.absUrl("src")
+        }.orEmpty()
     }
 
+    // Popular
     override fun popularMangaRequest(page: Int): Request = GET("$baseUrl/popular/?page=$page", headers)
-    override fun popularMangaSelector(): String = "div.grid div.overflow-hidden"
+    override fun popularMangaSelector(): String = "div.grid > div:has(a[href*='/komik/'])"
     override fun popularMangaFromElement(element: Element): SManga = searchMangaFromElement(element)
-    override fun popularMangaNextPageSelector(): String = "a[rel=next]"
+    override fun popularMangaNextPageSelector(): String? = null
+    
+    override fun popularMangaParse(response: Response): MangasPage {
+        val document = Jsoup.parse(response.body?.string().orEmpty(), baseUrl)
+        val mangas = document.select(popularMangaSelector())
+            .map { popularMangaFromElement(it) }
+            .filter { it.url.isNotBlank() && it.title.isNotBlank() }
+        
+        val hasNext = document.selectFirst("span.cursor-pointer:contains(Load More)") != null ||
+                     document.selectFirst("[x-on\\:click*='loadMore'], [\\@click*='loadMore']") != null
+        
+        return MangasPage(mangas, hasNext)
+    }
 
+    // Latest
     override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/?page=$page&latest=1", headers)
-    override fun latestUpdatesSelector(): String = "div.grid div.flex.overflow-hidden"
+    override fun latestUpdatesSelector(): String = "div.grid > div:has(a[href*='/komik/'])"
     override fun latestUpdatesFromElement(element: Element): SManga = searchMangaFromElement(element)
-    override fun latestUpdatesNextPageSelector(): String = "a[rel=next]"
+    override fun latestUpdatesNextPageSelector(): String? = null
+    
+    override fun latestUpdatesParse(response: Response): MangasPage {
+        val document = Jsoup.parse(response.body?.string().orEmpty(), baseUrl)
+        val mangas = document.select(latestUpdatesSelector())
+            .map { latestUpdatesFromElement(it) }
+            .filter { it.url.isNotBlank() && it.title.isNotBlank() }
+        
+        val hasNext = document.selectFirst("span.cursor-pointer:contains(Load More)") != null ||
+                     document.selectFirst("[x-on\\:click*='loadMore'], [\\@click*='loadMore']") != null
+        
+        return MangasPage(mangas, hasNext)
+    }
 
+    // Search
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
         val encodedQuery = URLEncoder.encode(query, "UTF-8")
         return GET("$baseUrl/search/$encodedQuery/?page=$page", headers)
     }
-    override fun searchMangaSelector(): String = "div.grid div.overflow-hidden"
-    override fun searchMangaNextPageSelector(): String = "a[rel=next]"
-
-    override fun mangaDetailsParse(document: Document): SManga = SManga.create().apply {
-        title = document.selectFirst("h1.text-xl")?.text()?.trim().orEmpty()
-        author = document.select("a[href*=\"/tax/author/\"]").joinToString(", ") { it.text().trim() }
-        description = document.selectFirst(".mt-4.w-full p")?.text()?.trim().orEmpty()
-        genre = document.select(".mt-4.w-full a.text-md.mb-1").joinToString(", ") { it.text().trim() }
-        status = when {
-            document.selectFirst(".bg-green-800")?.text()?.contains("on-going", true) == true -> SManga.ONGOING
-            document.selectFirst(".bg-green-800")?.text()?.contains("complete", true) == true -> SManga.COMPLETED
-            else -> SManga.UNKNOWN
-        }
-        thumbnail_url = document.selectFirst("img.neu-active")?.absUrl("src").orEmpty()
+    override fun searchMangaSelector(): String = "div.grid > div:has(a[href*='/komik/'])"
+    override fun searchMangaNextPageSelector(): String? = null
+    
+    override fun searchMangaParse(response: Response): MangasPage {
+        val document = Jsoup.parse(response.body?.string().orEmpty(), baseUrl)
+        val mangas = document.select(searchMangaSelector())
+            .map { searchMangaFromElement(it) }
+            .filter { it.url.isNotBlank() && it.title.isNotBlank() }
+        
+        val hasNext = document.selectFirst("span.cursor-pointer:contains(Load More)") != null ||
+                     document.selectFirst("[x-on\\:click*='loadMore'], [\\@click*='loadMore']") != null
+        
+        return MangasPage(mangas, hasNext)
     }
 
-    override fun chapterListSelector() = "div.mt-4.flex.max-h-96.flex-col > a"
+    override fun mangaDetailsParse(document: Document): SManga = SManga.create().apply {
+        title = document.selectFirst("h1")?.text()?.trim().orEmpty()
+        author = document.select("a[href*='/tax/author/']").joinToString(", ") { it.text().trim() }
+        description = document.selectFirst("div.mt-4 p, .description p")?.text()?.trim().orEmpty()
+        genre = document.select("a[href*='/tax/'], .genre a").joinToString(", ") { it.text().trim() }
+        status = document.selectFirst(".status, .bg-green-800")?.text()?.let { statusText ->
+            when {
+                statusText.contains("ongoing", true) || statusText.contains("berlangsung", true) -> SManga.ONGOING
+                statusText.contains("complete", true) || statusText.contains("tamat", true) -> SManga.COMPLETED
+                else -> SManga.UNKNOWN
+            }
+        } ?: SManga.UNKNOWN
+        thumbnail_url = document.selectFirst("img.cover, img.thumbnail, .poster img")?.absUrl("src").orEmpty()
+    }
+
+    override fun chapterListSelector() = "a[href*='/chapter/'], div.chapter a"
 
     override fun chapterFromElement(element: Element): SChapter = SChapter.create().apply {
         setUrlWithoutDomain(element.attr("href"))
-        name = element.selectFirst("p")?.text()?.trim() ?: element.text().trim()
+        name = element.selectFirst("span.title, .chapter-title")?.text()?.trim() 
+            ?: element.text().trim()
         
-        val dateText = element.selectFirst("p.text-xs")?.text()?.trim().orEmpty()
+        val dateText = element.selectFirst("span.date, .chapter-date, span.text-xs")?.text()?.trim().orEmpty()
         date_upload = parseChapterDate(dateText)
         
-        val numberMatch = Regex("""(\d+(?:[.,]\d+)?)""").find(name)
-        chapter_number = numberMatch?.value?.replace(",", ".")?.toFloatOrNull() ?: 0f
+        val numberMatch = Regex("""chapter\s*(\d+(?:[.,]\d+)?)""", RegexOption.IGNORE_CASE).find(name)
+            ?: Regex("""(\d+(?:[.,]\d+)?)""").find(name)
+        chapter_number = numberMatch?.groupValues?.get(1)?.replace(",", ".")?.toFloatOrNull() ?: 0f
     }
 
     private fun parseChapterDate(date: String): Long {
+        if (date.isBlank()) return 0L
+        
         val match = Regex("""(\d+)\s*(detik|menit|jam|hari|minggu|bulan|tahun)""", RegexOption.IGNORE_CASE)
             .find(date.lowercase())
         
@@ -103,7 +152,11 @@ class KomikV : ParsedHttpSource() {
                 "tahun" -> cal.add(Calendar.YEAR, -value)
             }
             cal.timeInMillis
-        } ?: try { dateFormat.parse(date)?.time ?: 0L } catch (_: Exception) { 0L }
+        } ?: try { 
+            dateFormat.parse(date)?.time ?: 0L 
+        } catch (_: Exception) { 
+            0L 
+        }
     }
 
     override fun chapterListParse(response: Response): List<SChapter> {
@@ -115,7 +168,7 @@ class KomikV : ParsedHttpSource() {
     }
 
     override fun pageListParse(document: Document): List<Page> {
-        return document.select("img[src*='.jpg'], img[src*='.png'], img[src*='.webp']")
+        return document.select("img[src*='.jpg'], img[src*='.png'], img[src*='.webp'], .page-image img")
             .mapIndexed { index, img -> Page(index, "", img.absUrl("src")) }
             .filter { it.imageUrl?.isNotEmpty() == true }
     }
