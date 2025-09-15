@@ -56,6 +56,9 @@ class KomikCast : MangaThemesia("Komik Cast", "https://komikcast.li", "id", "/da
 
     override fun popularMangaRequest(page: Int) = customPageRequest(page, "orderby", "popular")
     override fun latestUpdatesRequest(page: Int) = customPageRequest(page, "sortby", "update")
+    
+    override fun popularMangaParse(response: Response): MangasPage = searchMangaParse(response)
+    override fun latestUpdatesParse(response: Response): MangasPage = searchMangaParse(response)
 
     private fun customPageRequest(page: Int, filterKey: String, filterValue: String): Request {
         val pagePath = if (page > 1) "page/$page/" else ""
@@ -66,22 +69,34 @@ class KomikCast : MangaThemesia("Komik Cast", "https://komikcast.li", "id", "/da
     override fun searchMangaSelector() = "div.list-update_item"
 
     override fun searchMangaParse(response: Response): MangasPage {
+        val document = response.asJsoup()
         val whitelistTitles = preferences.getString("manga_whitelist", "")?.split(",")?.map { it.trim().lowercase() }?.filter { it.isNotEmpty() } ?: emptyList()
         val isWhitelistActive = whitelistTitles.isNotEmpty()
 
-        val originalPage = super.searchMangaParse(response)
-        val filteredMangas = originalPage.mangas.filter { manga ->
-            if (isWhitelistActive) {
-                val titleLower = manga.title.lowercase()
-                // Note: We can't access element here as it's not available in SManga
-                // You might need to implement custom filtering logic based on available SManga properties
-                whitelistTitles.any { titleLower.contains(it) }
-            } else {
-                true // Show all if whitelist is not active
+        val mangas = document.select(searchMangaSelector()).mapNotNull { element ->
+            val manga = searchMangaFromElement(element)
+            val titleLower = manga.title.lowercase()
+            
+            // Get type from element
+            val typeElement = element.selectFirst("span.type")
+            val mangaType = typeElement?.ownText()?.lowercase() ?: ""
+            val isManga = mangaType.contains("manga")
+            
+            // Filter logic
+            when {
+                isWhitelistActive -> {
+                    // If whitelist is active, show only whitelisted titles (any type)
+                    if (whitelistTitles.any { titleLower.contains(it) }) manga else null
+                }
+                else -> {
+                    // If whitelist is not active, show only manhwa and manhua (exclude manga)
+                    if (!isManga) manga else null
+                }
             }
         }
 
-        return MangasPage(filteredMangas, originalPage.hasNextPage)
+        val hasNextPage = document.selectFirst(searchMangaNextPageSelector()) != null
+        return MangasPage(mangas, hasNextPage)
     }
 
     override fun searchMangaFromElement(element: Element) = super.searchMangaFromElement(element).apply {
