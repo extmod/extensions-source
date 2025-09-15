@@ -24,52 +24,51 @@ class KomikIndoID : ParsedHttpSource() {
     override val client: OkHttpClient = network.cloudflareClient
     private val dateFormat: SimpleDateFormat = SimpleDateFormat("MMM d, yyyy", Locale.US)
 
-    // similar/modified theme of "https://bacakomik.my"
+    // Parse from home page instead of daftar-manga
     override fun popularMangaRequest(page: Int): Request {
-        val url = if (page == 1) {
-            "$baseUrl/daftar-manga/?order=popular"
-        } else {
-            "$baseUrl/daftar-manga/page/$page/?order=popular"
-        }
-        return GET(url, headers)
+        return GET("$baseUrl/?page=$page", headers)
     }
 
     override fun latestUpdatesRequest(page: Int): Request {
-        val url = if (page == 1) {
-            "$baseUrl/daftar-manga/?order=update"
-        } else {
-            "$baseUrl/daftar-manga/page/$page/?order=update"
-        }
-        return GET(url, headers)
+        return GET("$baseUrl/?page=$page", headers)
     }
 
-    override fun popularMangaSelector() = "div.animepost"
+    override fun popularMangaSelector() = "div.grid.grid-cols-1 > div.flex.overflow-hidden"
     override fun latestUpdatesSelector() = popularMangaSelector()
     override fun searchMangaSelector() = popularMangaSelector()
 
     override fun popularMangaFromElement(element: Element): SManga = searchMangaFromElement(element)
     override fun latestUpdatesFromElement(element: Element): SManga = searchMangaFromElement(element)
 
-    override fun popularMangaNextPageSelector() = "#load-more-manga"
+    override fun popularMangaNextPageSelector() = "span:contains(Load More)"
     override fun latestUpdatesNextPageSelector() = popularMangaNextPageSelector()
     override fun searchMangaNextPageSelector() = popularMangaNextPageSelector()
 
     override fun searchMangaFromElement(element: Element): SManga {
         val manga = SManga.create()
-        manga.thumbnail_url = element.select("div.limit img").attr("abs:src")
-        manga.title = element.select("div.tt h4").text()
-        element.select("div.animposx > a").first()!!.let {
-            manga.setUrlWithoutDomain(it.attr("href"))
+        
+        // Get thumbnail from img element with data-src
+        val imgElement = element.select("img.lazyimage").first()
+        manga.thumbnail_url = imgElement?.attr("abs:data-src") ?: imgElement?.attr("abs:src") ?: ""
+        
+        // Get title from h2 element or link text
+        val titleElement = element.select("h2").first() ?: element.select("a").first()
+        manga.title = titleElement?.text()?.trim() ?: ""
+        
+        // Get URL from the manga link
+        val linkElement = element.select("a[href*='/manga/']").first()
+        if (linkElement != null) {
+            manga.setUrlWithoutDomain(linkElement.attr("href"))
         }
+        
         return manga
     }
 
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
-        val pageParam = if (page == 1) "" else "page/$page/"
-        val url = "$baseUrl/daftar-manga/$pageParam".toHttpUrl().newBuilder()
-        
-        if (query.isNotEmpty()) {
-            url.addQueryParameter("title", query)
+        val url = if (query.isNotEmpty()) {
+            "$baseUrl/search?q=${query}&page=$page".toHttpUrl().newBuilder()
+        } else {
+            "$baseUrl/?page=$page".toHttpUrl().newBuilder()
         }
         
         filters.forEach { filter ->
@@ -81,58 +80,16 @@ class KomikIndoID : ParsedHttpSource() {
                 }
                 is YearFilter -> {
                     if (filter.state.isNotEmpty()) {
-                        url.addQueryParameter("yearx", filter.state)
+                        url.addQueryParameter("year", filter.state)
                     }
                 }
                 is SortFilter -> {
-                    url.addQueryParameter("order", filter.toUriPart())
-                }
-                is OriginalLanguageFilter -> {
-                    filter.state.forEach { lang ->
-                        if (lang.state) {
-                            url.addQueryParameter("type[]", lang.id)
-                        }
-                    }
-                }
-                is FormatFilter -> {
-                    filter.state.forEach { format ->
-                        if (format.state) {
-                            url.addQueryParameter("format[]", format.id)
-                        }
-                    }
-                }
-                is DemographicFilter -> {
-                    filter.state.forEach { demographic ->
-                        if (demographic.state) {
-                            url.addQueryParameter("demografis[]", demographic.id)
-                        }
-                    }
-                }
-                is StatusFilter -> {
-                    filter.state.forEach { status ->
-                        if (status.state) {
-                            url.addQueryParameter("status[]", status.id)
-                        }
-                    }
-                }
-                is ContentRatingFilter -> {
-                    filter.state.forEach { rating ->
-                        if (rating.state) {
-                            url.addQueryParameter("konten[]", rating.id)
-                        }
-                    }
-                }
-                is ThemeFilter -> {
-                    filter.state.forEach { theme ->
-                        if (theme.state) {
-                            url.addQueryParameter("tema[]", theme.id)
-                        }
-                    }
+                    url.addQueryParameter("sort", filter.toUriPart())
                 }
                 is GenreFilter -> {
                     filter.state.forEach { genre ->
                         if (genre.state) {
-                            url.addQueryParameter("genre[]", genre.id)
+                            url.addQueryParameter("genre", genre.id)
                         }
                     }
                 }
@@ -291,16 +248,10 @@ class KomikIndoID : ParsedHttpSource() {
 
     override fun getFilterList() = FilterList(
         SortFilter(),
-        Filter.Header("NOTE: Ignored if using text search!"),
+        Filter.Header("Search filters may not work properly with home page parsing"),
         AuthorFilter(),
         YearFilter(),
         Filter.Separator(),
-        OriginalLanguageFilter(getOriginalLanguage()),
-        FormatFilter(getFormat()),
-        DemographicFilter(getDemographic()),
-        StatusFilter(getStatus()),
-        ContentRatingFilter(getContentRating()),
-        ThemeFilter(getTheme()),
         GenreFilter(getGenre()),
     )
 
