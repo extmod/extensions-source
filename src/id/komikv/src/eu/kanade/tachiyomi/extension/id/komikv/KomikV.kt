@@ -1,8 +1,6 @@
 package eu.kanade.tachiyomi.extension.id.komikv
 
 import eu.kanade.tachiyomi.network.GET
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.RequestBody.Companion.toRequestBody
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
@@ -16,7 +14,6 @@ import okhttp3.Response
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
-import java.net.URLDecoder
 import java.net.URLEncoder
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -39,17 +36,11 @@ class KomikV : ParsedHttpSource() {
 
     companion object {
         private val seenUrls = mutableSetOf<String>()
-        private var lastSearchLastUrl: String? = null
 
         fun resetSeen() {
             seenUrls.clear()
-            lastSearchLastUrl = null
         }
     }
-
-    // Flag internal untuk menangani paging search
-    private var searchFinished: Boolean = false
-    private var currentSearchQuery: String? = null
 
     // dateFormat untuk parsing tanggal absolut (sesuaikan pattern & locale bila perlu)
     private val dateFormat = SimpleDateFormat("dd MMM yyyy", Locale("id"))
@@ -136,46 +127,24 @@ class KomikV : ParsedHttpSource() {
     // ---------------------------
     // Search
     // ---------------------------
-    override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
-    if (page == 1) {
-        resetSeen()
-        // Tidak perlu menyimpan currentSearchQuery atau qfuncId
-    }
-    
-    val encodedQuery = URLEncoder.encode(query.trim(), "UTF-8").replace("+", "%20")
-    
-    // Gunakan pola URL pencarian dengan parameter '?s=' dan '?page='
-    val url = if (page > 1) {
-        "$baseUrl/?s=$encodedQuery&page=$page"
-    } else {
-        "$baseUrl/?s=$encodedQuery"
-    }
-
+override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
+    if (page <= 1) resetSeen()
+    val encodedQuery = URLEncoder.encode(query, "UTF-8")
+    val url = "$baseUrl/search/?s=$encodedQuery&page=$page"
     return GET(url, headers)
 }
 
     override fun searchMangaSelector(): String = "div.grid div.overflow-hidden"
 
-    // Selector spesifik untuk tombol "Load More" (gunakan kelas yang valid dari markup)
-    override fun searchMangaNextPageSelector(): String? =
-        "span.mx-auto.mt-4.cursor-pointer"
+    override fun searchMangaNextPageSelector(): String? = null
 
 override fun searchMangaParse(response: Response): MangasPage {
     val document = Jsoup.parse(response.body?.string().orEmpty(), baseUrl)
-
-    val allResults = document.select(searchMangaSelector())
+    val mangas = document.select(searchMangaSelector())
         .map { searchMangaFromElement(it) }
-        .filter { it.url.isNotBlank() && it.title.isNotBlank() }
+        .filter { it.url.isNotBlank() && it.title.isNotBlank() && seenUrls.add(it.url) }
 
-    val newMangas = allResults
-        .distinctBy { it.url }
-        .filter { seenUrls.add(it.url) }
-
-    // Jika jumlah hasil kurang dari 30 (jumlah per halaman standar),
-    // asumsikan ini adalah halaman terakhir.
-    val hasNextPage = newMangas.size >= 30 // Sesuaikan nilai 30 jika perlu
-
-    return MangasPage(newMangas, hasNextPage)
+    return MangasPage(mangas, true)
 }
 
     // ---------------------------
