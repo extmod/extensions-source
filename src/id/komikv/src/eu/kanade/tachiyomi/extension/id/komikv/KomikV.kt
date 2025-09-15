@@ -150,58 +150,37 @@ class KomikV : ParsedHttpSource() {
 
     override fun searchMangaParse(response: Response): MangasPage {
     val document = Jsoup.parse(response.body?.string().orEmpty(), baseUrl)
-
-    // Ambil semua hasil dari halaman ini
-    val rawList = document.select(searchMangaSelector())
+    
+    // Ambil query pencarian dari URL
+    val searchQuery = response.request.url.queryParameter("q")?.lowercase()?.trim()
+    
+    // Ambil semua hasil dari halaman
+    val allResults = document.select(searchMangaSelector())
         .map { searchMangaFromElement(it) }
         .filter { it.url.isNotBlank() && it.title.isNotBlank() }
-
-    // Jika tidak ada hasil sama sekali, page sudah habis
-    if (rawList.isEmpty()) {
+    
+    // Jika tidak ada hasil sama sekali, page habis
+    if (allResults.isEmpty()) {
         return MangasPage(emptyList(), false)
     }
-
-    // Dedupe per-halaman sambil pertahankan urutan
-    val dedupMap = linkedMapOf<String, SManga>()
-    for (manga in rawList) {
-        if (!dedupMap.containsKey(manga.url)) {
-            dedupMap[manga.url] = manga
+    
+    // Filter hanya yang judulnya mengandung kata kunci pencarian
+    val filteredResults = if (searchQuery.isNullOrBlank()) {
+        allResults
+    } else {
+        allResults.filter { manga ->
+            manga.title.lowercase().contains(searchQuery)
         }
     }
-    val deduped = dedupMap.values.toList()
-
-    // Jika setelah dedup jadi kosong, berarti semua duplikat
-    if (deduped.isEmpty()) {
-        return MangasPage(emptyList(), false)
-    }
-
-    // Hanya ambil yang belum pernah dilihat (global)
-    val newMangas = deduped.filter { seenUrls.add(it.url) }
-
-    // Jika tidak ada manga baru, berarti sudah mencapai akhir
-    if (newMangas.isEmpty()) {
-        return MangasPage(emptyList(), false)
-    }
-
-    // Deteksi halaman pengulang (server mengembalikan item yang sama lagi)
-    val repeatingPage = lastSearchLastUrl != null && 
-                       lastSearchLastUrl == deduped.last().url
-
-    // Cek apakah ada tombol next yang valid
-    val hasNextButton = searchMangaNextPageSelector()?.let { selector ->
-        document.selectFirst(selector)?.let { nextEl ->
-            !nextEl.hasClass("disabled") && 
-            !nextEl.hasClass("inactive") && 
-            !nextEl.hasAttr("disabled")
-        }
-    } ?: false
-
-    // Page masih ada lanjutan jika: ada tombol next dan bukan halaman pengulang
-    val hasNext = hasNextButton && !repeatingPage
-
-    // Update penanda untuk pengecekan page berikutnya
-    lastSearchLastUrl = deduped.lastOrNull()?.url
-
+    
+    // Hapus duplikat dan yang sudah pernah dilihat
+    val newMangas = filteredResults
+        .distinctBy { it.url }
+        .filter { seenUrls.add(it.url) }
+    
+    // Jika tidak ada manga baru yang sesuai, page habis
+    val hasNext = newMangas.isNotEmpty()
+    
     return MangasPage(newMangas, hasNext)
 }
 
