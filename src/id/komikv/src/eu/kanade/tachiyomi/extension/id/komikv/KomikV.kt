@@ -45,6 +45,10 @@ class KomikV : ParsedHttpSource() {
         }
     }
 
+    // Flag internal untuk menangani paging search
+    private var searchFinished: Boolean = false
+    private var currentSearchQuery: String? = null
+
     // dateFormat untuk parsing tanggal absolut (sesuaikan pattern & locale bila perlu)
     private val dateFormat = SimpleDateFormat("dd MMM yyyy", Locale("id"))
 
@@ -131,30 +135,30 @@ class KomikV : ParsedHttpSource() {
     // Search
     // ---------------------------
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
-    if (page <= 1) {
-        resetSeen()
-        searchFinished = false // Reset untuk query baru
-        currentSearchQuery = query
+        if (page <= 1) {
+            resetSeen()
+            searchFinished = false // Reset untuk query baru
+            currentSearchQuery = query
+        }
+
+        // Cek apakah search sudah selesai untuk query ini
+        if (page > 1 && searchFinished) {
+            return GET("about:blank", headers) // Return empty request jika sudah selesai
+        }
+
+        // Untuk multi-kata, ganti spasi dengan + atau %20
+        val processedQuery = query.trim().replace("\\s+".toRegex(), "+")
+        val encodedQuery = URLEncoder.encode(processedQuery, "UTF-8")
+            .replace("+", "%20") // Beberapa site lebih suka %20
+
+        val url = if (page > 1) {
+            "$baseUrl/search/$encodedQuery/page/$page/"
+        } else {
+            "$baseUrl/search/$encodedQuery/"
+        }
+
+        return GET(url, headers)
     }
-    
-    // Cek apakah search sudah selesai untuk query ini
-    if (page > 1 && searchFinished) {
-        return GET("about:blank", headers) // Return empty request jika sudah selesai
-    }
-    
-    // Untuk multi-kata, ganti spasi dengan + atau %20
-    val processedQuery = query.trim().replace("\\s+".toRegex(), "+")
-    val encodedQuery = URLEncoder.encode(processedQuery, "UTF-8")
-        .replace("+", "%20") // Beberapa site lebih suka %20
-    
-    val url = if (page > 1) {
-        "$baseUrl/search/$encodedQuery/page/$page/"
-    } else {
-        "$baseUrl/search/$encodedQuery/"
-    }
-    
-    return GET(url, headers)
-}
 
     override fun searchMangaSelector(): String = "div.grid div.overflow-hidden"
 
@@ -163,66 +167,67 @@ class KomikV : ParsedHttpSource() {
         "span.mx-auto.mt-4.cursor-pointer"
 
     override fun searchMangaParse(response: Response): MangasPage {
-    // Jika request kosong (about:blank), return empty tanpa error
-    if (response.request.url.toString().contains("about:blank")) {
-        return MangasPage(emptyList(), false)
-    }
-    
-    val document = Jsoup.parse(response.body?.string().orEmpty(), baseUrl)
-    
-    // Ambil query pencarian dari URL path
-    val urlPath = response.request.url.encodedPath
-    val searchQuery = urlPath.removePrefix("/search/")
-        .removeSuffix("/")
-        .let { URLDecoder.decode(it, "UTF-8") }
-        .lowercase()
-        .trim()
-    
-    // Ambil semua hasil dari halaman
-    val allResults = document.select(searchMangaSelector())
-        .map { searchMangaFromElement(it) }
-        .filter { it.url.isNotBlank() && it.title.isNotBlank() }
-    
-    // Jika tidak ada hasil sama sekali, selesai
-    if (allResults.isEmpty()) {
-        return MangasPage(emptyList(), false)
-    }
-    
-    // Filter berdasarkan title yang mengandung kata kunci pencarian
-    val filteredResults = if (searchQuery.isBlank()) {
-        allResults
-    } else {
-        allResults.filter { manga ->
-            val title = manga.title.lowercase()
-            // Cek apakah semua kata dalam query ada di title
-            searchQuery.split("\\s+".toRegex()).all { word ->
-                title.contains(word)
+        // Jika request kosong (about:blank), return empty tanpa error
+        if (response.request.url.toString().contains("about:blank")) {
+            return MangasPage(emptyList(), false)
+        }
+
+        val document = Jsoup.parse(response.body?.string().orEmpty(), baseUrl)
+
+        // Ambil query pencarian dari URL path
+        val urlPath = response.request.url.encodedPath
+        val searchQuery = urlPath.removePrefix("/search/")
+            .removeSuffix("/")
+            .let { URLDecoder.decode(it, "UTF-8") }
+            .lowercase()
+            .trim()
+
+        // Ambil semua hasil dari halaman
+        val allResults = document.select(searchMangaSelector())
+            .map { searchMangaFromElement(it) }
+            .filter { it.url.isNotBlank() && it.title.isNotBlank() }
+
+        // Jika tidak ada hasil sama sekali, selesai
+        if (allResults.isEmpty()) {
+            searchFinished = true
+            return MangasPage(emptyList(), false)
+        }
+
+        // Filter berdasarkan title yang mengandung kata kunci pencarian
+        val filteredResults = if (searchQuery.isBlank()) {
+            allResults
+        } else {
+            allResults.filter { manga ->
+                val title = manga.title.lowercase()
+                // Cek apakah semua kata dalam query ada di title
+                searchQuery.split("\\s+".toRegex()).all { word ->
+                    title.contains(word)
+                }
             }
         }
+
+        // Hapus duplikat dan yang sudah pernah dilihat
+        val newMangas = filteredResults
+            .distinctBy { it.url }
+            .filter { seenUrls.add(it.url) }
+
+        // Deteksi apakah ada tombol next atau indikator halaman berikutnya
+        val hasNextButton = searchMangaNextPageSelector()?.let { selector ->
+            document.selectFirst(selector) != null
+        } ?: false
+
+        // Atau cek berdasarkan jumlah hasil (biasanya halaman penuh = ada lanjutan)
+        val fullPageResults = newMangas.size >= 20 // Sesuaikan dengan jumlah per halaman
+
+        val hasNext = hasNextButton || fullPageResults
+
+        // Set flag jika tidak ada lanjutan
+        if (!hasNext) {
+            searchFinished = true
+        }
+
+        return MangasPage(newMangas, hasNext)
     }
-    
-    // Hapus duplikat dan yang sudah pernah dilihat
-    val newMangas = filteredResults
-        .distinctBy { it.url }
-        .filter { seenUrls.add(it.url) }
-    
-    // Deteksi apakah ada tombol next atau indikator halaman berikutnya
-    val hasNextButton = searchMangaNextPageSelector()?.let { selector ->
-        document.selectFirst(selector) != null
-    } ?: false
-    
-    // Atau cek berdasarkan jumlah hasil (biasanya halaman penuh = ada lanjutan)
-    val fullPageResults = newMangas.size >= 20 // Sesuaikan dengan jumlah per halaman
-    
-    val hasNext = hasNextButton || fullPageResults
-    
-    // Set flag jika tidak ada lanjutan
-    if (!hasNext) {
-        searchFinished = true
-    }
-    
-    return MangasPage(newMangas, hasNext)
-}
 
     // ---------------------------
     // Manga details / chapters / pages (tetap seperti sebelumnya)
