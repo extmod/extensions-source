@@ -136,37 +136,22 @@ class KomikV : ParsedHttpSource() {
     // ---------------------------
     // Search
     // ---------------------------
-    private var qfuncId: String? = null // Simpan qfunc yang ditemukan
-
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
     if (page == 1) {
         resetSeen()
-        currentSearchQuery = query
-        qfuncId = null
+        // Tidak perlu menyimpan currentSearchQuery atau qfuncId
+    }
+    
+    val encodedQuery = URLEncoder.encode(query.trim(), "UTF-8").replace("+", "%20")
+    
+    // Gunakan pola URL pencarian dengan parameter '?s=' dan '?page='
+    val url = if (page > 1) {
+        "$baseUrl/?s=$encodedQuery&page=$page"
+    } else {
+        "$baseUrl/?s=$encodedQuery"
     }
 
-    val words = currentSearchQuery?.trim()?.split("\\s+".toRegex()) ?: listOf("")
-    val firstWord = words.first()
-    val encodedFirstWord = URLEncoder.encode(firstWord, "UTF-8").replace("+", "%20")
-    
-    // Permintaan GET untuk halaman pertama
-    if (page == 1) {
-        return GET("$baseUrl/search/$encodedFirstWord", headers)
-    }
-
-    // Permintaan POST untuk halaman berikutnya
-    val qfunc = qfuncId ?: return GET("about:blank", headers)
-    
-    val payload = "{\"_entry\":\"2\",\"_objs\":[\"\\u0002_#s_$qfunc\",$page,[\"0\",\"${page - 1}\"]]}"
-    val requestBody = payload.toRequestBody("application/qwik-json".toMediaType())
-    
-    val requestUrl = "$baseUrl/search/$encodedFirstWord?qfunc=$qfunc"
-
-    return Request.Builder()
-        .url(requestUrl)
-        .headers(headers)
-        .post(requestBody)
-        .build()
+    return GET(url, headers)
 }
 
     override fun searchMangaSelector(): String = "div.grid div.overflow-hidden"
@@ -175,15 +160,9 @@ class KomikV : ParsedHttpSource() {
     override fun searchMangaNextPageSelector(): String? =
         "span.mx-auto.mt-4.cursor-pointer"
 
-    // ... (import dan deklarasi lainnya) ...
-
 override fun searchMangaParse(response: Response): MangasPage {
-    if (response.request.url.toString().contains("about:blank")) {
-        return MangasPage(emptyList(), false)
-    }
-
     val document = Jsoup.parse(response.body?.string().orEmpty(), baseUrl)
-    
+
     val allResults = document.select(searchMangaSelector())
         .map { searchMangaFromElement(it) }
         .filter { it.url.isNotBlank() && it.title.isNotBlank() }
@@ -192,19 +171,9 @@ override fun searchMangaParse(response: Response): MangasPage {
         .distinctBy { it.url }
         .filter { seenUrls.add(it.url) }
 
-    val loadMoreButton = document.selectFirst("span.mx-auto.mt-4.cursor-pointer")
-    val hasNextPage = loadMoreButton != null
-    
-    // Hanya ambil qfuncId saat memproses halaman pertama (page=1)
-    if (response.request.method == "GET" && response.request.url.queryParameter("page") == null && loadMoreButton != null) {
-        val onClickAttr = loadMoreButton.attr("on:click")
-        if (onClickAttr.isNotEmpty()) {
-            val qfuncPart = onClickAttr.substringAfter("#s_").substringBefore("[")
-            if (qfuncPart.isNotEmpty()) {
-                qfuncId = qfuncPart
-            }
-        }
-    }
+    // Jika jumlah hasil kurang dari 30 (jumlah per halaman standar),
+    // asumsikan ini adalah halaman terakhir.
+    val hasNextPage = newMangas.size >= 30 // Sesuaikan nilai 30 jika perlu
 
     return MangasPage(newMangas, hasNextPage)
 }
