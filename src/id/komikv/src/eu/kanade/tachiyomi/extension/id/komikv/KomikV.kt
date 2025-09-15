@@ -131,11 +131,15 @@ class KomikV : ParsedHttpSource() {
     // Search
     // ---------------------------
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
-    if (page <= 1) resetSeen()
+    if (page <= 1) {
+        resetSeen()
+        searchFinished = false // Reset untuk query baru
+        currentSearchQuery = query
+    }
     
-    // Jika page > 1, kemungkinan tidak ada pagination, jadi return request kosong
-    if (page > 1) {
-        return GET("about:blank", headers) // Return empty request
+    // Cek apakah search sudah selesai untuk query ini
+    if (page > 1 && searchFinished) {
+        return GET("about:blank", headers) // Return empty request jika sudah selesai
     }
     
     // Untuk multi-kata, ganti spasi dengan + atau %20
@@ -143,7 +147,11 @@ class KomikV : ParsedHttpSource() {
     val encodedQuery = URLEncoder.encode(processedQuery, "UTF-8")
         .replace("+", "%20") // Beberapa site lebih suka %20
     
-    val url = "$baseUrl/search/$encodedQuery/"
+    val url = if (page > 1) {
+        "$baseUrl/search/$encodedQuery/page/$page/"
+    } else {
+        "$baseUrl/search/$encodedQuery/"
+    }
     
     return GET(url, headers)
 }
@@ -198,8 +206,22 @@ class KomikV : ParsedHttpSource() {
         .distinctBy { it.url }
         .filter { seenUrls.add(it.url) }
     
-    // Karena tidak ada pagination, selalu return hasNext = false
-    return MangasPage(newMangas, false)
+    // Deteksi apakah ada tombol next atau indikator halaman berikutnya
+    val hasNextButton = searchMangaNextPageSelector()?.let { selector ->
+        document.selectFirst(selector) != null
+    } ?: false
+    
+    // Atau cek berdasarkan jumlah hasil (biasanya halaman penuh = ada lanjutan)
+    val fullPageResults = newMangas.size >= 20 // Sesuaikan dengan jumlah per halaman
+    
+    val hasNext = hasNextButton || fullPageResults
+    
+    // Set flag jika tidak ada lanjutan
+    if (!hasNext) {
+        searchFinished = true
+    }
+    
+    return MangasPage(newMangas, hasNext)
 }
 
     // ---------------------------
