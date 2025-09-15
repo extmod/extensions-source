@@ -1,6 +1,8 @@
 package eu.kanade.tachiyomi.extension.id.komikv
 
 import eu.kanade.tachiyomi.network.GET
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
@@ -135,29 +137,44 @@ class KomikV : ParsedHttpSource() {
     // Search
     // ---------------------------
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
-    // Memecah query menjadi kata-kata
     val words = query.trim().split("\\s+".toRegex())
-    
+
     if (page <= 1) {
         resetSeen()
         searchFinished = false
-        currentSearchQuery = query // Simpan query asli untuk filtering nanti
+        currentSearchQuery = query
     }
 
-    // Jika sudah selesai atau tidak ada kata, hentikan permintaan
     if (page > 1 && searchFinished || words.isEmpty()) {
         return GET("about:blank", headers)
     }
 
-    // Gunakan hanya kata pertama untuk permintaan awal
     val firstWord = words.first()
     val encodedFirstWord = URLEncoder.encode(firstWord, "UTF-8")
         .replace("+", "%20")
 
-    // Gunakan format URL yang benar
-    val url = "$baseUrl/search/$encodedFirstWord?page=$page"
+    // URL yang benar untuk pencarian
+    val url = "$baseUrl/search/$encodedFirstWord"
 
-    return GET(url, headers)
+    // Jika ini halaman pertama, gunakan GET seperti biasa
+    if (page == 1) {
+        return GET(url, headers)
+    }
+
+    // Jika halaman berikutnya, kita perlu kirim POST
+    // Kita membutuhkan data dari halaman pertama untuk memicu POST yang benar
+    val qfuncId = "HbSA6nELNQs" // Ambil dari hasil inspeksi DevTools
+
+    val requestBody = "{\"_entry\":\"2\",\"_objs\":[\"\\u0002_#s_$qfuncId\",2,[\"0\",\"${page - 1}\"]]}"
+        .toRequestBody("application/qwik-json".toMediaType())
+
+    val requestUrl = "$baseUrl/search/$encodedFirstWord/?qfunc=$qfuncId"
+
+    return Request.Builder()
+        .url(requestUrl)
+        .headers(headers)
+        .post(requestBody)
+        .build()
 }
 
     override fun searchMangaSelector(): String = "div.grid div.overflow-hidden"
@@ -165,6 +182,9 @@ class KomikV : ParsedHttpSource() {
     // Selector spesifik untuk tombol "Load More" (gunakan kelas yang valid dari markup)
     override fun searchMangaNextPageSelector(): String? =
         "span.mx-auto.mt-4.cursor-pointer"
+
+    // Perlu menyimpan qfunc yang ditemukan
+    private var qfuncId: String? = null
 
     override fun searchMangaParse(response: Response): MangasPage {
     if (response.request.url.toString().contains("about:blank")) {
@@ -177,30 +197,20 @@ class KomikV : ParsedHttpSource() {
         .map { searchMangaFromElement(it) }
         .filter { it.url.isNotBlank() && it.title.isNotBlank() }
 
-    // Jika ini bukan halaman pertama, atau jika query hanya satu kata,
-    // tidak perlu filtering tambahan.
-    val filteredResults = if (response.request.url.queryParameter("page") == null && currentSearchQuery != null) {
-        val queryWords = currentSearchQuery!!.trim().split("\\s+".toRegex()).map { it.lowercase() }
-        
-        allResults.filter { manga ->
-            // Pastikan semua kata kunci ada di judul
-            queryWords.all { word ->
-                manga.title.lowercase().contains(word)
-            }
-        }
-    } else {
-        allResults
-    }
-
-    val newMangas = filteredResults
+    val newMangas = allResults
         .distinctBy { it.url }
         .filter { seenUrls.add(it.url) }
 
-    // Jika jumlah hasil kurang dari 30, asumsikan ini halaman terakhir.
-    val hasNextPage = newMangas.size >= 30 // Sesuaikan nilai 30
-
+    val hasNextPage = document.selectFirst("span.mx-auto.mt-4.cursor-pointer") != null
     if (!hasNextPage) {
         searchFinished = true
+    }
+
+    // Ekstrak qfunc dari halaman pertama
+    if (response.request.url.queryParameter("page") == null) {
+        qfuncId = document.selectFirst("div.my-4.grid > span[data-qrl]")?.attr("data-qrl")
+            ?.split('_')
+            ?.last()
     }
 
     return MangasPage(newMangas, hasNextPage)
