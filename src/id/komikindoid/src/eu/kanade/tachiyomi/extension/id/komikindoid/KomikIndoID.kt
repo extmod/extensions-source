@@ -18,7 +18,7 @@ import java.util.Locale
 
 class KomikIndoID : ParsedHttpSource() {
     override val name = "KomikIndoID"
-    override val baseUrl = "https://komikindo.ch"
+    override val baseUrl = "https://komikav.net"
     override val lang = "id"
     override val supportsLatest = true
     override val client: OkHttpClient = network.cloudflareClient
@@ -26,11 +26,21 @@ class KomikIndoID : ParsedHttpSource() {
 
     // similar/modified theme of "https://bacakomik.my"
     override fun popularMangaRequest(page: Int): Request {
-        return GET("$baseUrl/daftar-manga/page/$page/?order=popular", headers)
+        val url = if (page == 1) {
+            "$baseUrl/daftar-manga/?order=popular"
+        } else {
+            "$baseUrl/daftar-manga/page/$page/?order=popular"
+        }
+        return GET(url, headers)
     }
 
     override fun latestUpdatesRequest(page: Int): Request {
-        return GET("$baseUrl/daftar-manga/page/$page/?order=update", headers)
+        val url = if (page == 1) {
+            "$baseUrl/daftar-manga/?order=update"
+        } else {
+            "$baseUrl/daftar-manga/page/$page/?order=update"
+        }
+        return GET(url, headers)
     }
 
     override fun popularMangaSelector() = "div.animepost"
@@ -46,7 +56,7 @@ class KomikIndoID : ParsedHttpSource() {
 
     override fun searchMangaFromElement(element: Element): SManga {
         val manga = SManga.create()
-        manga.thumbnail_url = element.select("div.limit img").attr("src")
+        manga.thumbnail_url = element.select("div.limit img").attr("abs:src")
         manga.title = element.select("div.tt h4").text()
         element.select("div.animposx > a").first()!!.let {
             manga.setUrlWithoutDomain(it.attr("href"))
@@ -55,15 +65,24 @@ class KomikIndoID : ParsedHttpSource() {
     }
 
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
-        val url = "$baseUrl/daftar-manga/page/$page/".toHttpUrl().newBuilder()
-            .addQueryParameter("title", query)
+        val pageParam = if (page == 1) "" else "page/$page/"
+        val url = "$baseUrl/daftar-manga/$pageParam".toHttpUrl().newBuilder()
+        
+        if (query.isNotEmpty()) {
+            url.addQueryParameter("title", query)
+        }
+        
         filters.forEach { filter ->
             when (filter) {
                 is AuthorFilter -> {
-                    url.addQueryParameter("author", filter.state)
+                    if (filter.state.isNotEmpty()) {
+                        url.addQueryParameter("author", filter.state)
+                    }
                 }
                 is YearFilter -> {
-                    url.addQueryParameter("yearx", filter.state)
+                    if (filter.state.isNotEmpty()) {
+                        url.addQueryParameter("yearx", filter.state)
+                    }
                 }
                 is SortFilter -> {
                     url.addQueryParameter("order", filter.toUriPart())
@@ -122,15 +141,25 @@ class KomikIndoID : ParsedHttpSource() {
         }
         return GET(url.build(), headers)
     }
+
     override fun mangaDetailsParse(document: Document): SManga {
         val infoElement = document.select("div.infoanime").first()!!
         val descElement = document.select("div.desc > .entry-content.entry-content-single").first()!!
         val manga = SManga.create()
+        
         // need authorCleaner to take "pengarang:" string to remove it from author
-        val authorCleaner = document.select(".infox .spe b:contains(Pengarang)").text()
-        manga.author = document.select(".infox .spe span:contains(Pengarang)").text().substringAfter(authorCleaner)
-        val artistCleaner = document.select(".infox .spe b:contains(Ilustrator)").text()
-        manga.artist = document.select(".infox .spe span:contains(Ilustrator)").text().substringAfter(artistCleaner)
+        val authorElement = document.select(".infox .spe span:contains(Pengarang)").first()
+        if (authorElement != null) {
+            val authorCleaner = authorElement.select("b").text()
+            manga.author = authorElement.text().substringAfter(authorCleaner).trim()
+        }
+        
+        val artistElement = document.select(".infox .spe span:contains(Ilustrator)").first()
+        if (artistElement != null) {
+            val artistCleaner = artistElement.select("b").text()
+            manga.artist = artistElement.text().substringAfter(artistCleaner).trim()
+        }
+        
         val genres = mutableListOf<String>()
         infoElement.select(".infox .genre-info a, .infox .spe span:contains(Grafis:) a, .infox .spe span:contains(Tema:) a, .infox .spe span:contains(Konten:) a, .infox .spe span:contains(Jenis Komik:) a").forEach { element ->
             val genre = element.text()
@@ -138,19 +167,35 @@ class KomikIndoID : ParsedHttpSource() {
         }
         manga.genre = genres.joinToString(", ")
         manga.status = parseStatus(infoElement.select(".infox > .spe > span:nth-child(2)").text())
-        manga.description = descElement.select("p").text().substringAfter("bercerita tentang ")
-        // Add alternative name to manga description
-        val altName = document.selectFirst(".infox > .spe > span:nth-child(1)")?.text().takeIf { it.isNullOrBlank().not() }
-        altName?.let {
-            manga.description = manga.description + "\n\n$altName"
+        
+        val description = descElement.select("p").text()
+        manga.description = if (description.contains("bercerita tentang ")) {
+            description.substringAfter("bercerita tentang ")
+        } else {
+            description
         }
-        manga.thumbnail_url = document.select(".thumb > img:nth-child(1)").attr("src").substringBeforeLast("?")
+        
+        // Add alternative name to manga description
+        val altName = document.selectFirst(".infox > .spe > span:nth-child(1)")?.text()?.takeIf { it.isNotBlank() }
+        altName?.let {
+            manga.description = "${manga.description}\n\n$it"
+        }
+        
+        val thumbnailUrl = document.select(".thumb > img:nth-child(1)").attr("abs:src")
+        manga.thumbnail_url = if (thumbnailUrl.contains("?")) {
+            thumbnailUrl.substringBeforeLast("?")
+        } else {
+            thumbnailUrl
+        }
+        
         return manga
     }
 
     private fun parseStatus(element: String): Int = when {
         element.contains("berjalan", true) -> SManga.ONGOING
         element.contains("tamat", true) -> SManga.COMPLETED
+        element.contains("ongoing", true) -> SManga.ONGOING
+        element.contains("completed", true) -> SManga.COMPLETED
         else -> SManga.UNKNOWN
     }
 
@@ -166,33 +211,31 @@ class KomikIndoID : ParsedHttpSource() {
     }
 
     private fun parseChapterDate(date: String): Long {
-        return if (date.contains("yang lalu")) {
-            val value = date.split(' ')[0].toInt()
+        return if (date.contains("yang lalu") || date.contains("ago")) {
+            val value = date.split(' ')[0].toIntOrNull() ?: 0
             when {
-                "detik" in date -> Calendar.getInstance().apply {
+                "detik" in date || "second" in date -> Calendar.getInstance().apply {
                     add(Calendar.SECOND, -value)
                 }.timeInMillis
-                "menit" in date -> Calendar.getInstance().apply {
+                "menit" in date || "minute" in date -> Calendar.getInstance().apply {
                     add(Calendar.MINUTE, -value)
                 }.timeInMillis
-                "jam" in date -> Calendar.getInstance().apply {
+                "jam" in date || "hour" in date -> Calendar.getInstance().apply {
                     add(Calendar.HOUR_OF_DAY, -value)
                 }.timeInMillis
-                "hari" in date -> Calendar.getInstance().apply {
+                "hari" in date || "day" in date -> Calendar.getInstance().apply {
                     add(Calendar.DATE, -value)
                 }.timeInMillis
-                "minggu" in date -> Calendar.getInstance().apply {
+                "minggu" in date || "week" in date -> Calendar.getInstance().apply {
                     add(Calendar.DATE, -value * 7)
                 }.timeInMillis
-                "bulan" in date -> Calendar.getInstance().apply {
+                "bulan" in date || "month" in date -> Calendar.getInstance().apply {
                     add(Calendar.MONTH, -value)
                 }.timeInMillis
-                "tahun" in date -> Calendar.getInstance().apply {
+                "tahun" in date || "year" in date -> Calendar.getInstance().apply {
                     add(Calendar.YEAR, -value)
                 }.timeInMillis
-                else -> {
-                    0L
-                }
+                else -> 0L
             }
         } else {
             try {
@@ -217,11 +260,28 @@ class KomikIndoID : ParsedHttpSource() {
     override fun pageListParse(document: Document): List<Page> {
         val pages = mutableListOf<Page>()
         var i = 0
-        document.select("div.img-landmine img").forEach { element ->
-            val url = element.attr("onError").substringAfter("src='").substringBefore("';")
-            i++
-            if (url.isNotEmpty()) {
-                pages.add(Page(i, "", url))
+        
+        // Try multiple selectors for different page structures
+        val imageElements = document.select("div.img-landmine img")
+            .ifEmpty { document.select(".read-content img") }
+            .ifEmpty { document.select("#readerarea img") }
+        
+        imageElements.forEach { element ->
+            val imageUrl = when {
+                element.hasAttr("data-src") -> element.attr("abs:data-src")
+                element.hasAttr("src") -> element.attr("abs:src")
+                element.hasAttr("onError") -> {
+                    val onError = element.attr("onError")
+                    if (onError.contains("src='")) {
+                        onError.substringAfter("src='").substringBefore("';")
+                    } else ""
+                }
+                else -> ""
+            }
+            
+            if (imageUrl.isNotEmpty()) {
+                i++
+                pages.add(Page(i, "", imageUrl))
             }
         }
         return pages
