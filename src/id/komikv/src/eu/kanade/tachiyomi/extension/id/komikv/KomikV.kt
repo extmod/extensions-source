@@ -16,19 +16,16 @@ import okhttp3.Response
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
-import java.net.URLDecoder
 import java.net.URLEncoder
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
 
 class KomikV : ParsedHttpSource() {
-
     override val name = "KomikV"
     override val baseUrl = "https://komikav.net"
     override val lang = "id"
     override val supportsLatest = true
-
     override val client: OkHttpClient = network.cloudflareClient
 
     override fun headersBuilder(): Headers.Builder = Headers.Builder()
@@ -40,56 +37,42 @@ class KomikV : ParsedHttpSource() {
     companion object {
         private val seenUrls = mutableSetOf<String>()
         private var lastSearchLastUrl: String? = null
-
         fun resetSeen() {
             seenUrls.clear()
             lastSearchLastUrl = null
         }
     }
 
-    // Flag internal untuk menangani paging search
     private var searchFinished: Boolean = false
     private var currentSearchQuery: String? = null
-
-    // dateFormat untuk parsing tanggal absolut (sesuaikan pattern & locale bila perlu)
     private val dateFormat = SimpleDateFormat("dd MMM yyyy", Locale("id"))
 
     override fun searchMangaFromElement(element: Element): SManga {
         val manga = SManga.create()
-
-        // Title: coba beberapa selector umum (h2 a, h2, a[title], dll)
         val title = listOf(
             "h2 a", "h2", "a.title", "a[title]", "div.title a", "div > a > h2"
         ).firstNotNullOfOrNull { sel ->
             element.selectFirst(sel)?.text()?.trim()
         } ?: element.text().trim()
-
-        // URL: ambil dari <a> pertama yang punya href
         val url = listOf(
             "a[href]", "h2 a[href]", "div > a[href]"
         ).mapNotNull { sel ->
             element.selectFirst(sel)?.attr("href")
         }.firstOrNull().orEmpty()
-
-        // Thumbnail: coba data-src lalu src
         val thumb = element.selectFirst("img")?.let { img ->
-    val originalUrl = img.absUrl("data-src").ifEmpty { img.absUrl("src") }
-    if (originalUrl.isNotEmpty()) {
-        "https://wsrv.nl/?w=150&h=110&url=$originalUrl"
-    } else {
-        ""
+            val originalUrl = img.absUrl("data-src").ifEmpty { img.absUrl("src") }
+            if (originalUrl.isNotEmpty()) {
+                "https://wsrv.nl/?w=150&h=110&url=$originalUrl"
+            } else {
+                ""
+            }
+        }.orEmpty()
+        manga.title = title
+        manga.url = url
+        manga.thumbnail_url = thumb
+        return manga
     }
-}.orEmpty()
 
-manga.title = title
-manga.url = url
-manga.thumbnail_url = thumb
-
-return manga
-
-    // ---------------------------
-    // Popular
-    // ---------------------------
     override fun popularMangaRequest(page: Int): Request {
         if (page <= 1) resetSeen()
         return GET("$baseUrl/popular/?page=$page", headers)
@@ -106,13 +89,9 @@ return manga
         val mangas = document.select(popularMangaSelector())
             .map { popularMangaFromElement(it) }
             .filter { it.url.isNotBlank() && it.title.isNotBlank() && seenUrls.add(it.url) }
-
         return MangasPage(mangas, true)
     }
 
-    // ---------------------------
-    // Latest
-    // ---------------------------
     override fun latestUpdatesRequest(page: Int): Request {
         if (page <= 1) resetSeen()
         return GET("$baseUrl/?page=$page&latest=1", headers)
@@ -129,63 +108,42 @@ return manga
         val mangas = document.select(latestUpdatesSelector())
             .map { latestUpdatesFromElement(it) }
             .filter { it.url.isNotBlank() && it.title.isNotBlank() && seenUrls.add(it.url) }
-
         return MangasPage(mangas, true)
     }
 
-    // ---------------------------
-    // Search
-    // ---------------------------
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
-    if (page == 1) resetSeen()
-    val encodedQuery = URLEncoder.encode(query.trim(), "UTF-8").replace("+", "%20")
-    val url = if (page == 1) {
-        "$baseUrl/search/$encodedQuery/"
-    } else {
-        "$baseUrl/search/$encodedQuery/?page=$page"
+        if (page == 1) resetSeen()
+        val encodedQuery = URLEncoder.encode(query.trim(), "UTF-8").replace("+", "%20")
+        val url = if (page == 1) {
+            "$baseUrl/search/$encodedQuery/"
+        } else {
+            "$baseUrl/search/$encodedQuery/?page=$page"
+        }
+        return GET(url, headers)
     }
-    return GET(url, headers)
-}
 
     override fun searchMangaSelector(): String = "div.grid div.overflow-hidden"
 
     override fun searchMangaNextPageSelector(): String? = null
 
     override fun searchMangaParse(response: Response): MangasPage {
-    val document = Jsoup.parse(response.body?.string().orEmpty(), baseUrl)
-    val currentUrl = response.request.url.toString()
-
-    // Extract current page number
-    val currentPage = Regex("""page=(\d+)""").find(currentUrl)?.groupValues?.get(1)?.toIntOrNull() ?: 1
-
-    // Ambil semua hasil dari halaman ini
-    val allResults = document.select(searchMangaSelector())
-        .map { searchMangaFromElement(it) }
-        .filter { it.url.isNotBlank() && it.title.isNotBlank() }
-
-    // Filter hanya manga baru yang belum pernah dilihat
-    val newMangas = allResults
-        .distinctBy { it.url }
-        .filter { seenUrls.add(it.url) }
-
-    // Logic sederhana untuk hasNextPage
-    val hasNextPage = when {
-        // Jika tidak ada hasil sama sekali, stop
-        allResults.isEmpty() -> false
-
-        // Jika tidak ada manga baru dan bukan halaman pertama, stop
-        newMangas.isEmpty() && currentPage > 1 -> false
-
-        // Default: jika ada hasil baru, coba halaman berikutnya
-        else -> newMangas.isNotEmpty()
+        val document = Jsoup.parse(response.body?.string().orEmpty(), baseUrl)
+        val currentUrl = response.request.url.toString()
+        val currentPage = Regex("""page=(\d+)""").find(currentUrl)?.groupValues?.get(1)?.toIntOrNull() ?: 1
+        val allResults = document.select(searchMangaSelector())
+            .map { searchMangaFromElement(it) }
+            .filter { it.url.isNotBlank() && it.title.isNotBlank() }
+        val newMangas = allResults
+            .distinctBy { it.url }
+            .filter { seenUrls.add(it.url) }
+        val hasNextPage = when {
+            allResults.isEmpty() -> false
+            newMangas.isEmpty() && currentPage > 1 -> false
+            else -> newMangas.isNotEmpty()
+        }
+        return MangasPage(newMangas, hasNextPage)
     }
 
-    return MangasPage(newMangas, hasNextPage)
-}
-
-    // ---------------------------
-    // Manga details / chapters / pages (tetap seperti sebelumnya)
-    // ---------------------------
     override fun mangaDetailsParse(document: Document): SManga {
         return SManga.create().apply {
             title = document.selectFirst("h1.text-xl")?.text()?.trim().orEmpty()
@@ -196,12 +154,12 @@ return manga
                 .joinToString(", ")
             status = parseStatus(document.selectFirst(".bg-green-800")?.text().orEmpty())
             thumbnail_url = document.selectFirst("img.neu-active")?.absUrl("src")?.let { originalUrl ->
-    if (originalUrl.isNotEmpty()) {
-        "https://wsrv.nl/?w=150&h=110&url=$originalUrl"
-    } else {
-        ""
-    }
-}.orEmpty()
+                if (originalUrl.isNotEmpty()) {
+                    "https://wsrv.nl/?w=150&h=110&url=$originalUrl"
+                } else {
+                    ""
+                }
+            }.orEmpty()
         }
     }
 
@@ -215,16 +173,10 @@ return manga
 
     override fun chapterFromElement(element: Element): SChapter {
         val chapter = SChapter.create()
-
-        // url
         val url = element.attr("href")
         chapter.setUrlWithoutDomain(url)
-
-        // Judul: p pertama di dalam <a> atau fallback ke teks elemen
         val titleEl = element.selectFirst("div > p:first-of-type, p:first-of-type")
         chapter.name = titleEl?.text()?.trim() ?: element.text().trim()
-
-        // Cari teks tanggal di beberapa kemungkinan selector
         val dateCandidates = listOf(
             "p.text-xs.font-medium",
             "p.text-xs",
@@ -241,38 +193,27 @@ return manga
                 break
             }
         }
-
-        // Fallback: cari pola relatif waktu di keseluruhan teks elemen (contoh: "35 mnt lalu", "2 jam")
         if (dateText.isNullOrBlank()) {
             val r = Regex("""(?:(\d+)\s*)?(detik|dtk|menit|mnt|jam|hari|mgg|minggu|bln|bulan|thn|tahun)\b""", RegexOption.IGNORE_CASE)
             val m = r.find(element.text())
             if (m != null) dateText = m.value
         }
-
-        // Set tanggal (epoch millis). Jika null/invalid -> 0L
         chapter.date_upload = parseChapterDate(dateText ?: "")
-
-        // --- Parse chapter number dari judul (jika ada) agar urutan bisa diatur dengan tepat ---
         val numberRegex = Regex("""(\d+(?:[.,]\d+)?)""")
         val numberMatch = numberRegex.find(chapter.name)
         chapter.chapter_number = numberMatch?.value?.replace(",", ".")?.toFloatOrNull() ?: 0f
-
         return chapter
     }
 
     private fun parseChapterDate(date: String): Long {
         val txt = date.lowercase().trim()
-
-        // Regex yang menangkap angka opsional + satuan
         val regex = Regex("""(?:(\d+)\s*)?(detik|dtk|menit|mnt|jam|hari|mgg|minggu|bln|bulan|thn|tahun)\b""")
         val match = regex.find(txt)
-
         if (match != null) {
             val valueStr = match.groupValues[1]
             val value = if (valueStr.isBlank()) 1 else {
                 try { valueStr.toInt() } catch (_: Exception) { 1 }
             }
-
             val unit = match.groupValues[2]
             val cal = Calendar.getInstance()
             when (unit) {
@@ -287,8 +228,6 @@ return manga
             }
             return cal.timeInMillis
         }
-
-        // Jika tidak cocok pola relatif, coba parse sebagai tanggal absolut
         return try {
             dateFormat.parse(date)?.time ?: 0L
         } catch (_: Exception) {
@@ -301,11 +240,6 @@ return manga
         val chapters = document.select(chapterListSelector())
             .map { chapterFromElement(it) }
             .filter { it.url.isNotEmpty() && it.name.isNotEmpty() }
-
-        // Urutkan:
-        // 1) jika ada chapter_number -> urutkan berdasarkan chapter_number desc
-        // 2) jika tidak ada, tapi ada date_upload -> urutkan berdasarkan date_upload desc
-        // 3) fallback -> reversed()
         return when {
             chapters.any { it.chapter_number != 0f } -> chapters.sortedByDescending { it.chapter_number }
             chapters.any { it.date_upload > 0L } -> chapters.sortedByDescending { it.date_upload }
@@ -314,18 +248,17 @@ return manga
     }
 
     override fun pageListParse(document: Document): List<Page> {
-    val pages = mutableListOf<Page>()
-    document.select("img.imgku.mx-auto")
-        .forEachIndexed { index, img ->
-            val imageUrl = img.absUrl("src")
-
-            if (imageUrl.isNotEmpty() && !imageUrl.contains("banner.jpg")) {
-                val resizedImageUrl = "https://images.weserv.nl/?w=300&q=70&url=$imageUrl"
-                pages.add(Page(index, "", resizedImageUrl))
+        val pages = mutableListOf<Page>()
+        document.select("img.imgku.mx-auto")
+            .forEachIndexed { index, img ->
+                val imageUrl = img.absUrl("src")
+                if (imageUrl.isNotEmpty() && !imageUrl.contains("banner.jpg")) {
+                    val resizedImageUrl = "https://images.weserv.nl/?w=300&q=70&url=$imageUrl"
+                    pages.add(Page(index, "", resizedImageUrl))
+                }
             }
-        }
-    return pages
-}
+        return pages
+    }
 
     override fun imageUrlParse(document: Document): String {
         return document.selectFirst("img")?.absUrl("src").orEmpty()
