@@ -54,10 +54,6 @@ class KomikV : ParsedHttpSource() {
     // dateFormat untuk parsing tanggal absolut (sesuaikan pattern & locale bila perlu)
     private val dateFormat = SimpleDateFormat("dd MMM yyyy", Locale("id"))
 
-    // ---------------------------
-    // Unified element parser implemented as searchMangaFromElement
-    // popularMangaFromElement & latestUpdatesFromElement call this function
-    // ---------------------------
     override fun searchMangaFromElement(element: Element): SManga {
         val manga = SManga.create()
 
@@ -77,15 +73,19 @@ class KomikV : ParsedHttpSource() {
 
         // Thumbnail: coba data-src lalu src
         val thumb = element.selectFirst("img")?.let { img ->
-            img.absUrl("data-src").ifEmpty { img.absUrl("src") }
-        }.orEmpty()
-
-        manga.title = title
-        manga.url = url
-        manga.thumbnail_url = thumb
-
-        return manga
+    val originalUrl = img.absUrl("data-src").ifEmpty { img.absUrl("src") }
+    if (originalUrl.isNotEmpty()) {
+        "https://wsrv.nl/?w=150&h=110&url=$originalUrl"
+    } else {
+        ""
     }
+}.orEmpty()
+
+manga.title = title
+manga.url = url
+manga.thumbnail_url = thumb
+
+return manga
 
     // ---------------------------
     // Popular
@@ -149,43 +149,37 @@ class KomikV : ParsedHttpSource() {
 
     override fun searchMangaSelector(): String = "div.grid div.overflow-hidden"
 
-    // Perbaikan untuk search pagination
-
-    // Perbaikan untuk search pagination
-
-// Perbaikan untuk search pagination
-
     override fun searchMangaNextPageSelector(): String? = null
 
     override fun searchMangaParse(response: Response): MangasPage {
     val document = Jsoup.parse(response.body?.string().orEmpty(), baseUrl)
     val currentUrl = response.request.url.toString()
-    
+
     // Extract current page number
     val currentPage = Regex("""page=(\d+)""").find(currentUrl)?.groupValues?.get(1)?.toIntOrNull() ?: 1
-    
+
     // Ambil semua hasil dari halaman ini
     val allResults = document.select(searchMangaSelector())
         .map { searchMangaFromElement(it) }
         .filter { it.url.isNotBlank() && it.title.isNotBlank() }
-    
+
     // Filter hanya manga baru yang belum pernah dilihat
     val newMangas = allResults
         .distinctBy { it.url }
         .filter { seenUrls.add(it.url) }
-    
+
     // Logic sederhana untuk hasNextPage
     val hasNextPage = when {
         // Jika tidak ada hasil sama sekali, stop
         allResults.isEmpty() -> false
-        
+
         // Jika tidak ada manga baru dan bukan halaman pertama, stop
         newMangas.isEmpty() && currentPage > 1 -> false
-        
+
         // Default: jika ada hasil baru, coba halaman berikutnya
         else -> newMangas.isNotEmpty()
     }
-    
+
     return MangasPage(newMangas, hasNextPage)
 }
 
@@ -201,7 +195,13 @@ class KomikV : ParsedHttpSource() {
                     document.select(".bg-red-800").map { it.text().trim() })
                 .joinToString(", ")
             status = parseStatus(document.selectFirst(".bg-green-800")?.text().orEmpty())
-            thumbnail_url = document.selectFirst("img.neu-active")?.absUrl("src").orEmpty()
+            thumbnail_url = document.selectFirst("img.neu-active")?.absUrl("src")?.let { originalUrl ->
+    if (originalUrl.isNotEmpty()) {
+        "https://wsrv.nl/?w=150&h=110&url=$originalUrl"
+    } else {
+        ""
+    }
+}.orEmpty()
         }
     }
 
@@ -314,16 +314,18 @@ class KomikV : ParsedHttpSource() {
     }
 
     override fun pageListParse(document: Document): List<Page> {
-        val pages = mutableListOf<Page>()
-        document.select("img[src*='.jpg'], img[src*='.png'], img[src*='.webp']")
-            .forEachIndexed { index, img ->
-                val imageUrl = img.absUrl("src")
-                if (imageUrl.isNotEmpty()) {
-                    pages.add(Page(index, "", imageUrl))
-                }
+    val pages = mutableListOf<Page>()
+    document.select("img.imgku.mx-auto")
+        .forEachIndexed { index, img ->
+            val imageUrl = img.absUrl("src")
+
+            if (imageUrl.isNotEmpty() && !imageUrl.contains("banner.jpg")) {
+                val resizedImageUrl = "https://images.weserv.nl/?w=300&q=70&url=$imageUrl"
+                pages.add(Page(index, "", resizedImageUrl))
             }
-        return pages
-    }
+        }
+    return pages
+}
 
     override fun imageUrlParse(document: Document): String {
         return document.selectFirst("img")?.absUrl("src").orEmpty()
