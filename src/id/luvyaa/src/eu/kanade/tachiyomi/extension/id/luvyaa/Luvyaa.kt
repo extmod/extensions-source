@@ -20,8 +20,6 @@ import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.Locale
 
-
-
 class Luvyaa : MangaThemesia(
     "Luvyaa",
     "https://luvyaa.my.id",
