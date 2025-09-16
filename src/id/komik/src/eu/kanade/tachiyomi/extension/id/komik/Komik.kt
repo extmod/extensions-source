@@ -173,39 +173,42 @@ class Komik : MangaThemesia("Komik", "https://komikcast.li", "id", "/daftar-komi
     }
 
     private fun parseChapterDate2(date: String): Long {
-        return if (date.endsWith("ago")) {
-            val value = date.split(' ')[0].toInt()
-            when {
-                "min" in date -> Calendar.getInstance().apply {
-                    add(Calendar.MINUTE, -value)
-                }.timeInMillis
-                "hour" in date -> Calendar.getInstance().apply {
-                    add(Calendar.HOUR_OF_DAY, -value)
-                }.timeInMillis
-                "day" in date -> Calendar.getInstance().apply {
-                    add(Calendar.DATE, -value)
-                }.timeInMillis
-                "week" in date -> Calendar.getInstance().apply {
-                    add(Calendar.DATE, -value * 7)
-                }.timeInMillis
-                "month" in date -> Calendar.getInstance().apply {
-                    add(Calendar.MONTH, -value)
-                }.timeInMillis
-                "year" in date -> Calendar.getInstance().apply {
-                    add(Calendar.YEAR, -value)
-                }.timeInMillis
-                else -> {
-                    0L
-                }
-            }
-        } else {
-            try {
-                dateFormat.parse(date)?.time ?: 0
-            } catch (_: Exception) {
+    return if (date.endsWith("ago")) {
+        val value = date.split(' ')[0].toInt()
+        when {
+            "second" in date -> Calendar.getInstance().apply {
+                add(Calendar.SECOND, -value)
+            }.timeInMillis
+            "min" in date -> Calendar.getInstance().apply {
+                add(Calendar.MINUTE, -value)
+            }.timeInMillis
+            "hour" in date -> Calendar.getInstance().apply {
+                add(Calendar.HOUR_OF_DAY, -value)
+            }.timeInMillis
+            "day" in date -> Calendar.getInstance().apply {
+                add(Calendar.DATE, -value)
+            }.timeInMillis
+            "week" in date -> Calendar.getInstance().apply {
+                add(Calendar.DATE, -value * 7)
+            }.timeInMillis
+            "month" in date -> Calendar.getInstance().apply {
+                add(Calendar.MONTH, -value)
+            }.timeInMillis
+            "year" in date -> Calendar.getInstance().apply {
+                add(Calendar.YEAR, -value)
+            }.timeInMillis
+            else -> {
                 0L
             }
         }
+    } else {
+        try {
+            dateFormat.parse(date)?.time ?: 0
+        } catch (_: Exception) {
+            0L
+        }
     }
+}
 
     override fun pageListParse(document: Document): List<Page> {
         val resizeTemplate = preferences.getString("resize_url_gambar", "") ?: ""
