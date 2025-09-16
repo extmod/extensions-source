@@ -56,16 +56,36 @@ class Luvyaa : MangaThemesia(
     return manga
 }
 
-    override fun pageListParse(response: okhttp3.Response): List<Page> {
-    val doc = response.asJsoup()
-    val service = preferences.getString("resize_service_url", "")
+        override fun pageListParse(document: Document): List<Page> {
+        val postId = document.select("script").map(Element::data)
+            .firstOrNull(postIdRegex::containsMatchIn)
+            ?.let { postIdRegex.find(it)?.groups?.get(1)?.value }
+            ?: throw IOException("Post ID not found")
 
-    return doc.select(pageSelector).mapIndexed { i, img ->
-        val src = img.imgAttr().trim()
-        val finalUrl = "$service$src"
-        Page(i, "", finalUrl)
+        val payload = FormBody.Builder()
+            .add("action", "get_image_json")
+            .add("post_id", postId)
+            .build()
+
+        val response = client.newCall(POST("$baseUrl/wp-admin/admin-ajax.php", headers, payload))
+            .execute()
+
+        if (response.isSuccessful.not()) {
+            throw IOException("Pages not found")
+        }
+
+        val dto = response.use {
+            json.decodeFromStream<SirenKomikDto>(it.body.byteStream())
+        }
+
+        return dto.pages.mapIndexed { index, imageUrl ->
+            Page(index, document.location(), imageUrl)
+        }
     }
-}
+
+    companion object {
+        val postIdRegex = """chapter_id\s*=\s*(\d+)""".toRegex()
+    }
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
         val resizeServicePref = EditTextPreference(screen.context).apply {
