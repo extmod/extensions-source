@@ -9,8 +9,6 @@ import eu.kanade.tachiyomi.network.interceptor.rateLimit
 import eu.kanade.tachiyomi.source.ConfigurableSource
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SManga
-import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.decodeFromStream
 import okhttp3.FormBody
 import okhttp3.OkHttpClient
@@ -22,6 +20,8 @@ import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.Locale
 
+
+
 class Luvyaa : MangaThemesia(
     "Luvyaa",
     "https://luvyaa.my.id",
@@ -31,7 +31,6 @@ class Luvyaa : MangaThemesia(
 ), ConfigurableSource {
 
     private val preferences = Injekt.get<Application>().getSharedPreferences("source_$id", 0x0000)
-    private val json = Json { ignoreUnknownKeys = true }
 
     private val resizeCover = "https://wsrv.nl/?w=110&h=150&url="
     
