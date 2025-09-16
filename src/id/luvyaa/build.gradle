@@ -1,9 +1,9 @@
 ext {
-    extName = 'Komik Station'
-    extClass = '.KomikStation'
+    extName = 'Luvyaa'
+    extClass = '.Luvyaa'
     themePkg = 'mangathemesia'
-    baseUrl = 'https://komikstation.org'
-    overrideVersionCode = 6
+    baseUrl = 'https://luvyaa.my.id'
+    overrideVersionCode = 1
     isNsfw = false
 }
 
