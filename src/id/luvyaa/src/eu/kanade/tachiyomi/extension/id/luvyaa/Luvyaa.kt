@@ -1,9 +1,11 @@
-package eu.kanade.tachiyomi.extension.id.komikstation
+package eu.kanade.tachiyomi.extension.id.luvyaa
 
 import android.app.Application
 import eu.kanade.tachiyomi.multisrc.mangathemesia.MangaThemesia
 import androidx.preference.EditTextPreference
 import androidx.preference.PreferenceScreen
+import eu.kanade.tachiyomi.network.POST
+kotlinx.serialization.json.decodeFromStream
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
 import eu.kanade.tachiyomi.source.ConfigurableSource
 import eu.kanade.tachiyomi.source.model.Page
@@ -17,9 +19,9 @@ import uy.kohesive.injekt.api.get
 import java.text.SimpleDateFormat
 import java.util.Locale
 
-class KomikStation : MangaThemesia(
+class Luvyaa : MangaThemesia(
     "Komik Station",
-    "https://komikstation.org",
+    "https://luvyaa.my.id",
     "id",
     "/manga",
     dateFormat = SimpleDateFormat("MMMM dd, yyyy", Locale("id"))
