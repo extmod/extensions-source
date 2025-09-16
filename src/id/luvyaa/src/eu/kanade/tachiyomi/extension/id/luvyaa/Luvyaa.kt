@@ -22,11 +22,6 @@ import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.Locale
 
-@Serializable
-data class SirenKomikDto(
-    val pages: List<String>
-)
-
 class Luvyaa : MangaThemesia(
     "Luvyaa",
     "https://luvyaa.my.id",
@@ -88,7 +83,7 @@ class Luvyaa : MangaThemesia(
         }
 
         val dto = response.use {
-            json.decodeFromStream<SirenKomikDto>(it.body.byteStream())
+            json.decodeFromStream<LuvyaaDto>(it.body.byteStream())
         }
 
         return dto.pages.mapIndexed { index, imageUrl ->
