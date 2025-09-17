@@ -47,39 +47,19 @@ class KomikV : ParsedHttpSource() {
     private var currentSearchQuery: String? = null
     private val dateFormat = SimpleDateFormat("dd MMM yyyy", Locale("id"))
 
-    override fun searchMangaFromElement(element: Element): SManga {
-        val manga = SManga.create()
-        
-        val title = getTitleFromElement(element)
-        val url = getUrlFromElement(element)
-        val thumbnail = getThumbnailFromElement(element)
-        
-        manga.title = title
-        manga.url = url
-        manga.thumbnail_url = thumbnail
-        return manga
-    }
-
-    private fun getTitleFromElement(element: Element): String {
-        val selectors = listOf("h2 a", "h2", "a.title", "a[title]", "div.title a", "div > a > h2")
-        return selectors.firstNotNullOfOrNull { element.selectFirst(it)?.text()?.trim() }
-            ?: element.text().trim()
-    }
-
-    private fun getUrlFromElement(element: Element): String {
-        val selectors = listOf("a[href]", "h2 a[href]", "div > a[href]")
-        return selectors.mapNotNull { element.selectFirst(it)?.attr("href") }.firstOrNull().orEmpty()
-    }
-
-    private fun getThumbnailFromElement(element: Element): String {
-        return element.selectFirst("img")?.let { img ->
-            val originalUrl = img.absUrl("data-src").ifEmpty { img.absUrl("src") }
-            if (originalUrl.isNotEmpty()) {
-                val processedUrl = originalUrl.replace(".lol", ".li")
-                "https://wsrv.nl/?w=150&h=110&url=$processedUrl"
-            } else ""
-        }.orEmpty()
-    }
+    override fun searchMangaFromElement(element: Element): SManga = SManga.create().apply {
+    title = element.selectFirst("h2")?.text()?.trim() ?: element.text().trim()
+    url = element.selectFirst("a")?.attr("href").orEmpty()
+    thumbnail_url = element.selectFirst("img")?.let { img ->
+        val originalUrl = img.absUrl("data-src")
+        if (originalUrl.isNotEmpty()) {
+            val processedUrl = originalUrl.replace(".lol", ".li")
+            "https://wsrv.nl/?w=150&h=110&url=$processedUrl"
+        } else {
+            ""
+        }
+    }.orEmpty()
+}
 
     override fun popularMangaRequest(page: Int): Request {
         if (page <= 1) resetSeen()
@@ -88,15 +68,11 @@ class KomikV : ParsedHttpSource() {
 
     override fun popularMangaSelector(): String = "div.grid div.overflow-hidden"
 
-    override fun popularMangaFromElement(element: Element): SManga = searchMangaFromElement(element)
-
-    override fun popularMangaNextPageSelector(): String? = null
-
     override fun popularMangaParse(response: Response): MangasPage {
         val document = response.asJsoup()
         val mangas = document.select(popularMangaSelector())
-            .map(::popularMangaFromElement)
-            .filter { isValidManga(it) && seenUrls.add(it.url) }
+            .map { searchMangaFromElement(it) }
+            .filter { it.url.isNotBlank() && it.title.isNotBlank() && seenUrls.add(it.url) }
         return MangasPage(mangas, true)
     }
 
@@ -105,20 +81,13 @@ class KomikV : ParsedHttpSource() {
         return GET("$baseUrl/?page=$page&latest=1", headers)
     }
 
-    override fun latestUpdatesFromElement(element: Element): SManga = searchMangaFromElement(element)
-
-    override fun latestUpdatesNextPageSelector(): String? = null
-
     override fun latestUpdatesParse(response: Response): MangasPage {
         val document = response.asJsoup()
         val mangas = document.select(popularMangaSelector())
-            .map(::latestUpdatesFromElement)
-            .filter { isValidManga(it) && seenUrls.add(it.url) }
+            .map { searchMangaFromElement(it) }
+            .filter { it.url.isNotBlank() && it.title.isNotBlank() && seenUrls.add(it.url) }
         return MangasPage(mangas, true)
     }
-
-    private fun isValidManga(manga: SManga): Boolean = 
-        manga.url.isNotBlank() && manga.title.isNotBlank()
 
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
         if (page == 1) resetSeen()
@@ -131,36 +100,32 @@ class KomikV : ParsedHttpSource() {
         return GET(url, headers)
     }
 
-    override fun searchMangaNextPageSelector(): String? = null
-
     override fun searchMangaParse(response: Response): MangasPage {
         val document = response.asJsoup()
-        val mangas = document.select(popularMangaSelector()).map(::searchMangaFromElement)
+        val mangas = document.select(popularMangaSelector()).map { element ->
+            searchMangaFromElement(element)
+        }
         return MangasPage(mangas, false)
     }
 
-    override fun mangaDetailsParse(document: Document): SManga = SManga.create().apply {
-        title = document.selectFirst("h1.text-xl")?.text()?.trim().orEmpty()
-        author = document.select("a[href*=\\"/tax/author/\\"]")
-            .joinToString(", ") { it.text().trim() }
-        description = document.selectFirst(".mt-4.w-full p")?.text()?.trim().orEmpty()
-        genre = getGenreList(document).joinToString(", ")
-        status = parseStatus(document.selectFirst(".bg-green-800")?.text().orEmpty())
-        thumbnail_url = getThumbnailFromDocument(document)
-    }
-
-    private fun getGenreList(document: Document): List<String> {
-        return document.select(".mt-4.w-full a.text-md.mb-1").map { it.text().trim() } +
-               document.select(".bg-red-800").map { it.text().trim() }
-    }
-
-    private fun getThumbnailFromDocument(document: Document): String {
-        return document.selectFirst("img.neu-active")?.absUrl("src")?.let { originalUrl ->
-            if (originalUrl.isNotEmpty()) {
-                val processedUrl = originalUrl.replace(".lol", ".li")
-                "https://wsrv.nl/?w=150&h=110&url=$processedUrl"
-            } else ""
-        }.orEmpty()
+    override fun mangaDetailsParse(document: Document): SManga {
+        return SManga.create().apply {
+            title = document.selectFirst("h1.text-xl")?.text()?.trim().orEmpty()
+            author = document.select("p.text-sm a").joinToString(", ") { it.text().trim() }
+            description = document.selectFirst(".mt-4.w-full p")?.text()?.trim().orEmpty()
+            genre = (document.select(".mt-4.w-full a.text-md.mb-1").map { it.text().trim() } +
+                    document.select(".bg-red-800").map { it.text().trim() })
+                .joinToString(", ")
+            status = parseStatus(document.selectFirst(".bg-green-800")?.text().orEmpty())
+            thumbnail_url = document.selectFirst("img.neu-active")?.absUrl("src")?.let { originalUrl ->
+                if (originalUrl.isNotEmpty()) {
+                    val processedUrl = originalUrl.replace(".lol", ".li")
+                    "https://wsrv.nl/?w=150&h=110&url=$processedUrl"
+                } else {
+                    ""
+                }
+            }.orEmpty()
+        }
     }
 
     private fun parseStatus(statusString: String): Int = when {
@@ -175,32 +140,34 @@ class KomikV : ParsedHttpSource() {
         setUrlWithoutDomain(element.attr("href"))
         name = element.selectFirst("p:first-of-type")?.text().orEmpty()
 
-        val rawDate = element.selectFirst("p.text-xs, time, span.time, small")?.text().orEmpty()
+        val rawDate = element.selectFirst("p.text-xs, time, span.time, small")
+            ?.text().orEmpty()
+
         date_upload = parseChapterDate(rawDate)
     }
 
     private fun parseChapterDate(text: String): Long {
-        val normalizedText = text.lowercase().trim()
-        val calendar = Calendar.getInstance()
+        val t = text.lowercase().trim()
+        val cal = Calendar.getInstance()
 
-        val timeUnits = mapOf(
+        val units = mapOf(
             "dtk" to Calendar.SECOND,
             "mnt" to Calendar.MINUTE,
             "jam" to Calendar.HOUR_OF_DAY,
             "mgg" to Calendar.DATE,
             "bln" to Calendar.MONTH,
-            "thn" to Calendar.YEAR
+            "thn" to Calendar.YEAR,
         )
 
-        for ((unit, field) in timeUnits) {
-            if (normalizedText.contains(unit)) {
-                val number = normalizedText.filter { it.isDigit() }.ifBlank { "1" }.toInt()
-                if (unit == "mgg") {
-                    calendar.add(Calendar.DATE, -number * 7)
+        for ((key, field) in units) {
+            if (t.contains(key)) {
+                val num = t.filter { it.isDigit() }.ifBlank { "1" }.toInt()
+                if (key == "mgg") {
+                    cal.add(Calendar.DATE, -num * 7)
                 } else {
-                    calendar.add(field, -number)
+                    cal.add(field, -num)
                 }
-                return calendar.timeInMillis
+                return cal.timeInMillis
             }
         }
 
@@ -214,9 +181,8 @@ class KomikV : ParsedHttpSource() {
     override fun chapterListParse(response: Response): List<SChapter> {
         val document = response.asJsoup()
         val chapters = document.select(chapterListSelector())
-            .map(::chapterFromElement)
+            .map { chapterFromElement(it) }
             .filter { it.url.isNotEmpty() && it.name.isNotEmpty() }
-        
         return when {
             chapters.any { it.chapter_number != 0f } -> chapters.sortedByDescending { it.chapter_number }
             chapters.any { it.date_upload > 0L } -> chapters.sortedByDescending { it.date_upload }
@@ -225,16 +191,19 @@ class KomikV : ParsedHttpSource() {
     }
 
     override fun pageListParse(document: Document): List<Page> {
-        return document.select("img.imgku.mx-auto")
-            .mapIndexedNotNull { index, img ->
+        val pages = mutableListOf<Page>()
+        document.select("img.imgku.mx-auto")
+            .forEachIndexed { index, img ->
                 val imageUrl = img.absUrl("src")
                 if (imageUrl.isNotEmpty() && !imageUrl.contains("banner.jpg")) {
                     val resizedImageUrl = "https://images.weserv.nl/?w=300&q=70&url=$imageUrl"
-                    Page(index, "", resizedImageUrl)
-                } else null
+                    pages.add(Page(index, "", resizedImageUrl))
+                }
             }
+        return pages
     }
 
-    override fun imageUrlParse(document: Document): String =
-        document.selectFirst("img")?.absUrl("src").orEmpty()
+    override fun imageUrlParse(document: Document): String {
+        return document.selectFirst("img")?.absUrl("src").orEmpty()
+    }
 }
