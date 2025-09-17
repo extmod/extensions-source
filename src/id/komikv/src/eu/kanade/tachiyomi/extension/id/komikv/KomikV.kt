@@ -37,9 +37,12 @@ class KomikV : ParsedHttpSource() {
     companion object {
         private val seenUrls = mutableSetOf<String>()
         private var lastSearchLastUrl: String? = null
+        private val searchResultsCache = mutableMapOf<String, Set<String>>()
+        
         fun resetSeen() {
             seenUrls.clear()
             lastSearchLastUrl = null
+            searchResultsCache.clear()
         }
     }
 
@@ -48,31 +51,31 @@ class KomikV : ParsedHttpSource() {
     private val dateFormat = SimpleDateFormat("dd MMM yyyy", Locale("id"))
 
     override fun searchMangaFromElement(element: Element): SManga {
-    val manga = SManga.create()
-    val title = listOf(
-        "h2 a", "h2", "a.title", "a[title]", "div.title a", "div > a > h2"
-    ).firstNotNullOfOrNull { sel ->
-        element.selectFirst(sel)?.text()?.trim()
-    } ?: element.text().trim()
-    val url = listOf(
-        "a[href]", "h2 a[href]", "div > a[href]"
-    ).mapNotNull { sel ->
-        element.selectFirst(sel)?.attr("href")
-    }.firstOrNull().orEmpty()
-    val thumb = element.selectFirst("img")?.let { img ->
-        val originalUrl = img.absUrl("data-src").ifEmpty { img.absUrl("src") }
-        if (originalUrl.isNotEmpty()) {
-            val processedUrl = originalUrl.replace(".lol", ".li")
-            "https://wsrv.nl/?w=150&h=110&url=$processedUrl"
-        } else {
-            ""
-        }
-    }.orEmpty()
-    manga.title = title
-    manga.url = url
-    manga.thumbnail_url = thumb
-    return manga
-}
+        val manga = SManga.create()
+        val title = listOf(
+            "h2 a", "h2", "a.title", "a[title]", "div.title a", "div > a > h2"
+        ).firstNotNullOfOrNull { sel ->
+            element.selectFirst(sel)?.text()?.trim()
+        } ?: element.text().trim()
+        val url = listOf(
+            "a[href]", "h2 a[href]", "div > a[href]"
+        ).mapNotNull { sel ->
+            element.selectFirst(sel)?.attr("href")
+        }.firstOrNull().orEmpty()
+        val thumb = element.selectFirst("img")?.let { img ->
+            val originalUrl = img.absUrl("data-src").ifEmpty { img.absUrl("src") }
+            if (originalUrl.isNotEmpty()) {
+                val processedUrl = originalUrl.replace(".lol", ".li")
+                "https://wsrv.nl/?w=150&h=110&url=$processedUrl"
+            } else {
+                ""
+            }
+        }.orEmpty()
+        manga.title = title
+        manga.url = url
+        manga.thumbnail_url = thumb
+        return manga
+    }
 
     override fun popularMangaRequest(page: Int): Request {
         if (page <= 1) resetSeen()
@@ -130,40 +133,77 @@ class KomikV : ParsedHttpSource() {
     override fun searchMangaParse(response: Response): MangasPage {
         val document = Jsoup.parse(response.body?.string().orEmpty(), baseUrl)
         val currentUrl = response.request.url.toString()
-        val currentPage = Regex("""page=(\d+)""").find(currentUrl)?.groupValues?.get(1)?.toIntOrNull() ?: 1
+        val currentPage = Regex("""page=(\\d+)""").find(currentUrl)?.groupValues?.get(1)?.toIntOrNull() ?: 1
+        
+        // Check for "No Result" indicator
+        val noResultElement = document.selectFirst("*:contains(No Result)")
+        if (noResultElement != null) {
+            return MangasPage(emptyList(), false)
+        }
+        
         val allResults = document.select(searchMangaSelector())
             .map { searchMangaFromElement(it) }
             .filter { it.url.isNotBlank() && it.title.isNotBlank() }
+        
+        // If no results found in grid
+        if (allResults.isEmpty()) {
+            return MangasPage(emptyList(), false)
+        }
+        
+        // Get current search query from URL
+        val searchQuery = Regex("""/search/([^/?]+)""").find(currentUrl)?.groupValues?.get(1)?.let { 
+            URLEncoder.decode(it, "UTF-8") 
+        } ?: ""
+        
+        // Create a unique key for this search query and page combination
+        val cacheKey = "${searchQuery}_page${currentPage}"
+        val resultUrls = allResults.map { it.url }.toSet()
+        
+        // Check if we've seen these exact results before for this search
+        val previousResults = searchResultsCache[searchQuery] ?: emptySet()
+        val hasIdenticalResults = previousResults.isNotEmpty() && previousResults == resultUrls
+        
+        // Update cache with current results
+        searchResultsCache[searchQuery] = resultUrls
+        
         val newMangas = allResults
             .distinctBy { it.url }
             .filter { seenUrls.add(it.url) }
+        
+        // Determine if there's a next page
         val hasNextPage = when {
-            allResults.isEmpty() -> false
+            // If we found identical results to previous pages, no more unique content
+            hasIdenticalResults && currentPage > 1 -> false
+            // If no new mangas after filtering duplicates and we're past page 1
             newMangas.isEmpty() && currentPage > 1 -> false
+            // If we have fewer results than expected (typically indicates last page)
+            newMangas.size < 18 && currentPage > 1 -> false
+            // Otherwise, assume there might be more pages
             else -> newMangas.isNotEmpty()
         }
+        
         return MangasPage(newMangas, hasNextPage)
     }
 
     override fun mangaDetailsParse(document: Document): SManga {
-    return SManga.create().apply {
-        title = document.selectFirst("h1.text-xl")?.text()?.trim().orEmpty()
-        author = document.select("a[href*=\"/tax/author/\"]").joinToString(", ") { it.text().trim() }
-        description = document.selectFirst(".mt-4.w-full p")?.text()?.trim().orEmpty()
-        genre = (document.select(".mt-4.w-full a.text-md.mb-1").map { it.text().trim() } +
-                document.select(".bg-red-800").map { it.text().trim() })
-            .joinToString(", ")
-        status = parseStatus(document.selectFirst(".bg-green-800")?.text().orEmpty())
-        thumbnail_url = document.selectFirst("img.neu-active")?.absUrl("src")?.let { originalUrl ->
-            if (originalUrl.isNotEmpty()) {
-                val processedUrl = originalUrl.replace(".lol", ".li")
-                "https://wsrv.nl/?w=150&h=110&url=$processedUrl"
-            } else {
-                ""
-            }
-        }.orEmpty()
+        return SManga.create().apply {
+            title = document.selectFirst("h1.text-xl")?.text()?.trim().orEmpty()
+            author = document.select("a[href*=\\"/tax/author/\\"]").joinToString(", ") { it.text().trim() }
+            description = document.selectFirst(".mt-4.w-full p")?.text()?.trim().orEmpty()
+            genre = (document.select(".mt-4.w-full a.text-md.mb-1").map { it.text().trim() } +
+                    document.select(".bg-red-800").map { it.text().trim() })
+                .joinToString(", ")
+            status = parseStatus(document.selectFirst(".bg-green-800")?.text().orEmpty())
+            thumbnail_url = document.selectFirst("img.neu-active")?.absUrl("src")?.let { originalUrl ->
+                if (originalUrl.isNotEmpty()) {
+                    val processedUrl = originalUrl.replace(".lol", ".li")
+                    "https://wsrv.nl/?w=150&h=110&url=$processedUrl"
+                } else {
+                    ""
+                }
+            }.orEmpty()
+        }
     }
-}
 
     private fun parseStatus(statusString: String): Int = when {
         statusString.contains("on-going", ignoreCase = true) -> SManga.ONGOING
@@ -196,12 +236,12 @@ class KomikV : ParsedHttpSource() {
             }
         }
         if (dateText.isNullOrBlank()) {
-            val r = Regex("""(?:(\d+)\s*)?(detik|dtk|menit|mnt|jam|hari|mgg|minggu|bln|bulan|thn|tahun)\b""", RegexOption.IGNORE_CASE)
+            val r = Regex("""(?:(\\d+)\\s*)?(detik|dtk|menit|mnt|jam|hari|mgg|minggu|bln|bulan|thn|tahun)\\b""", RegexOption.IGNORE_CASE)
             val m = r.find(element.text())
             if (m != null) dateText = m.value
         }
         chapter.date_upload = parseChapterDate(dateText ?: "")
-        val numberRegex = Regex("""(\d+(?:[.,]\d+)?)""")
+        val numberRegex = Regex("""(\\d+(?:[.,]\\d+)?)""")
         val numberMatch = numberRegex.find(chapter.name)
         chapter.chapter_number = numberMatch?.value?.replace(",", ".")?.toFloatOrNull() ?: 0f
         return chapter
@@ -209,7 +249,7 @@ class KomikV : ParsedHttpSource() {
 
     private fun parseChapterDate(date: String): Long {
         val txt = date.lowercase().trim()
-        val regex = Regex("""(?:(\d+)\s*)?(detik|dtk|menit|mnt|jam|hari|mgg|minggu|bln|bulan|thn|tahun)\b""")
+        val regex = Regex("""(?:(\\d+)\\s*)?(detik|dtk|menit|mnt|jam|hari|mgg|minggu|bln|bulan|thn|tahun)\\b""")
         val match = regex.find(txt)
         if (match != null) {
             val valueStr = match.groupValues[1]
