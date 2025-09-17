@@ -135,17 +135,108 @@ class KomikV : ParsedHttpSource() {
     val body = response.body?.string().orEmpty()
     val document = Jsoup.parse(body, baseUrl)
 
-    val elements = document.select(searchMangaSelector())
-    if (elements.isEmpty()) return MangasPage(emptyList(), false)
-
-    val mangas = elements.mapNotNull {
+    // Ambil kartu hasil seperti biasa (pakai selector yang sudah kamu punya)
+    val cards = document.select(searchMangaSelector())
+    val mangas = cards.mapNotNull {
         try { searchMangaFromElement(it) } catch (_: Exception) { null }
+    }.distinctBy { it.url }
+
+    // Tentukan halaman sekarang dari URL
+    val currentUrl = response.request.url.toString()
+    val currentPage = Regex("""[?&]page=(\d+)""").find(currentUrl)
+        ?.groupValues?.get(1)?.toIntOrNull() ?: 1
+
+    // Build URL q-data.json untuk page berikutnya
+    val nextPage = currentPage + 1
+    val nextJsonUrl = try {
+        // Tambahkan path segment "q-data.json" di akhir path (mis. /search/heavenly/q-data.json)
+        val builder = response.request.url.newBuilder()
+        // Jika terakhir path sudah "q-data.json", jangan tambahkan lagi
+        val lastSegment = response.request.url.pathSegments.lastOrNull()
+        if (lastSegment == "q-data.json") {
+            builder
+        } else {
+            builder.addPathSegment("q-data.json")
+        }
+        builder.addQueryParameter("page", nextPage.toString()).build()
+    } catch (e: Exception) {
+        null
     }
 
-    // cek apakah ada anchor menuju /manga/
-    val hasMangaAnchor = document.select("a[href*=/manga/]").isNotEmpty()
+    // Helper: cek apakah JSON q-data mengandung "item" nyata (slug/title/poster)
+    fun jsonHasItems(jsonText: String): Boolean {
+        try {
+            val root = JSONObject(jsonText)
+            val objs = root.optJSONArray("_objs") ?: return false
 
-    return MangasPage(mangas.distinctBy { it.url }, hasMangaAnchor)
+            // rekursif scan JSONArray/JSONObject untuk menemukan objek yang punya kunci item
+            fun scanValue(value: Any?): Boolean {
+                when (value) {
+                    is JSONObject -> {
+                        // if object contains any of these keys, consider it an item
+                        if (value.has("slug") || value.has("title") || value.has("poster")) return true
+                        // otherwise scan all fields
+                        val keys = value.keys()
+                        while (keys.hasNext()) {
+                            val k = keys.next()
+                            if (scanValue(value.opt(k))) return true
+                        }
+                    }
+                    is JSONArray -> {
+                        for (i in 0 until value.length()) {
+                            if (scanValue(value.opt(i))) return true
+                        }
+                    }
+                    is String -> {
+                        // sometimes item represented as string? unlikely, ignore
+                    }
+                }
+                return false
+            }
+
+            // scan top-level _objs array
+            for (i in 0 until objs.length()) {
+                val el = objs.opt(i)
+                if (scanValue(el)) return true
+            }
+        } catch (_: Exception) {}
+        return false
+    }
+
+    // Default fallback if we cannot fetch q-data.json: gunakan heuristik pageSize
+    val pageSize = 18
+    var hasNext = mangas.size >= pageSize
+
+    // Jika bisa, coba fetch q-data.json(page = currentPage+1) untuk memutuskan hasNext lebih andal
+    if (nextJsonUrl != null) {
+        try {
+            val req = Request.Builder()
+                .url(nextJsonUrl)
+                .get()
+                // copy minimal headers yang umum, sesuaikan jika perlu (User-Agent, Referer)
+                .header("Accept", "application/json, text/javascript, */*; q=0.01")
+                .header("X-Requested-With", "XMLHttpRequest")
+                .build()
+
+            client.newCall(req).execute().use { jsonResp ->
+                if (jsonResp.isSuccessful) {
+                    val jsonBody = jsonResp.body?.string().orEmpty()
+                    // jika json berisi item nyata -> ada next page
+                    val itemsExist = jsonHasItems(jsonBody)
+                    hasNext = itemsExist
+                } else {
+                    // jika 404 atau tidak successful -> anggap tidak ada next
+                    hasNext = false
+                }
+            }
+        } catch (e: Exception) {
+            // pada kegagalan network/parse -> fallback tetap ke heuristik pageSize
+            // (jangan melempar, supaya UI tidak crash)
+            hasNext = mangas.size >= pageSize
+        }
+    }
+
+    return MangasPage(mangas, hasNext)
 }
 
     override fun mangaDetailsParse(document: Document): SManga {
