@@ -30,28 +30,36 @@ class AV : ParsedHttpSource() {
         .readTimeout(30, TimeUnit.SECONDS)
         .build()
 
-    // Popular Manga
+    // Popular Manga - Homepage (sama dengan latest karena tidak ada endpoint terpisah)
     override fun popularMangaRequest(page: Int): Request {
-        return GET("$baseUrl?page=$page", headers)
+        return GET("$baseUrl/?page=$page", headers)
     }
 
-    override fun popularMangaSelector(): String = "div.grid.grid-cols-1.gap-6 div.flex.overflow-hidden.rounded-md"
+    override fun popularMangaSelector(): String = 
+        "div.grid.grid-cols-1.gap-6 div.flex.overflow-hidden.rounded-md"
 
     override fun popularMangaFromElement(element: Element): SManga {
         val manga = SManga.create()
         val linkElement = element.selectFirst("a[href*=/manga/]")!!
 
         manga.setUrlWithoutDomain(linkElement.attr("href"))
+        
+        // Title dari img alt
         manga.title = linkElement.selectFirst("img")?.attr("alt") ?: ""
-        manga.thumbnail_url = linkElement.selectFirst("img")?.attr("data-src")
-            ?: linkElement.selectFirst("img")?.attr("src")
+        
+        // Thumbnail dari data-src atau src
+        manga.thumbnail_url = linkElement.selectFirst("img")?.let { img ->
+            img.attr("data-src").ifEmpty { 
+                img.attr("src") 
+            }
+        }
 
         return manga
     }
 
     override fun popularMangaNextPageSelector(): String = "span:contains(Load More)"
 
-    // Latest Updates
+    // Latest Updates - sama dengan popular karena website tidak memiliki latest endpoint terpisah
     override fun latestUpdatesRequest(page: Int): Request {
         return popularMangaRequest(page)
     }
@@ -64,12 +72,19 @@ class AV : ParsedHttpSource() {
 
     override fun latestUpdatesNextPageSelector(): String = popularMangaNextPageSelector()
 
-    // Search
+    // Search - menggunakan parameter "search" bukan "s" atau "q"
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
-        val url = "$baseUrl/search".toHttpUrl().newBuilder()
-        url.addQueryParameter("q", query)
-        if (page > 1) url.addQueryParameter("page", page.toString())
-
+        val url = baseUrl.toHttpUrl().newBuilder()
+        
+        if (query.isNotEmpty()) {
+            url.addQueryParameter("search", query)
+        }
+        
+        if (page > 1) {
+            url.addQueryParameter("page", page.toString())
+        }
+        
+        // Handle filters jika ada
         filters.forEach { filter ->
             when (filter) {
                 is GenreFilter -> {
@@ -77,20 +92,10 @@ class AV : ParsedHttpSource() {
                         url.addQueryParameter("genre", getGenreList()[filter.state].second)
                     }
                 }
-                is StatusFilter -> {
-                    if (filter.state != 0) {
-                        url.addQueryParameter("status", getStatusList()[filter.state].second)
-                    }
-                }
-                is TypeFilter -> {
-                    if (filter.state != 0) {
-                        url.addQueryParameter("type", getTypeList()[filter.state].second)
-                    }
-                }
                 else -> {}
             }
         }
-
+        
         return GET(url.build().toString(), headers)
     }
 
@@ -102,31 +107,30 @@ class AV : ParsedHttpSource() {
 
     override fun searchMangaNextPageSelector(): String = popularMangaNextPageSelector()
 
-    // Manga Details
+    // Manga Details - perlu selector yang tepat untuk detail page
     override fun mangaDetailsParse(document: Document): SManga {
         val manga = SManga.create()
 
-        val infoElement = document.selectFirst("div.mx-auto.min-h-screen")
+        // Title dari berbagai kemungkinan selector
+        manga.title = document.selectFirst("h1")?.text() ?: 
+                      document.selectFirst("title")?.text()?.substringBefore(" - ") ?: 
+                      ""
 
-        manga.title = document.selectFirst("h1, .manga-title")?.text()
-            ?: document.selectFirst("title")?.text()?.split(" - ")?.get(0) ?: ""
+        // Info element container - cari container yang berisi info manga
+        val infoElement = document.selectFirst("div.mx-auto.min-h-screen") ?: document
 
-        manga.author = infoElement?.selectFirst(
-            "*:contains(Author) + *, *:contains(Pengarang) + *",
-        )?.text()?.trim()
+        // Author - cari text yang mengandung kata "Author" atau "Pengarang"
+        manga.author = infoElement.getInfoText("Author", "Pengarang")
 
-        manga.artist = infoElement?.selectFirst(
-            "*:contains(Artist) + *, *:contains(Seniman) + *",
-        )?.text()?.trim()
+        // Artist - cari text yang mengandung kata "Artist" atau "Seniman" 
+        manga.artist = infoElement.getInfoText("Artist", "Seniman")
 
-        val genreElements = infoElement?.select(
-            "*:contains(Genre) + * a, *:contains(Kategori) + * a",
-        )
-        manga.genre = genreElements?.joinToString(", ") { it.text() }
+        // Genre - cari link dalam section genre
+        val genreElements = infoElement.select("a[href*=genre]")
+        manga.genre = genreElements.joinToString(", ") { it.text() }
 
-        val statusText = infoElement?.selectFirst(
-            "*:contains(Status) + *, *:contains(Status) + span",
-        )?.text()
+        // Status - cari text status
+        val statusText = infoElement.getInfoText("Status")
         manga.status = when {
             statusText?.contains("Ongoing", true) == true -> SManga.ONGOING
             statusText?.contains("Completed", true) == true -> SManga.COMPLETED
@@ -135,48 +139,76 @@ class AV : ParsedHttpSource() {
             else -> SManga.UNKNOWN
         }
 
-        manga.description = infoElement?.selectFirst(
-            "*:contains(Synopsis) + *, *:contains(Sinopsis) + *, .summary",
-        )?.text()?.trim()
+        // Description - cari dalam berbagai kemungkinan selector
+        manga.description = infoElement.selectFirst("div[class*=summary], div[class*=desc], p")?.text()?.trim()
 
-        manga.thumbnail_url = document.selectFirst(
-            "img[alt*=\"${manga.title}\"], .manga-cover img, .cover img",
-        )?.attr("abs:src")
+        // Thumbnail - cari img dengan alt yang sesuai atau dalam container cover
+        manga.thumbnail_url = document.selectFirst("img[alt*=\"${manga.title}\"], div[class*=cover] img, div[class*=thumb] img")
+            ?.attr("abs:src")
 
         return manga
     }
 
-    // Chapter List
-    override fun chapterListSelector(): String =
-        "div.grid.grid-cols-1.gap-2 a, .chapter-list a, a[href*=/chapter-]"
+    // Extension function untuk mencari info text
+    private fun Element.getInfoText(vararg keywords: String): String? {
+        for (keyword in keywords) {
+            val element = this.selectFirst("*:contains($keyword)")?.nextElementSibling()
+            if (element != null && element.text().isNotBlank()) {
+                return element.text().trim()
+            }
+        }
+        return null
+    }
+
+    // Chapter List - berdasarkan struktur HTML yang terlihat
+    override fun chapterListSelector(): String = "div.grid.grid-cols-1.gap-2 a"
 
     override fun chapterFromElement(element: Element): SChapter {
         val chapter = SChapter.create()
 
         chapter.setUrlWithoutDomain(element.attr("href"))
-        chapter.name = element.selectFirst("*:contains(Ch.)")?.text()?.trim()
-            ?: element.text().trim()
+        
+        // Chapter name - ambil text sebelum span.float-right (tanggal)
+        val fullText = element.text()
+        val dateSpan = element.selectFirst("span.float-right")?.text()
+        
+        chapter.name = if (dateSpan != null) {
+            fullText.replace(dateSpan, "").trim()
+        } else {
+            fullText.trim()
+        }
 
-        val dateText = element.selectFirst("span.float-right, .chapter-date")?.text()
+        // Hanya ambil yang berformat "Ch. XX" dan skip yang "First chapter", "Latest chapter"
+        if (!chapter.name.startsWith("Ch.")) {
+            chapter.name = ""  // Skip chapter ini
+        }
+
+        // Date parsing - ambil dari span.float-right
+        val dateText = dateSpan
         chapter.date_upload = parseDate(dateText)
 
         return chapter
     }
 
-    // Page List
+    // Filter chapter yang tidak valid
+    override fun chapterListParse(response: okhttp3.Response): List<SChapter> {
+        val document = response.asJsoup()
+        return document.select(chapterListSelector()).mapNotNull { element ->
+            val chapter = chapterFromElement(element)
+            if (chapter.name.isNotEmpty()) chapter else null
+        }
+    }
+
+    // Page List - untuk membaca chapter
     override fun pageListParse(document: Document): List<Page> {
         val pages = mutableListOf<Page>()
 
-        // Try multiple selectors for images
-        val imageElements = document.select(
-            "img[src*=cdn], img[data-src*=cdn], .chapter-images img, .reading-content img",
-        )
+        // Selector untuk gambar dalam chapter
+        val imageElements = document.select("img[src*=cdn], img[data-src*=cdn]")
 
         imageElements.forEachIndexed { index, element ->
             val imageUrl = element.attr("data-src").ifEmpty {
                 element.attr("src")
-            }.ifEmpty {
-                element.attr("data-lazy-src")
             }
 
             if (imageUrl.isNotEmpty()) {
@@ -189,29 +221,17 @@ class AV : ParsedHttpSource() {
 
     override fun imageUrlParse(document: Document): String = ""
 
-    // Filters
+    // Filters - minimal karena website sederhana
     override fun getFilterList(): FilterList {
         return FilterList(
-            Filter.Header("NOTE: Filters may not work with search!"),
+            Filter.Header("Search menggunakan parameter 'search'"),
             GenreFilter(),
-            StatusFilter(),
-            TypeFilter(),
         )
     }
 
     private class GenreFilter : Filter.Select<String>(
         "Genre",
         getGenreList().map { it.first }.toTypedArray(),
-    )
-
-    private class StatusFilter : Filter.Select<String>(
-        "Status",
-        getStatusList().map { it.first }.toTypedArray(),
-    )
-
-    private class TypeFilter : Filter.Select<String>(
-        "Type",
-        getTypeList().map { it.first }.toTypedArray(),
     )
 
     // Helper Functions
@@ -250,26 +270,7 @@ class AV : ParsedHttpSource() {
                         add(Calendar.MONTH, -months)
                     }.timeInMillis
                 }
-                else -> {
-                    // Try to parse other date formats
-                    val formats = arrayOf(
-                        "yyyy-MM-dd",
-                        "dd/MM/yyyy",
-                        "dd-MM-yyyy",
-                    )
-
-                    for (format in formats) {
-                        try {
-                            return SimpleDateFormat(
-                                format,
-                                Locale.ENGLISH,
-                            ).parse(dateString)?.time ?: 0L
-                        } catch (e: ParseException) {
-                            continue
-                        }
-                    }
-                    0L
-                }
+                else -> 0L
             }
         } catch (e: Exception) {
             0L
@@ -285,29 +286,10 @@ class AV : ParsedHttpSource() {
             "Drama" to "drama",
             "Fantasy" to "fantasy",
             "Horror" to "horror",
-            "Martial Arts" to "martial-arts",
             "Romance" to "romance",
             "School" to "school",
             "Sci-Fi" to "sci-fi",
-            "Seinen" to "seinen",
-            "Shoujo" to "shoujo",
-            "Shounen" to "shounen",
-            "Slice of Life" to "slice-of-life",
-            "Sports" to "sports",
             "Supernatural" to "supernatural",
-        )
-
-        fun getStatusList() = listOf(
-            "All" to "",
-            "Ongoing" to "ongoing",
-            "Completed" to "completed",
-        )
-
-        fun getTypeList() = listOf(
-            "All" to "",
-            "Manga" to "manga",
-            "Manhwa" to "manhwa",
-            "Manhua" to "manhua",
         )
     }
 }
