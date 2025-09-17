@@ -48,18 +48,18 @@ class KomikV : ParsedHttpSource() {
     private val dateFormat = SimpleDateFormat("dd MMM yyyy", Locale("id"))
 
     override fun searchMangaFromElement(element: Element): SManga = SManga.create().apply {
-    title = element.selectFirst("h2")?.text()?.trim() ?: element.text().trim()
-    url = element.selectFirst("a")?.attr("href").orEmpty()
-    thumbnail_url = element.selectFirst("img")?.let { img ->
-        val originalUrl = img.absUrl("data-src")
-        if (originalUrl.isNotEmpty()) {
-            val processedUrl = originalUrl.replace(".lol", ".li")
-            "https://wsrv.nl/?w=150&h=110&url=$processedUrl"
-        } else {
-            ""
-        }
-    }.orEmpty()
-}
+        title = element.selectFirst("h2")?.text()?.trim() ?: element.text().trim()
+        url = element.selectFirst("a")?.attr("href").orEmpty()
+        thumbnail_url = element.selectFirst("img")?.let { img ->
+            val originalUrl = img.absUrl("data-src")
+            if (originalUrl.isNotEmpty()) {
+                val processedUrl = originalUrl.replace(".lol", ".li")
+                "https://wsrv.nl/?w=150&h=110&url=$processedUrl"
+            } else {
+                ""
+            }
+        }.orEmpty()
+    }
 
     override fun popularMangaRequest(page: Int): Request {
         if (page <= 1) resetSeen()
@@ -71,8 +71,8 @@ class KomikV : ParsedHttpSource() {
     override fun popularMangaParse(response: Response): MangasPage {
         val document = response.asJsoup()
         val mangas = document.select(popularMangaSelector())
-            .map { searchMangaFromElement(it) }
-            .filter { it.url.isNotBlank() && it.title.isNotBlank() && seenUrls.add(it.url) }
+            .map { element -> searchMangaFromElement(element) }
+            .filter { manga -> manga.url.isNotBlank() && manga.title.isNotBlank() && seenUrls.add(manga.url) }
         return MangasPage(mangas, true)
     }
 
@@ -84,8 +84,8 @@ class KomikV : ParsedHttpSource() {
     override fun latestUpdatesParse(response: Response): MangasPage {
         val document = response.asJsoup()
         val mangas = document.select(popularMangaSelector())
-            .map { searchMangaFromElement(it) }
-            .filter { it.url.isNotBlank() && it.title.isNotBlank() && seenUrls.add(it.url) }
+            .map { element -> searchMangaFromElement(element) }
+            .filter { manga -> manga.url.isNotBlank() && manga.title.isNotBlank() && seenUrls.add(manga.url) }
         return MangasPage(mangas, true)
     }
 
@@ -102,19 +102,18 @@ class KomikV : ParsedHttpSource() {
 
     override fun searchMangaParse(response: Response): MangasPage {
         val document = response.asJsoup()
-        val mangas = document.select(popularMangaSelector()).map { element ->
-            searchMangaFromElement(element)
-        }
+        val mangas = document.select(popularMangaSelector())
+            .map { element -> searchMangaFromElement(element) }
         return MangasPage(mangas, false)
     }
 
     override fun mangaDetailsParse(document: Document): SManga {
         return SManga.create().apply {
             title = document.selectFirst("h1.text-xl")?.text()?.trim().orEmpty()
-            author = document.select("p.text-sm a").joinToString(", ") { it.text().trim() }
+            author = document.select("p.text-sm a").joinToString(", ") { a -> a.text().trim() }
             description = document.selectFirst(".mt-4.w-full p")?.text()?.trim().orEmpty()
-            genre = (document.select(".mt-4.w-full a.text-md.mb-1").map { it.text().trim() } +
-                    document.select(".bg-red-800").map { it.text().trim() })
+            genre = (document.select(".mt-4.w-full a.text-md.mb-1").map { a -> a.text().trim() } +
+                    document.select(".bg-red-800").map { a -> a.text().trim() })
                 .joinToString(", ")
             status = parseStatus(document.selectFirst(".bg-green-800")?.text().orEmpty())
             thumbnail_url = document.selectFirst("img.neu-active")?.absUrl("src")?.let { originalUrl ->
@@ -161,7 +160,7 @@ class KomikV : ParsedHttpSource() {
 
         for ((key, field) in units) {
             if (t.contains(key)) {
-                val num = t.filter { it.isDigit() }.ifBlank { "1" }.toInt()
+                val num = t.filter { ch -> ch.isDigit() }.ifBlank { "1" }.toInt()
                 if (key == "mgg") {
                     cal.add(Calendar.DATE, -num * 7)
                 } else {
@@ -181,11 +180,11 @@ class KomikV : ParsedHttpSource() {
     override fun chapterListParse(response: Response): List<SChapter> {
         val document = response.asJsoup()
         val chapters = document.select(chapterListSelector())
-            .map { chapterFromElement(it) }
-            .filter { it.url.isNotEmpty() && it.name.isNotEmpty() }
+            .map { element -> chapterFromElement(element) }
+            .filter { chapter -> chapter.url.isNotEmpty() && chapter.name.isNotEmpty() }
         return when {
-            chapters.any { it.chapter_number != 0f } -> chapters.sortedByDescending { it.chapter_number }
-            chapters.any { it.date_upload > 0L } -> chapters.sortedByDescending { it.date_upload }
+            chapters.any { chapter -> chapter.chapter_number != 0f } -> chapters.sortedByDescending { chapter -> chapter.chapter_number }
+            chapters.any { chapter -> chapter.date_upload > 0L } -> chapters.sortedByDescending { chapter -> chapter.date_upload }
             else -> chapters.reversed()
         }
     }
