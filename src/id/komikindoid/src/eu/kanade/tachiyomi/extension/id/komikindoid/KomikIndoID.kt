@@ -1,400 +1,208 @@
-package eu.kanade.tachiyomi.extension.id.komikindoid
+package eu.kanade.tachiyomi.extension.id.komikv
 
 import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.source.model.Filter
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
+import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.online.ParsedHttpSource
-import okhttp3.HttpUrl.Companion.toHttpUrl
+import eu.kanade.tachiyomi.util.asJsoup
+import okhttp3.Headers
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+import java.net.URLEncoder
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
 
-class KomikIndoID : ParsedHttpSource() {
-    override val name = "KomikIndoID"
+class KomikV : ParsedHttpSource() {
+    override val name = "KomikV"
     override val baseUrl = "https://komikav.net"
     override val lang = "id"
     override val supportsLatest = true
     override val client: OkHttpClient = network.cloudflareClient
-    private val dateFormat: SimpleDateFormat = SimpleDateFormat("MMM d, yyyy", Locale.US)
 
-    // Parse from home page instead of daftar-manga
+    override fun headersBuilder(): Headers.Builder = Headers.Builder()
+        .add("Accept", "application/json, text/html, */*;q=0.8")
+        .add("Accept-Language", "id-ID,id;q=0.9,en;q=0.8")
+        .add("Referer", baseUrl)
+
+    companion object {
+        private val seenUrls = mutableSetOf<String>()
+        private var lastSearchLastUrl: String? = null
+        private val searchResultsCache = mutableMapOf<String, Set<String>>()
+
+        fun resetSeen() {
+            seenUrls.clear()
+            lastSearchLastUrl = null
+            searchResultsCache.clear()
+        }
+    }
+
+    private var searchFinished: Boolean = false
+    private var currentSearchQuery: String? = null
+    private val dateFormat = SimpleDateFormat("dd MMM yyyy", Locale("id"))
+
+    override fun searchMangaFromElement(element: Element): SManga = SManga.create().apply {
+        title = element.selectFirst("h2")?.text()?.trim() ?: element.text().trim()
+        url = element.selectFirst("a")?.attr("href").orEmpty()
+        thumbnail_url = element.selectFirst("img")?.let { img ->
+            val originalUrl = img.absUrl("data-src")
+            if (originalUrl.isNotEmpty()) {
+                val processedUrl = originalUrl.replace(".lol", ".li")
+                "https://wsrv.nl/?w=150&h=110&url=$processedUrl"
+            } else {
+                ""
+            }
+        }.orEmpty()
+    }
+
+    override fun popularMangaFromElement(element: Element): SManga {
+        return searchMangaFromElement(element)
+    }
+
+    override fun latestUpdatesFromElement(element: Element): SManga {
+        return searchMangaFromElement(element)
+    }
+
+    override fun imageUrlParse(document: Document): String = throw UnsupportedOperationException()
+
     override fun popularMangaRequest(page: Int): Request {
-        return GET("$baseUrl/?page=$page", headers)
+        if (page <= 1) resetSeen()
+        return GET("$baseUrl/popular/?page=$page", headers)
     }
 
     override fun latestUpdatesRequest(page: Int): Request {
-        return GET("$baseUrl/?page=$page", headers)
+        if (page <= 1) resetSeen()
+        return GET("$baseUrl/?page=$page&latest=1", headers)
     }
 
-    override fun popularMangaSelector() = "div.grid.grid-cols-1 > div.flex.overflow-hidden"
-    override fun latestUpdatesSelector() = popularMangaSelector()
+    override fun popularMangaSelector(): String = "div.grid div.overflow-hidden"
+
+    override fun popularMangaNextPageSelector(): String? = null
+    
+    override fun searchMangaNextPageSelector(): String? = null
+    
     override fun searchMangaSelector() = popularMangaSelector()
 
-    override fun popularMangaFromElement(element: Element): SManga = searchMangaFromElement(element)
-    override fun latestUpdatesFromElement(element: Element): SManga = searchMangaFromElement(element)
+    override fun latestUpdatesSelector(): String = popularMangaSelector()
 
-    override fun popularMangaNextPageSelector() = "span:contains(Load More)"
-    override fun latestUpdatesNextPageSelector() = popularMangaNextPageSelector()
-    override fun searchMangaNextPageSelector() = popularMangaNextPageSelector()
-
-    override fun searchMangaFromElement(element: Element): SManga {
-        val manga = SManga.create()
-        
-        // Get thumbnail from img element with data-src
-        val imgElement = element.select("img.lazyimage").first()
-        manga.thumbnail_url = imgElement?.attr("abs:data-src") ?: imgElement?.attr("abs:src") ?: ""
-        
-        // Get title from h2 element or link text
-        val titleElement = element.select("h2").first() ?: element.select("a").first()
-        manga.title = titleElement?.text()?.trim() ?: ""
-        
-        // Get URL from the manga link
-        val linkElement = element.select("a[href*='/manga/']").first()
-        if (linkElement != null) {
-            manga.setUrlWithoutDomain(linkElement.attr("href"))
-        }
-        
-        return manga
-    }
+    override fun latestUpdatesNextPageSelector(): String? = null
 
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
-        val url = if (query.isNotEmpty()) {
-            "$baseUrl/search?q=${query}&page=$page".toHttpUrl().newBuilder()
+        if (page == 1) resetSeen()
+        val encodedQuery = URLEncoder.encode(query.trim(), "UTF-8").replace("+", "%20")
+        val url = if (page == 1) {
+            "$baseUrl/search/$encodedQuery/"
         } else {
-            "$baseUrl/?page=$page".toHttpUrl().newBuilder()
+            "$baseUrl/search/$encodedQuery/?page=$page"
         }
-        
-        filters.forEach { filter ->
-            when (filter) {
-                is AuthorFilter -> {
-                    if (filter.state.isNotEmpty()) {
-                        url.addQueryParameter("author", filter.state)
-                    }
-                }
-                is YearFilter -> {
-                    if (filter.state.isNotEmpty()) {
-                        url.addQueryParameter("year", filter.state)
-                    }
-                }
-                is SortFilter -> {
-                    url.addQueryParameter("sort", filter.toUriPart())
-                }
-                is GenreFilter -> {
-                    filter.state.forEach { genre ->
-                        if (genre.state) {
-                            url.addQueryParameter("genre", genre.id)
-                        }
-                    }
-                }
-                else -> {}
-            }
-        }
-        return GET(url.build(), headers)
+        return GET(url, headers)
+    }
+
+    override fun searchMangaParse(response: Response): MangasPage {
+        val document = response.asJsoup()
+        val mangas = document.select(popularMangaSelector())
+            .map { element: Element -> searchMangaFromElement(element) }
+        return MangasPage(mangas, false)
     }
 
     override fun mangaDetailsParse(document: Document): SManga {
-        val infoElement = document.select("div.infoanime").first()!!
-        val descElement = document.select("div.desc > .entry-content.entry-content-single").first()!!
-        val manga = SManga.create()
-        
-        // need authorCleaner to take "pengarang:" string to remove it from author
-        val authorElement = document.select(".infox .spe span:contains(Pengarang)").first()
-        if (authorElement != null) {
-            val authorCleaner = authorElement.select("b").text()
-            manga.author = authorElement.text().substringAfter(authorCleaner).trim()
+        return SManga.create().apply {
+            title = document.selectFirst("h1.text-xl")?.text()?.trim().orEmpty()
+            author = document.select("p.text-sm a").joinToString(", ") { a: Element -> a.text().trim() }
+            description = document.selectFirst(".mt-4.w-full p")?.text()?.trim().orEmpty()
+            genre = (document.select(".mt-4.w-full a.text-md.mb-1").map { a: Element -> a.text().trim() } +
+                    document.select(".bg-red-800").map { a: Element -> a.text().trim() })
+                .joinToString(", ")
+            status = parseStatus(document.selectFirst(".bg-green-800")?.text().orEmpty())
+            thumbnail_url = document.selectFirst("img.neu-active")?.absUrl("src")?.let { originalUrl ->
+                if (originalUrl.isNotEmpty()) {
+                    val processedUrl = originalUrl.replace(".lol", ".li")
+                    "https://wsrv.nl/?w=150&h=110&url=$processedUrl"
+                } else {
+                    ""
+                }
+            }.orEmpty()
         }
-        
-        val artistElement = document.select(".infox .spe span:contains(Ilustrator)").first()
-        if (artistElement != null) {
-            val artistCleaner = artistElement.select("b").text()
-            manga.artist = artistElement.text().substringAfter(artistCleaner).trim()
-        }
-        
-        val genres = mutableListOf<String>()
-        infoElement.select(".infox .genre-info a, .infox .spe span:contains(Grafis:) a, .infox .spe span:contains(Tema:) a, .infox .spe span:contains(Konten:) a, .infox .spe span:contains(Jenis Komik:) a").forEach { element ->
-            val genre = element.text()
-            genres.add(genre)
-        }
-        manga.genre = genres.joinToString(", ")
-        manga.status = parseStatus(infoElement.select(".infox > .spe > span:nth-child(2)").text())
-        
-        val description = descElement.select("p").text()
-        manga.description = if (description.contains("bercerita tentang ")) {
-            description.substringAfter("bercerita tentang ")
-        } else {
-            description
-        }
-        
-        // Add alternative name to manga description
-        val altName = document.selectFirst(".infox > .spe > span:nth-child(1)")?.text()?.takeIf { it.isNotBlank() }
-        altName?.let {
-            manga.description = "${manga.description}\n\n$it"
-        }
-        
-        val thumbnailUrl = document.select(".thumb > img:nth-child(1)").attr("abs:src")
-        manga.thumbnail_url = if (thumbnailUrl.contains("?")) {
-            thumbnailUrl.substringBeforeLast("?")
-        } else {
-            thumbnailUrl
-        }
-        
-        return manga
     }
 
-    private fun parseStatus(element: String): Int = when {
-        element.contains("berjalan", true) -> SManga.ONGOING
-        element.contains("tamat", true) -> SManga.COMPLETED
-        element.contains("ongoing", true) -> SManga.ONGOING
-        element.contains("completed", true) -> SManga.COMPLETED
+    private fun parseStatus(statusString: String): Int = when {
+        statusString.contains("on-going", ignoreCase = true) -> SManga.ONGOING
+        statusString.contains("complete", ignoreCase = true) -> SManga.COMPLETED
         else -> SManga.UNKNOWN
     }
 
-    override fun chapterListSelector() = "#chapter_list li"
+    override fun chapterListSelector() = "div.mt-4.flex.max-h-96.flex-col > a"
 
-    override fun chapterFromElement(element: Element): SChapter {
-        val urlElement = element.select(".lchx a").first()!!
-        val chapter = SChapter.create()
-        chapter.setUrlWithoutDomain(urlElement.attr("href"))
-        chapter.name = urlElement.text()
-        chapter.date_upload = element.select(".dt a").first()?.text()?.let { parseChapterDate(it) } ?: 0
-        return chapter
+    override fun chapterFromElement(element: Element): SChapter = SChapter.create().apply {
+        setUrlWithoutDomain(element.attr("href"))
+        name = element.selectFirst("p:first-of-type")?.text().orEmpty()
+
+        val rawDate = element.selectFirst("p.text-xs, time, span.time, small")
+            ?.text().orEmpty()
+
+        date_upload = parseChapterDate(rawDate)
     }
 
-    private fun parseChapterDate(date: String): Long {
-        return if (date.contains("yang lalu") || date.contains("ago")) {
-            val value = date.split(' ')[0].toIntOrNull() ?: 0
-            when {
-                "detik" in date || "second" in date -> Calendar.getInstance().apply {
-                    add(Calendar.SECOND, -value)
-                }.timeInMillis
-                "menit" in date || "minute" in date -> Calendar.getInstance().apply {
-                    add(Calendar.MINUTE, -value)
-                }.timeInMillis
-                "jam" in date || "hour" in date -> Calendar.getInstance().apply {
-                    add(Calendar.HOUR_OF_DAY, -value)
-                }.timeInMillis
-                "hari" in date || "day" in date -> Calendar.getInstance().apply {
-                    add(Calendar.DATE, -value)
-                }.timeInMillis
-                "minggu" in date || "week" in date -> Calendar.getInstance().apply {
-                    add(Calendar.DATE, -value * 7)
-                }.timeInMillis
-                "bulan" in date || "month" in date -> Calendar.getInstance().apply {
-                    add(Calendar.MONTH, -value)
-                }.timeInMillis
-                "tahun" in date || "year" in date -> Calendar.getInstance().apply {
-                    add(Calendar.YEAR, -value)
-                }.timeInMillis
-                else -> 0L
+    private fun parseChapterDate(text: String): Long {
+        val t = text.lowercase().trim()
+        val cal = Calendar.getInstance()
+
+        val units = mapOf(
+            "dtk" to Calendar.SECOND,
+            "mnt" to Calendar.MINUTE,
+            "jam" to Calendar.HOUR_OF_DAY,
+            "mgg" to Calendar.DATE,
+            "bln" to Calendar.MONTH,
+            "thn" to Calendar.YEAR,
+        )
+
+        for ((key, field) in units) {
+            if (t.contains(key)) {
+                val num = t.filter { ch: Char -> ch.isDigit() }.ifBlank { "1" }.toInt()
+                if (key == "mgg") {
+                    cal.add(Calendar.DATE, -num * 7)
+                } else {
+                    cal.add(field, -num)
+                }
+                return cal.timeInMillis
             }
-        } else {
-            try {
-                dateFormat.parse(date)?.time ?: 0
-            } catch (_: Exception) {
-                0L
-            }
+        }
+
+        return try {
+            dateFormat.parse(text)?.time ?: 0L
+        } catch (_: Exception) {
+            0L
         }
     }
 
-    override fun prepareNewChapter(chapter: SChapter, manga: SManga) {
-        val basic = Regex("""Chapter\s([0-9]+)""")
-        when {
-            basic.containsMatchIn(chapter.name) -> {
-                basic.find(chapter.name)?.let {
-                    chapter.chapter_number = it.groups[1]?.value!!.toFloat()
-                }
-            }
+    override fun chapterListParse(response: Response): List<SChapter> {
+        val document = response.asJsoup()
+        val chapters = document.select(chapterListSelector())
+            .map { element: Element -> chapterFromElement(element) }
+            .filter { chapter: SChapter -> chapter.url.isNotEmpty() && chapter.name.isNotEmpty() }
+        return when {
+            chapters.any { chapter: SChapter -> chapter.chapter_number != 0f } -> chapters.sortedByDescending { chapter: SChapter -> chapter.chapter_number }
+            chapters.any { chapter: SChapter -> chapter.date_upload > 0L } -> chapters.sortedByDescending { chapter: SChapter -> chapter.date_upload }
+            else -> chapters.reversed()
         }
     }
 
     override fun pageListParse(document: Document): List<Page> {
         val pages = mutableListOf<Page>()
-        var i = 0
-        
-        // Try multiple selectors for different page structures
-        val imageElements = document.select("div.img-landmine img")
-            .ifEmpty { document.select(".read-content img") }
-            .ifEmpty { document.select("#readerarea img") }
-        
-        imageElements.forEach { element ->
-            val imageUrl = when {
-                element.hasAttr("data-src") -> element.attr("abs:data-src")
-                element.hasAttr("src") -> element.attr("abs:src")
-                element.hasAttr("onError") -> {
-                    val onError = element.attr("onError")
-                    if (onError.contains("src='")) {
-                        onError.substringAfter("src='").substringBefore("';")
-                    } else ""
+        document.select("img.imgku.mx-auto")
+            .forEachIndexed { index: Int, img: Element ->
+                val imageUrl = img.absUrl("src")
+                if (imageUrl.isNotEmpty() && !imageUrl.contains("banner.jpg")) {
+                    val resizedImageUrl = "https://images.weserv.nl/?w=300&q=70&url=$imageUrl"
+                    pages.add(Page(index, "", resizedImageUrl))
                 }
-                else -> ""
             }
-            
-            if (imageUrl.isNotEmpty()) {
-                i++
-                pages.add(Page(i, "", imageUrl))
-            }
-        }
         return pages
-    }
-
-    override fun imageUrlParse(document: Document): String = throw UnsupportedOperationException()
-
-    override fun getFilterList() = FilterList(
-        SortFilter(),
-        Filter.Header("Search filters may not work properly with home page parsing"),
-        AuthorFilter(),
-        YearFilter(),
-        Filter.Separator(),
-        GenreFilter(getGenre()),
-    )
-
-    private class AuthorFilter : Filter.Text("Author")
-
-    private class YearFilter : Filter.Text("Year")
-
-    private class SortFilter : UriPartFilter(
-        "Sort By",
-        arrayOf(
-            Pair("A-Z", "title"),
-            Pair("Z-A", "titlereverse"),
-            Pair("Latest Update", "update"),
-            Pair("Latest Added", "latest"),
-            Pair("Popular", "popular"),
-        ),
-    )
-
-    private class OriginalLanguage(name: String, val id: String = name) : Filter.CheckBox(name)
-    private class OriginalLanguageFilter(originalLanguage: List<OriginalLanguage>) :
-        Filter.Group<OriginalLanguage>("Original language", originalLanguage)
-    private fun getOriginalLanguage() = listOf(
-        OriginalLanguage("Japanese (Manga)", "Manga"),
-        OriginalLanguage("Chinese (Manhua)", "Manhua"),
-        OriginalLanguage("Korean (Manhwa)", "Manhwa"),
-    )
-
-    private class Format(name: String, val id: String = name) : Filter.CheckBox(name)
-    private class FormatFilter(formatList: List<Format>) :
-        Filter.Group<Format>("Format", formatList)
-    private fun getFormat() = listOf(
-        Format("Black & White", "0"),
-        Format("Full Color", "1"),
-    )
-
-    private class Demographic(name: String, val id: String = name) : Filter.CheckBox(name)
-    private class DemographicFilter(demographicList: List<Demographic>) :
-        Filter.Group<Demographic>("Publication Demographic", demographicList)
-    private fun getDemographic() = listOf(
-        Demographic("Josei", "josei"),
-        Demographic("Seinen", "seinen"),
-        Demographic("Shoujo", "shoujo"),
-        Demographic("Shounen", "shounen"),
-    )
-
-    private class Status(name: String, val id: String = name) : Filter.CheckBox(name)
-    private class StatusFilter(statusList: List<Status>) :
-        Filter.Group<Status>("Status", statusList)
-    private fun getStatus() = listOf(
-        Status("Ongoing", "Ongoing"),
-        Status("Completed", "Completed"),
-    )
-
-    private class ContentRating(name: String, val id: String = name) : Filter.CheckBox(name)
-    private class ContentRatingFilter(contentRating: List<ContentRating>) :
-        Filter.Group<ContentRating>("Content Rating", contentRating)
-    private fun getContentRating() = listOf(
-        ContentRating("Ecchi", "ecchi"),
-        ContentRating("Gore", "gore"),
-        ContentRating("Sexual Violence", "sexual-violence"),
-        ContentRating("Smut", "smut"),
-    )
-
-    private class Theme(name: String, val id: String = name) : Filter.CheckBox(name)
-    private class ThemeFilter(themeList: List<Theme>) :
-        Filter.Group<Theme>("Story Theme", themeList)
-    private fun getTheme() = listOf(
-        Theme("Alien", "aliens"),
-        Theme("Animal", "animals"),
-        Theme("Cooking", "cooking"),
-        Theme("Crossdressing", "crossdressing"),
-        Theme("Delinquent", "delinquents"),
-        Theme("Demon", "demons"),
-        Theme("Ecchi", "ecchi"),
-        Theme("Gal", "gyaru"),
-        Theme("Genderswap", "genderswap"),
-        Theme("Ghost", "ghosts"),
-        Theme("Harem", "harem"),
-        Theme("Incest", "incest"),
-        Theme("Loli", "loli"),
-        Theme("Mafia", "mafia"),
-        Theme("Magic", "magic"),
-        Theme("Martial Arts", "martial-arts"),
-        Theme("Military", "military"),
-        Theme("Monster Girls", "monster-girls"),
-        Theme("Monsters", "monsters"),
-        Theme("Music", "music"),
-        Theme("Ninja", "ninja"),
-        Theme("Office Workers", "office-workers"),
-        Theme("Police", "police"),
-        Theme("Post-Apocalyptic", "post-apocalyptic"),
-        Theme("Reincarnation", "reincarnation"),
-        Theme("Reverse Harem", "reverse-harem"),
-        Theme("Samurai", "samurai"),
-        Theme("School Life", "school-life"),
-        Theme("Shota", "shota"),
-        Theme("Smut", "smut"),
-        Theme("Supernatural", "supernatural"),
-        Theme("Survival", "survival"),
-        Theme("Time Travel", "time-travel"),
-        Theme("Traditional Games", "traditional-games"),
-        Theme("Vampires", "vampires"),
-        Theme("Video Games", "video-games"),
-        Theme("Villainess", "villainess"),
-        Theme("Virtual Reality", "virtual-reality"),
-        Theme("Zombies", "zombies"),
-    )
-
-    private class Genre(name: String, val id: String = name) : Filter.CheckBox(name)
-    private class GenreFilter(genreList: List<Genre>) :
-        Filter.Group<Genre>("Genre", genreList)
-    private fun getGenre() = listOf(
-        Genre("Action", "action"),
-        Genre("Adventure", "adventure"),
-        Genre("Comedy", "comedy"),
-        Genre("Crime", "crime"),
-        Genre("Drama", "drama"),
-        Genre("Fantasy", "fantasy"),
-        Genre("Girls Love", "girls-love"),
-        Genre("Harem", "harem"),
-        Genre("Historical", "historical"),
-        Genre("Horror", "horror"),
-        Genre("Isekai", "isekai"),
-        Genre("Magical Girls", "magical-girls"),
-        Genre("Mecha", "mecha"),
-        Genre("Medical", "medical"),
-        Genre("Philosophical", "philosophical"),
-        Genre("Psychological", "psychological"),
-        Genre("Romance", "romance"),
-        Genre("Sci-Fi", "sci-fi"),
-        Genre("Shoujo Ai", "shoujo-ai"),
-        Genre("Shounen Ai", "shounen-ai"),
-        Genre("Slice of Life", "slice-of-life"),
-        Genre("Sports", "sports"),
-        Genre("Superhero", "superhero"),
-        Genre("Thriller", "thriller"),
-        Genre("Tragedy", "tragedy"),
-        Genre("Wuxia", "wuxia"),
-        Genre("Yuri", "yuri"),
-    )
-
-    private open class UriPartFilter(displayName: String, val vals: Array<Pair<String, String>>) :
-        Filter.Select<String>(displayName, vals.map { it.first }.toTypedArray()) {
-        fun toUriPart() = vals[state].second
     }
 }
