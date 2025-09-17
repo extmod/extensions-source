@@ -62,7 +62,7 @@ class KomikV : ParsedHttpSource() {
     val thumb = element.selectFirst("img")?.let { img ->
         val originalUrl = img.absUrl("data-src").ifEmpty { img.absUrl("src") }
         if (originalUrl.isNotEmpty()) {
-            val processedUrl = originalUrl.replace("komikcast.lol", "komikcast.li")
+            val processedUrl = originalUrl.replace(".lol", ".li")
             "https://wsrv.nl/?w=150&h=110&url=$processedUrl"
         } else {
             ""
