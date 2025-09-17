@@ -145,23 +145,24 @@ class KomikV : ParsedHttpSource() {
     }
 
     override fun mangaDetailsParse(document: Document): SManga {
-        return SManga.create().apply {
-            title = document.selectFirst("h1.text-xl")?.text()?.trim().orEmpty()
-            author = document.select("a[href*=\"/tax/author/\"]").joinToString(", ") { it.text().trim() }
-            description = document.selectFirst(".mt-4.w-full p")?.text()?.trim().orEmpty()
-            genre = (document.select(".mt-4.w-full a.text-md.mb-1").map { it.text().trim() } +
-                    document.select(".bg-red-800").map { it.text().trim() })
-                .joinToString(", ")
-            status = parseStatus(document.selectFirst(".bg-green-800")?.text().orEmpty())
-            thumbnail_url = document.selectFirst("img.neu-active")?.absUrl("src")?.let { originalUrl ->
-                if (originalUrl.isNotEmpty()) {
-                    "https://wsrv.nl/?w=150&h=110&url=$originalUrl"
-                } else {
-                    ""
-                }
-            }.orEmpty()
-        }
+    return SManga.create().apply {
+        title = document.selectFirst("h1.text-xl")?.text()?.trim().orEmpty()
+        author = document.select("a[href*=\"/tax/author/\"]").joinToString(", ") { it.text().trim() }
+        description = document.selectFirst(".mt-4.w-full p")?.text()?.trim().orEmpty()
+        genre = (document.select(".mt-4.w-full a.text-md.mb-1").map { it.text().trim() } +
+                document.select(".bg-red-800").map { it.text().trim() })
+            .joinToString(", ")
+        status = parseStatus(document.selectFirst(".bg-green-800")?.text().orEmpty())
+        thumbnail_url = document.selectFirst("img.neu-active")?.absUrl("src")?.let { originalUrl ->
+            if (originalUrl.isNotEmpty()) {
+                val processedUrl = originalUrl.replace(".lol", ".li")
+                "https://wsrv.nl/?w=150&h=110&url=$processedUrl"
+            } else {
+                ""
+            }
+        }.orEmpty()
     }
+}
 
     private fun parseStatus(statusString: String): Int = when {
         statusString.contains("on-going", ignoreCase = true) -> SManga.ONGOING
