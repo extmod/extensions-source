@@ -1,19 +1,15 @@
 package eu.kanade.tachiyomi.extension.id.av
 
 import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.source.model.Filter
 import eu.kanade.tachiyomi.source.model.FilterList
-import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.ParsedHttpSource
-import okhttp3.FormBody
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import java.text.ParseException
@@ -48,7 +44,7 @@ class AV : ParsedHttpSource() {
         manga.setUrlWithoutDomain(linkElement.attr("href"))
         manga.title = linkElement.selectFirst("img")?.attr("alt") ?: ""
         manga.thumbnail_url = linkElement.selectFirst("img")?.attr("data-src") ?: 
-                              linkElement.selectFirst("img")?.attr("src")
+            linkElement.selectFirst("img")?.attr("src")
         
         return manga
     }
@@ -113,15 +109,24 @@ class AV : ParsedHttpSource() {
         val infoElement = document.selectFirst("div.mx-auto.min-h-screen")
         
         manga.title = document.selectFirst("h1, .manga-title")?.text() ?: 
-                      document.selectFirst("title")?.text()?.split(" - ")?.get(0) ?: ""
+            document.selectFirst("title")?.text()?.split(" - ")?.get(0) ?: ""
         
-        manga.author = infoElement?.selectFirst("*:contains(Author) + *, *:contains(Pengarang) + *")?.text()?.trim()
-        manga.artist = infoElement?.selectFirst("*:contains(Artist) + *, *:contains(Seniman) + *")?.text()?.trim()
+        manga.author = infoElement?.selectFirst(
+            "*:contains(Author) + *, *:contains(Pengarang) + *"
+        )?.text()?.trim()
         
-        val genreElements = infoElement?.select("*:contains(Genre) + * a, *:contains(Kategori) + * a")
+        manga.artist = infoElement?.selectFirst(
+            "*:contains(Artist) + *, *:contains(Seniman) + *"
+        )?.text()?.trim()
+        
+        val genreElements = infoElement?.select(
+            "*:contains(Genre) + * a, *:contains(Kategori) + * a"
+        )
         manga.genre = genreElements?.joinToString(", ") { it.text() }
         
-        val statusText = infoElement?.selectFirst("*:contains(Status) + *, *:contains(Status) + span")?.text()
+        val statusText = infoElement?.selectFirst(
+            "*:contains(Status) + *, *:contains(Status) + span"
+        )?.text()
         manga.status = when {
             statusText?.contains("Ongoing", true) == true -> SManga.ONGOING
             statusText?.contains("Completed", true) == true -> SManga.COMPLETED
@@ -130,22 +135,27 @@ class AV : ParsedHttpSource() {
             else -> SManga.UNKNOWN
         }
         
-        manga.description = infoElement?.selectFirst("*:contains(Synopsis) + *, *:contains(Sinopsis) + *, .summary")?.text()?.trim()
+        manga.description = infoElement?.selectFirst(
+            "*:contains(Synopsis) + *, *:contains(Sinopsis) + *, .summary"
+        )?.text()?.trim()
         
-        manga.thumbnail_url = document.selectFirst("img[alt*=\"${manga.title}\"], .manga-cover img, .cover img")?.attr("abs:src")
+        manga.thumbnail_url = document.selectFirst(
+            "img[alt*=\"${manga.title}\"], .manga-cover img, .cover img"
+        )?.attr("abs:src")
         
         return manga
     }
 
     // Chapter List
-    override fun chapterListSelector(): String = "div.grid.grid-cols-1.gap-2 a, .chapter-list a, a[href*=/chapter-]"
+    override fun chapterListSelector(): String = 
+        "div.grid.grid-cols-1.gap-2 a, .chapter-list a, a[href*=/chapter-]"
 
     override fun chapterFromElement(element: Element): SChapter {
         val chapter = SChapter.create()
         
         chapter.setUrlWithoutDomain(element.attr("href"))
         chapter.name = element.selectFirst("*:contains(Ch.)")?.text()?.trim() ?: 
-                       element.text().trim()
+            element.text().trim()
         
         val dateText = element.selectFirst("span.float-right, .chapter-date")?.text()
         chapter.date_upload = parseDate(dateText)
@@ -158,7 +168,9 @@ class AV : ParsedHttpSource() {
         val pages = mutableListOf<Page>()
         
         // Try multiple selectors for images
-        val imageElements = document.select("img[src*=cdn], img[data-src*=cdn], .chapter-images img, .reading-content img")
+        val imageElements = document.select(
+            "img[src*=cdn], img[data-src*=cdn], .chapter-images img, .reading-content img"
+        )
         
         imageElements.forEachIndexed { index, element ->
             val imageUrl = element.attr("data-src").ifEmpty { 
@@ -183,13 +195,24 @@ class AV : ParsedHttpSource() {
             Filter.Header("NOTE: Filters may not work with search!"),
             GenreFilter(),
             StatusFilter(),
-            TypeFilter()
+            TypeFilter(),
         )
     }
 
-    private class GenreFilter : Filter.Select<String>("Genre", getGenreList().map { it.first }.toTypedArray())
-    private class StatusFilter : Filter.Select<String>("Status", getStatusList().map { it.first }.toTypedArray())
-    private class TypeFilter : Filter.Select<String>("Type", getTypeList().map { it.first }.toTypedArray())
+    private class GenreFilter : Filter.Select<String>(
+        "Genre",
+        getGenreList().map { it.first }.toTypedArray(),
+    )
+    
+    private class StatusFilter : Filter.Select<String>(
+        "Status", 
+        getStatusList().map { it.first }.toTypedArray(),
+    )
+    
+    private class TypeFilter : Filter.Select<String>(
+        "Type",
+        getTypeList().map { it.first }.toTypedArray(),
+    )
 
     // Helper Functions
     private fun parseDate(dateString: String?): Long {
@@ -237,7 +260,8 @@ class AV : ParsedHttpSource() {
                     
                     for (format in formats) {
                         try {
-                            return SimpleDateFormat(format, Locale.ENGLISH).parse(dateString)?.time ?: 0L
+                            return SimpleDateFormat(format, Locale.ENGLISH)
+                                .parse(dateString)?.time ?: 0L
                         } catch (e: ParseException) {
                             continue
                         }
