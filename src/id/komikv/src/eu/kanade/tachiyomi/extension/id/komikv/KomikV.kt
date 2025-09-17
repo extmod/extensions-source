@@ -133,7 +133,7 @@ class KomikV : ParsedHttpSource() {
     override fun searchMangaParse(response: Response): MangasPage {
         val document = Jsoup.parse(response.body?.string().orEmpty(), baseUrl)
         val currentUrl = response.request.url.toString()
-        val currentPage = Regex("""page=(\\d+)""").find(currentUrl)?.groupValues?.get(1)?.toIntOrNull() ?: 1
+        val currentPage = Regex("""page=(\d+)""").find(currentUrl)?.groupValues?.get(1)?.toIntOrNull() ?: 1
         
         // Check for "No Result" indicator
         val noResultElement = document.selectFirst("*:contains(No Result)")
@@ -188,7 +188,7 @@ class KomikV : ParsedHttpSource() {
     override fun mangaDetailsParse(document: Document): SManga {
         return SManga.create().apply {
             title = document.selectFirst("h1.text-xl")?.text()?.trim().orEmpty()
-            author = document.select("a[href*=\\"/tax/author/\\"]").joinToString(", ") { it.text().trim() }
+            author = document.select("a[href*=\"/tax/author/\"]").joinToString(", ") { it.text().trim() }
             description = document.selectFirst(".mt-4.w-full p")?.text()?.trim().orEmpty()
             genre = (document.select(".mt-4.w-full a.text-md.mb-1").map { it.text().trim() } +
                     document.select(".bg-red-800").map { it.text().trim() })
@@ -236,12 +236,12 @@ class KomikV : ParsedHttpSource() {
             }
         }
         if (dateText.isNullOrBlank()) {
-            val r = Regex("""(?:(\\d+)\\s*)?(detik|dtk|menit|mnt|jam|hari|mgg|minggu|bln|bulan|thn|tahun)\\b""", RegexOption.IGNORE_CASE)
+            val r = Regex("""(?:(\d+)\s*)?(detik|dtk|menit|mnt|jam|hari|mgg|minggu|bln|bulan|thn|tahun)\b""", RegexOption.IGNORE_CASE)
             val m = r.find(element.text())
             if (m != null) dateText = m.value
         }
         chapter.date_upload = parseChapterDate(dateText ?: "")
-        val numberRegex = Regex("""(\\d+(?:[.,]\\d+)?)""")
+        val numberRegex = Regex("""(\d+(?:[.,]\d+)?)""")
         val numberMatch = numberRegex.find(chapter.name)
         chapter.chapter_number = numberMatch?.value?.replace(",", ".")?.toFloatOrNull() ?: 0f
         return chapter
@@ -249,7 +249,7 @@ class KomikV : ParsedHttpSource() {
 
     private fun parseChapterDate(date: String): Long {
         val txt = date.lowercase().trim()
-        val regex = Regex("""(?:(\\d+)\\s*)?(detik|dtk|menit|mnt|jam|hari|mgg|minggu|bln|bulan|thn|tahun)\\b""")
+        val regex = Regex("""(?:(\d+)\s*)?(detik|dtk|menit|mnt|jam|hari|mgg|minggu|bln|bulan|thn|tahun)\b""")
         val match = regex.find(txt)
         if (match != null) {
             val valueStr = match.groupValues[1]
