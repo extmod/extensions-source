@@ -61,6 +61,11 @@ class KomikV : ParsedHttpSource() {
         }.orEmpty()
     }
 
+    // WAJIB override popularMangaFromElement!
+    override fun popularMangaFromElement(element: Element): SManga {
+        return searchMangaFromElement(element)
+    }
+
     override fun latestUpdatesFromElement(element: Element): SManga {
         return searchMangaFromElement(element)
     }
@@ -79,9 +84,10 @@ class KomikV : ParsedHttpSource() {
 
     override fun popularMangaSelector(): String = "div.grid div.overflow-hidden"
 
+    // Latest selector harus String, bukan string?
+    override fun latestUpdatesSelector(): String = popularMangaSelector()
+
     override fun latestUpdatesNextPageSelector(): String? = null
-    
-    override fun latestUpdatesSelector(): string? = null
 
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
         if (page == 1) resetSeen()
