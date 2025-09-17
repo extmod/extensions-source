@@ -7,6 +7,7 @@ import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.online.ParsedHttpSource
+import eu.kanade.tachiyomi.util.asJsoup
 import okhttp3.Headers
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -79,14 +80,8 @@ class KomikV : ParsedHttpSource() {
     override fun popularMangaSelector(): String = "div.grid div.overflow-hidden"
 
     override fun latestUpdatesNextPageSelector(): String? = null
-
-    override fun latestUpdatesParse(response: Response): MangasPage {
-        val document = response.asJsoup()
-        val mangas = document.select(popularMangaSelector())
-            .map { element: Element -> searchMangaFromElement(element) }
-            .filter { manga: SManga -> manga.url.isNotBlank() && manga.title.isNotBlank() && seenUrls.add(manga.url) }
-        return MangasPage(mangas, true)
-    }
+    
+    override fun latestUpdatesSelector(): string? = null
 
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
         if (page == 1) resetSeen()
