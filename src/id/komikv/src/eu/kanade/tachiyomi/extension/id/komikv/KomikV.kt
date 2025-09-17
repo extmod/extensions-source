@@ -132,14 +132,46 @@ class KomikV : ParsedHttpSource() {
     override fun searchMangaNextPageSelector(): String? = null
 
     override fun searchMangaParse(response: Response): MangasPage {
-    val document = Jsoup.parse(response.body?.string().orEmpty(), baseUrl)
-    
-    val results = document.select(searchMangaSelector())
-        .map { searchMangaFromElement(it) }
-        .filter { it.url.isNotBlank() && it.title.isNotBlank() }
-        .distinctBy { it.url }
+    val body = response.body?.string().orEmpty()
+    val document = Jsoup.parse(body, baseUrl)
+    val currentUrl = response.request.url.toString()
+    val currentPage = Regex("""[?&]page=(\d+)""").find(currentUrl)?.groupValues?.get(1)?.toIntOrNull() ?: 1
 
-    return MangasPage(results, false)
+    // 1) Deteksi teks "no result" (varian bahasa Inggris/Indonesia)
+    val noResultRegex = Regex("""(?i)(no result|no results|no results found|tidak ada hasil|hasil tidak ditemukan)""")
+    if (noResultRegex.containsMatchIn(document.text())) {
+        // jangan throw, kembalikan halaman kosong supaya tidak muncul popup
+        return MangasPage(emptyList(), false)
+    }
+
+    // 2) Ambil elemen hasil pencarian (grid/list)
+    val elements = document.select(searchMangaSelector())
+    if (elements.isEmpty()) {
+        // kalau grid kosong (kemungkinan popup client-side atau halaman kosong), kembalikan halaman kosong
+        return MangasPage(emptyList(), false)
+    }
+
+    // 3) Parse elemen ke objek Manga — pakai try/catch supaya parsing error tidak melempar NoResultsException
+    val allResults = elements.mapNotNull { el ->
+        try {
+            searchMangaFromElement(el)
+        } catch (e: Exception) {
+            // log jika perlu, tapi jangan lempar NoResultsException
+            null
+        }
+    }.filter { it.url.isNotBlank() && it.title.isNotBlank() }
+
+    // 4) Jika setelah parsing tidak ada hasil valid, kembalikan kosong (jangan throw)
+    if (allResults.isEmpty()) {
+        return MangasPage(emptyList(), false)
+    }
+
+    // 5) Hilangkan duplikat dan tentukan paging sederhana
+    val unique = allResults.distinctBy { it.url }
+    val pageSize = 18 // sesuaikan kalau situsmu memakai jumlah item per page lain
+    val hasNext = unique.size >= pageSize
+
+    return MangasPage(unique, hasNext)
 }
 
     override fun mangaDetailsParse(document: Document): SManga {
