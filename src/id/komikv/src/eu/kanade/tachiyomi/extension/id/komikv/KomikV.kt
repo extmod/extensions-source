@@ -132,58 +132,15 @@ class KomikV : ParsedHttpSource() {
     override fun searchMangaNextPageSelector(): String? = null
 
     override fun searchMangaParse(response: Response): MangasPage {
-        val document = Jsoup.parse(response.body?.string().orEmpty(), baseUrl)
-        val currentUrl = response.request.url.toString()
-        val currentPage = Regex("""page=(\d+)""").find(currentUrl)?.groupValues?.get(1)?.toIntOrNull() ?: 1
-        
-        // Check for "No Result" indicator
-        val noResultElement = document.selectFirst("*:contains(No Result)")
-        if (noResultElement != null) {
-            return MangasPage(emptyList(), false)
-        }
-        
-        val allResults = document.select(searchMangaSelector())
-            .map { searchMangaFromElement(it) }
-            .filter { it.url.isNotBlank() && it.title.isNotBlank() }
-        
-        // If no results found in grid
-        if (allResults.isEmpty()) {
-            return MangasPage(emptyList(), false)
-        }
-        
-        // Get current search query from URL
-        val searchQuery = Regex("""/search/([^/?]+)""").find(currentUrl)?.groupValues?.get(1)?.let { 
-            URLDecoder.decode(it, "UTF-8") 
-        } ?: ""
-        
-        // Create a unique key for this search query and page combination
-        val resultUrls = allResults.map { it.url }.toSet()
-        
-        // Check if we've seen these exact results before for this search
-        val previousResults = searchResultsCache[searchQuery] ?: emptySet()
-        val hasIdenticalResults = previousResults.isNotEmpty() && previousResults == resultUrls
-        
-        // Update cache with current results
-        searchResultsCache[searchQuery] = resultUrls
-        
-        val newMangas = allResults
-            .distinctBy { it.url }
-            .filter { seenUrls.add(it.url) }
-        
-        // Determine if there's a next page
-        val hasNextPage = when {
-            // If we found identical results to previous pages, no more unique content
-            hasIdenticalResults && currentPage > 1 -> false
-            // If no new mangas after filtering duplicates and we're past page 1
-            newMangas.isEmpty() && currentPage > 1 -> false
-            // If we have fewer results than expected (typically indicates last page)
-            newMangas.size < 18 && currentPage > 1 -> false
-            // Otherwise, assume there might be more pages
-            else -> newMangas.isNotEmpty()
-        }
-        
-        return MangasPage(newMangas, hasNextPage)
-    }
+    val document = Jsoup.parse(response.body?.string().orEmpty(), baseUrl)
+    
+    val results = document.select(searchMangaSelector())
+        .map { searchMangaFromElement(it) }
+        .filter { it.url.isNotBlank() && it.title.isNotBlank() }
+        .distinctBy { it.url }
+
+    return MangasPage(results, false)
+}
 
     override fun mangaDetailsParse(document: Document): SManga {
         return SManga.create().apply {
