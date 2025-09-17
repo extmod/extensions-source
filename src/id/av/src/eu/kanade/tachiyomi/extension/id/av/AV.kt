@@ -40,12 +40,12 @@ class AV : ParsedHttpSource() {
     override fun popularMangaFromElement(element: Element): SManga {
         val manga = SManga.create()
         val linkElement = element.selectFirst("a[href*=/manga/]")!!
-        
+
         manga.setUrlWithoutDomain(linkElement.attr("href"))
         manga.title = linkElement.selectFirst("img")?.attr("alt") ?: ""
-        manga.thumbnail_url = linkElement.selectFirst("img")?.attr("data-src") ?: 
-            linkElement.selectFirst("img")?.attr("src")
-        
+        manga.thumbnail_url = linkElement.selectFirst("img")?.attr("data-src")
+            ?: linkElement.selectFirst("img")?.attr("src")
+
         return manga
     }
 
@@ -69,7 +69,7 @@ class AV : ParsedHttpSource() {
         val url = "$baseUrl/search".toHttpUrl().newBuilder()
         url.addQueryParameter("q", query)
         if (page > 1) url.addQueryParameter("page", page.toString())
-        
+
         filters.forEach { filter ->
             when (filter) {
                 is GenreFilter -> {
@@ -90,7 +90,7 @@ class AV : ParsedHttpSource() {
                 else -> {}
             }
         }
-        
+
         return GET(url.build().toString(), headers)
     }
 
@@ -105,27 +105,27 @@ class AV : ParsedHttpSource() {
     // Manga Details
     override fun mangaDetailsParse(document: Document): SManga {
         val manga = SManga.create()
-        
+
         val infoElement = document.selectFirst("div.mx-auto.min-h-screen")
-        
-        manga.title = document.selectFirst("h1, .manga-title")?.text() ?: 
-            document.selectFirst("title")?.text()?.split(" - ")?.get(0) ?: ""
-        
+
+        manga.title = document.selectFirst("h1, .manga-title")?.text()
+            ?: document.selectFirst("title")?.text()?.split(" - ")?.get(0) ?: ""
+
         manga.author = infoElement?.selectFirst(
-            "*:contains(Author) + *, *:contains(Pengarang) + *"
+            "*:contains(Author) + *, *:contains(Pengarang) + *",
         )?.text()?.trim()
-        
+
         manga.artist = infoElement?.selectFirst(
-            "*:contains(Artist) + *, *:contains(Seniman) + *"
+            "*:contains(Artist) + *, *:contains(Seniman) + *",
         )?.text()?.trim()
-        
+
         val genreElements = infoElement?.select(
-            "*:contains(Genre) + * a, *:contains(Kategori) + * a"
+            "*:contains(Genre) + * a, *:contains(Kategori) + * a",
         )
         manga.genre = genreElements?.joinToString(", ") { it.text() }
-        
+
         val statusText = infoElement?.selectFirst(
-            "*:contains(Status) + *, *:contains(Status) + span"
+            "*:contains(Status) + *, *:contains(Status) + span",
         )?.text()
         manga.status = when {
             statusText?.contains("Ongoing", true) == true -> SManga.ONGOING
@@ -134,56 +134,56 @@ class AV : ParsedHttpSource() {
             statusText?.contains("Berjalan", true) == true -> SManga.ONGOING
             else -> SManga.UNKNOWN
         }
-        
+
         manga.description = infoElement?.selectFirst(
-            "*:contains(Synopsis) + *, *:contains(Sinopsis) + *, .summary"
+            "*:contains(Synopsis) + *, *:contains(Sinopsis) + *, .summary",
         )?.text()?.trim()
-        
+
         manga.thumbnail_url = document.selectFirst(
-            "img[alt*=\"${manga.title}\"], .manga-cover img, .cover img"
+            "img[alt*=\"${manga.title}\"], .manga-cover img, .cover img",
         )?.attr("abs:src")
-        
+
         return manga
     }
 
     // Chapter List
-    override fun chapterListSelector(): String = 
+    override fun chapterListSelector(): String =
         "div.grid.grid-cols-1.gap-2 a, .chapter-list a, a[href*=/chapter-]"
 
     override fun chapterFromElement(element: Element): SChapter {
         val chapter = SChapter.create()
-        
+
         chapter.setUrlWithoutDomain(element.attr("href"))
-        chapter.name = element.selectFirst("*:contains(Ch.)")?.text()?.trim() ?: 
-            element.text().trim()
-        
+        chapter.name = element.selectFirst("*:contains(Ch.)")?.text()?.trim()
+            ?: element.text().trim()
+
         val dateText = element.selectFirst("span.float-right, .chapter-date")?.text()
         chapter.date_upload = parseDate(dateText)
-        
+
         return chapter
     }
 
     // Page List
     override fun pageListParse(document: Document): List<Page> {
         val pages = mutableListOf<Page>()
-        
+
         // Try multiple selectors for images
         val imageElements = document.select(
-            "img[src*=cdn], img[data-src*=cdn], .chapter-images img, .reading-content img"
+            "img[src*=cdn], img[data-src*=cdn], .chapter-images img, .reading-content img",
         )
-        
+
         imageElements.forEachIndexed { index, element ->
-            val imageUrl = element.attr("data-src").ifEmpty { 
-                element.attr("src") 
+            val imageUrl = element.attr("data-src").ifEmpty {
+                element.attr("src")
             }.ifEmpty {
                 element.attr("data-lazy-src")
             }
-            
+
             if (imageUrl.isNotEmpty()) {
                 pages.add(Page(index, "", imageUrl))
             }
         }
-        
+
         return pages
     }
 
@@ -203,12 +203,12 @@ class AV : ParsedHttpSource() {
         "Genre",
         getGenreList().map { it.first }.toTypedArray(),
     )
-    
+
     private class StatusFilter : Filter.Select<String>(
-        "Status", 
+        "Status",
         getStatusList().map { it.first }.toTypedArray(),
     )
-    
+
     private class TypeFilter : Filter.Select<String>(
         "Type",
         getTypeList().map { it.first }.toTypedArray(),
@@ -217,7 +217,7 @@ class AV : ParsedHttpSource() {
     // Helper Functions
     private fun parseDate(dateString: String?): Long {
         if (dateString.isNullOrEmpty()) return 0L
-        
+
         return try {
             when {
                 dateString.contains("mnt lalu", true) -> {
@@ -255,13 +255,15 @@ class AV : ParsedHttpSource() {
                     val formats = arrayOf(
                         "yyyy-MM-dd",
                         "dd/MM/yyyy",
-                        "dd-MM-yyyy"
+                        "dd-MM-yyyy",
                     )
-                    
+
                     for (format in formats) {
                         try {
-                            return SimpleDateFormat(format, Locale.ENGLISH)
-                                .parse(dateString)?.time ?: 0L
+                            return SimpleDateFormat(
+                                format,
+                                Locale.ENGLISH,
+                            ).parse(dateString)?.time ?: 0L
                         } catch (e: ParseException) {
                             continue
                         }
@@ -278,7 +280,7 @@ class AV : ParsedHttpSource() {
         fun getGenreList() = listOf(
             "All" to "",
             "Action" to "action",
-            "Adventure" to "adventure", 
+            "Adventure" to "adventure",
             "Comedy" to "comedy",
             "Drama" to "drama",
             "Fantasy" to "fantasy",
@@ -292,20 +294,20 @@ class AV : ParsedHttpSource() {
             "Shounen" to "shounen",
             "Slice of Life" to "slice-of-life",
             "Sports" to "sports",
-            "Supernatural" to "supernatural"
+            "Supernatural" to "supernatural",
         )
 
         fun getStatusList() = listOf(
             "All" to "",
             "Ongoing" to "ongoing",
-            "Completed" to "completed"
+            "Completed" to "completed",
         )
 
         fun getTypeList() = listOf(
             "All" to "",
             "Manga" to "manga",
-            "Manhwa" to "manhwa", 
-            "Manhua" to "manhua"
+            "Manhwa" to "manhwa",
+            "Manhua" to "manhua",
         )
     }
 }
