@@ -138,17 +138,14 @@ class KomikV : ParsedHttpSource() {
     val elements = document.select(searchMangaSelector())
     if (elements.isEmpty()) return MangasPage(emptyList(), false)
 
-    val allResults = elements.mapNotNull {
+    val mangas = elements.mapNotNull {
         try { searchMangaFromElement(it) } catch (_: Exception) { null }
     }
 
-    val unique = allResults.distinctBy { it.url }
-    val pageSize = 18 // sesuaikan dengan jumlah per halaman situs
+    // cek apakah ada anchor menuju /manga/
+    val hasMangaAnchor = document.select("a[href*=/manga/]").isNotEmpty()
 
-    // Hanya logika sederhana: kalau hasil < pageSize, anggap habis
-    val hasNext = unique.size >= pageSize
-
-    return MangasPage(unique, hasNext)
+    return MangasPage(mangas.distinctBy { it.url }, hasMangaAnchor)
 }
 
     override fun mangaDetailsParse(document: Document): SManga {
