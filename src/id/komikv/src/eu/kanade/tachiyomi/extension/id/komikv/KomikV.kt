@@ -11,7 +11,6 @@ import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.online.ParsedHttpSource
 import okhttp3.Headers
 import okhttp3.OkHttpClient
-import eu.kanade.tachiyomi.util.asJsoup
 import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.Jsoup
@@ -136,29 +135,56 @@ class KomikV : ParsedHttpSource() {
     override fun searchMangaParse(response: Response): MangasPage {
     val document = response.asJsoup()
 
-    // ambil semua link ke manga
-    val mangaElements = document.select("a[href^=/manga/]")
+    // Ambil semua <a> yang href-nya mulai dengan /manga/
+    val anchors = document.select("a[href^=/manga/]")
 
-    // kalau kosong, berarti tidak ada hasil -> stop paginasi
-    if (mangaElements.isEmpty()) {
+    // Jika kosong -> hentikan paginasi
+    if (anchors.isEmpty()) {
         return MangasPage(emptyList(), hasNextPage = false)
     }
 
-    val mangas = mangaElements.map { a ->
-        SManga.create().apply {
-            setUrlWithoutDomain(a.attr("href"))
+    val seen = LinkedHashSet<String>() // preserve order, unik berdasarkan href
+    val mangas = mutableListOf<SManga>()
 
-            // judul ambil dari <h2> atau fallback alt img
-            title = a.selectFirst("h2")?.text()
-                ?: a.selectFirst("img")?.attr("alt").orEmpty()
+    for (a in anchors) {
+        val rawHref = a.attr("href").trim()
+        if (rawHref.isEmpty()) continue
 
-            // thumbnail pakai data-src kalau ada, fallback ke src
-            thumbnail_url = a.selectFirst("img")?.let { img ->
-                img.attr("data-src").ifBlank { img.attr("src") }
-            }
+        // Normalisasi: buang fragment/hash dan utamakan path + query (jika ada)
+        val normalized = rawHref.substringBefore('#').substringBefore('?') // kalau mau simpan query, jangan substringBefore('?')
+
+        // Skip kalau sudah pernah diproses
+        if (!seen.add(normalized)) continue
+
+        // Ambil judul: prioritas h2, lalu alt img, lalu teks anchor
+        val title = a.selectFirst("h2")?.text()
+            ?: a.selectFirst("img")?.attr("alt")
+            ?: a.text()
+            ?: "Unknown"
+
+        // Ambil thumbnail: prefer data-src, data-srcset, lalu src
+        val img = a.selectFirst("img")
+        val thumb = img?.attr("data-src")
+            ?.takeIf { it.isNotBlank() }
+            ?: img?.attr("data-srcset")?.split("\\s+".toRegex())?.firstOrNull()
+            ?: img?.attr("src")
+
+        val manga = SManga.create().apply {
+            setUrlWithoutDomain(normalized)
+            this.title = title.trim()
+            thumbnail_url = thumb?.trim()
         }
+
+        mangas += manga
     }
 
+    // Jika setelah dedupe jadi kosong -> stop
+    if (mangas.isEmpty()) {
+        return MangasPage(emptyList(), hasNextPage = false)
+    }
+
+    // Kembalikan hasil dan beri tanda ada page berikutnya.
+    // Paginasi akan berhenti ketika halaman berikutnya tidak berisi <a href^=/manga/>.
     return MangasPage(mangas, hasNextPage = true)
 }
 
