@@ -1,0 +1,7 @@
+ext {
+    extName = 'av'
+    extClass = '.AV'
+    extVersionCode = 1
+}
+
+apply from: "$rootDir/common.gradle"
