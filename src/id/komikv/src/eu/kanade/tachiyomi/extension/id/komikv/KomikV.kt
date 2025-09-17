@@ -64,26 +64,20 @@ class KomikV : ParsedHttpSource() {
     override fun latestUpdatesFromElement(element: Element): SManga {
         return searchMangaFromElement(element)
     }
+    
+    override fun imageUrlParse(document: Document): String = throw UnsupportedOperationException()
 
     override fun popularMangaRequest(page: Int): Request {
         if (page <= 1) resetSeen()
         return GET("$baseUrl/popular/?page=$page", headers)
     }
-
-    override fun popularMangaSelector(): String = "div.grid div.overflow-hidden"
-
-    override fun popularMangaParse(response: Response): MangasPage {
-        val document = parseAsJsoup(response)
-        val mangas = document.select(popularMangaSelector())
-            .map { element: Element -> searchMangaFromElement(element) }
-            .filter { manga: SManga -> manga.url.isNotBlank() && manga.title.isNotBlank() && seenUrls.add(manga.url) }
-        return MangasPage(mangas, true)
-    }
-
+    
     override fun latestUpdatesRequest(page: Int): Request {
         if (page <= 1) resetSeen()
         return GET("$baseUrl/?page=$page&latest=1", headers)
     }
+
+    override fun popularMangaSelector(): String = "div.grid div.overflow-hidden"
     
     override fun latestUpdatesNextPageSelector(): String? = null
 
@@ -206,10 +200,5 @@ class KomikV : ParsedHttpSource() {
                 }
             }
         return pages
-    }
-
-    private fun parseAsJsoup(response: Response): Document {
-        val bodyString = response.body?.string().orEmpty()
-        return Jsoup.parse(bodyString)
     }
 }
