@@ -48,30 +48,31 @@ class KomikV : ParsedHttpSource() {
     private val dateFormat = SimpleDateFormat("dd MMM yyyy", Locale("id"))
 
     override fun searchMangaFromElement(element: Element): SManga {
-        val manga = SManga.create()
-        val title = listOf(
-            "h2 a", "h2", "a.title", "a[title]", "div.title a", "div > a > h2"
-        ).firstNotNullOfOrNull { sel ->
-            element.selectFirst(sel)?.text()?.trim()
-        } ?: element.text().trim()
-        val url = listOf(
-            "a[href]", "h2 a[href]", "div > a[href]"
-        ).mapNotNull { sel ->
-            element.selectFirst(sel)?.attr("href")
-        }.firstOrNull().orEmpty()
-        val thumb = element.selectFirst("img")?.let { img ->
-            val originalUrl = img.absUrl("data-src").ifEmpty { img.absUrl("src") }
-            if (originalUrl.isNotEmpty()) {
-                "https://wsrv.nl/?w=150&h=110&url=$originalUrl"
-            } else {
-                ""
-            }
-        }.orEmpty()
-        manga.title = title
-        manga.url = url
-        manga.thumbnail_url = thumb
-        return manga
-    }
+    val manga = SManga.create()
+    val title = listOf(
+        "h2 a", "h2", "a.title", "a[title]", "div.title a", "div > a > h2"
+    ).firstNotNullOfOrNull { sel ->
+        element.selectFirst(sel)?.text()?.trim()
+    } ?: element.text().trim()
+    val url = listOf(
+        "a[href]", "h2 a[href]", "div > a[href]"
+    ).mapNotNull { sel ->
+        element.selectFirst(sel)?.attr("href")
+    }.firstOrNull().orEmpty()
+    val thumb = element.selectFirst("img")?.let { img ->
+        val originalUrl = img.absUrl("data-src").ifEmpty { img.absUrl("src") }
+        if (originalUrl.isNotEmpty()) {
+            val processedUrl = originalUrl.replace("komikcast.lol", "komikcast.li")
+            "https://wsrv.nl/?w=150&h=110&url=$processedUrl"
+        } else {
+            ""
+        }
+    }.orEmpty()
+    manga.title = title
+    manga.url = url
+    manga.thumbnail_url = thumb
+    return manga
+}
 
     override fun popularMangaRequest(page: Int): Request {
         if (page <= 1) resetSeen()
