@@ -35,7 +35,7 @@ class KomikV : ParsedHttpSource() {
         private val seenUrls = mutableSetOf<String>()
         private var lastSearchLastUrl: String? = null
         private val searchResultsCache = mutableMapOf<String, Set<String>>()
-        
+
         fun resetSeen() {
             seenUrls.clear()
             lastSearchLastUrl = null
@@ -61,7 +61,6 @@ class KomikV : ParsedHttpSource() {
         }.orEmpty()
     }
 
-    // IMPLEMENTASI ABSTRACT MEMBER
     override fun latestUpdatesFromElement(element: Element): SManga {
         return searchMangaFromElement(element)
     }
@@ -85,6 +84,8 @@ class KomikV : ParsedHttpSource() {
         if (page <= 1) resetSeen()
         return GET("$baseUrl/?page=$page&latest=1", headers)
     }
+    
+    override fun latestUpdatesNextPageSelector(): String? = null
 
     override fun latestUpdatesParse(response: Response): MangasPage {
         val document = parseAsJsoup(response)
@@ -207,11 +208,6 @@ class KomikV : ParsedHttpSource() {
         return pages
     }
 
-    override fun imageUrlParse(document: Document): String {
-        return document.selectFirst("img")?.absUrl("src").orEmpty()
-    }
-
-    // Pengganti asJsoup jika tidak tersedia
     private fun parseAsJsoup(response: Response): Document {
         val bodyString = response.body?.string().orEmpty()
         return Jsoup.parse(bodyString)
