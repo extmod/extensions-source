@@ -84,6 +84,8 @@ class KomikV : ParsedHttpSource() {
     override fun popularMangaSelector(): String = "div.grid div.overflow-hidden"
 
     override fun popularMangaNextPageSelector(): String? = null
+    
+    override fun searchMangaNextPageSelector(): String? = null
 
     override fun latestUpdatesSelector(): String = popularMangaSelector()
 
