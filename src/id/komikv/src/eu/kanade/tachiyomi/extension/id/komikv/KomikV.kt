@@ -1,3 +1,5 @@
+package eu.kanade.tachiyomi.extension.id.komikv
+
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.Page
