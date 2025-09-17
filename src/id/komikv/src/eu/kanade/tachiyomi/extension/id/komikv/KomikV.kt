@@ -11,7 +11,6 @@ import okhttp3.Headers
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
-import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import java.net.URLEncoder
@@ -64,25 +63,25 @@ class KomikV : ParsedHttpSource() {
     override fun latestUpdatesFromElement(element: Element): SManga {
         return searchMangaFromElement(element)
     }
-    
+
     override fun imageUrlParse(document: Document): String = throw UnsupportedOperationException()
 
     override fun popularMangaRequest(page: Int): Request {
         if (page <= 1) resetSeen()
         return GET("$baseUrl/popular/?page=$page", headers)
     }
-    
+
     override fun latestUpdatesRequest(page: Int): Request {
         if (page <= 1) resetSeen()
         return GET("$baseUrl/?page=$page&latest=1", headers)
     }
 
     override fun popularMangaSelector(): String = "div.grid div.overflow-hidden"
-    
+
     override fun latestUpdatesNextPageSelector(): String? = null
 
     override fun latestUpdatesParse(response: Response): MangasPage {
-        val document = parseAsJsoup(response)
+        val document = response.asJsoup()
         val mangas = document.select(popularMangaSelector())
             .map { element: Element -> searchMangaFromElement(element) }
             .filter { manga: SManga -> manga.url.isNotBlank() && manga.title.isNotBlank() && seenUrls.add(manga.url) }
@@ -101,7 +100,7 @@ class KomikV : ParsedHttpSource() {
     }
 
     override fun searchMangaParse(response: Response): MangasPage {
-        val document = parseAsJsoup(response)
+        val document = response.asJsoup()
         val mangas = document.select(popularMangaSelector())
             .map { element: Element -> searchMangaFromElement(element) }
         return MangasPage(mangas, false)
@@ -178,7 +177,7 @@ class KomikV : ParsedHttpSource() {
     }
 
     override fun chapterListParse(response: Response): List<SChapter> {
-        val document = parseAsJsoup(response)
+        val document = response.asJsoup()
         val chapters = document.select(chapterListSelector())
             .map { element: Element -> chapterFromElement(element) }
             .filter { chapter: SChapter -> chapter.url.isNotEmpty() && chapter.name.isNotEmpty() }
