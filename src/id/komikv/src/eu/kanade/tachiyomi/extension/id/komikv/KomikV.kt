@@ -1,5 +1,3 @@
-package eu.kanade.tachiyomi.extension.id.komikv
-
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.Page
@@ -26,6 +24,7 @@ class KomikV : ParsedHttpSource() {
     override val supportsLatest = true
     override val client: OkHttpClient = network.cloudflareClient
 
+    // Override semua abstract member, bahkan yang defaultnya kosong/null jika diperlukan.
     override fun headersBuilder(): Headers.Builder = Headers.Builder()
         .add("Accept", "application/json, text/html, */*;q=0.8")
         .add("Accept-Language", "id-ID,id;q=0.9,en;q=0.8")
@@ -84,8 +83,10 @@ class KomikV : ParsedHttpSource() {
     override fun popularMangaSelector(): String = "div.grid div.overflow-hidden"
 
     override fun popularMangaNextPageSelector(): String? = null
-    
+
     override fun searchMangaNextPageSelector(): String? = null
+
+    override fun searchMangaSelector(): String = popularMangaSelector()
 
     override fun latestUpdatesSelector(): String = popularMangaSelector()
 
@@ -135,7 +136,7 @@ class KomikV : ParsedHttpSource() {
         else -> SManga.UNKNOWN
     }
 
-    override fun chapterListSelector() = "div.mt-4.flex.max-h-96.flex-col > a"
+    override fun chapterListSelector(): String = "div.mt-4.flex.max-h-96.flex-col > a"
 
     override fun chapterFromElement(element: Element): SChapter = SChapter.create().apply {
         setUrlWithoutDomain(element.attr("href"))
