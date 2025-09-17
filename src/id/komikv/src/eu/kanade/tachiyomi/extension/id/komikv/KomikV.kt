@@ -153,11 +153,10 @@ class KomikV : ParsedHttpSource() {
         
         // Get current search query from URL
         val searchQuery = Regex("""/search/([^/?]+)""").find(currentUrl)?.groupValues?.get(1)?.let { 
-            URLEncoder.decode(it, "UTF-8") 
+            URLDecoder.decode(it, "UTF-8") 
         } ?: ""
         
         // Create a unique key for this search query and page combination
-        val cacheKey = "${searchQuery}_page${currentPage}"
         val resultUrls = allResults.map { it.url }.toSet()
         
         // Check if we've seen these exact results before for this search
