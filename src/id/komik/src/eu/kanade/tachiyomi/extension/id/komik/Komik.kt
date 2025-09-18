@@ -38,10 +38,6 @@ class Komik : MangaThemesia("Komik", "https://komikcast.li", "id", "/daftar-komi
     private val preferences = Injekt.get<Application>().getSharedPreferences("source_$id", 0)
     override var baseUrl: String = preferences.getString("overrideBaseUrl", "https://komikcast.li") ?: "https://komikcast.li"
 
-    private fun ResizeCover(originalUrl: String): String {
-        return "https://wsrv.nl/?w=110&h=150&url=$originalUrl"
-    }
-
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
         .add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9")
         .add("Accept-language", "en-US,en;q=0.9,id;q=0.8")
@@ -120,9 +116,9 @@ class Komik : MangaThemesia("Komik", "https://komikcast.li", "id", "/daftar-komi
     override fun searchMangaSelector() = "div.list-update_item"
 
     override fun searchMangaFromElement(element: Element) = super.searchMangaFromElement(element).apply {
-        title = element.selectFirst("h3.title")?.ownText() ?: ""
-        thumbnail_url = ResizeCover(thumbnail_url ?: "")
-    }
+    title = element.selectFirst("h3")?.ownText() ?: ""
+    thumbnail_url = element.selectFirst("img")?.attr("data-src") ?: ""
+}
 
     override val seriesDetailsSelector = "div.komik_info:has(.komik_info-content)"
     override val seriesTitleSelector = "h1.komik_info-content-body-title"
@@ -133,35 +129,43 @@ class Komik : MangaThemesia("Komik", "https://komikcast.li", "id", "/daftar-komi
     override val seriesStatusSelector = ".komik_info-content-info:contains(Status)"
 
     override fun mangaDetailsParse(document: Document) = SManga.create().apply {
-        document.selectFirst(seriesDetailsSelector)?.let { seriesDetails ->
-            title = seriesDetails.selectFirst(seriesTitleSelector)?.text()
-                ?.replace("bahasa indonesia", "", ignoreCase = true)?.trim() ?: ""
-            artist = seriesDetails.selectFirst(seriesArtistSelector)?.ownText().removeEmptyPlaceholder()
-            author = seriesDetails.selectFirst(seriesAuthorSelector)?.ownText().removeEmptyPlaceholder()
-            description = seriesDetails.select(seriesDescriptionSelector).joinToString("\n") { it.text() }.trim()
-            // Add alternative name to manga description
-            val altName = seriesDetails.selectFirst(seriesAltNameSelector)?.ownText().takeIf { it.isNullOrBlank().not() }
-            altName?.let {
+    document.selectFirst(seriesDetailsSelector)?.let { seriesDetails ->
+        title = seriesDetails.selectFirst(seriesTitleSelector)?.text()
+            ?.replace("bahasa indonesia", "", ignoreCase = true)
+            ?.trim() ?: ""
+
+        artist = seriesDetails.selectFirst(seriesArtistSelector)?.ownText().removeEmptyPlaceholder()
+        author = seriesDetails.selectFirst(seriesAuthorSelector)?.ownText().removeEmptyPlaceholder()
+
+        description = seriesDetails.select(seriesDescriptionSelector)
+            .joinToString("\n") { it.text() }.trim()
+
+        // Tambahkan alternative name
+        seriesDetails.selectFirst(seriesAltNameSelector)?.ownText()
+            ?.takeIf { it.isNotBlank() }
+            ?.let { altName ->
                 description = "$description\n\n$altNamePrefix$altName".trim()
             }
-            val genres = seriesDetails.select(seriesGenreSelector).map { it.text() }.toMutableList()
-            // Add series type (manga/manhwa/manhua/other) to genre
-            seriesDetails.selectFirst(seriesTypeSelector)?.ownText().takeIf { it.isNullOrBlank().not() }?.let { genres.add(it) }
-            genre = genres.map { genre ->
-                genre.lowercase(Locale.forLanguageTag(lang)).replaceFirstChar { char ->
-                    if (char.isLowerCase()) {
-                        char.titlecase(Locale.forLanguageTag(lang))
-                    } else {
-                        char.toString()
-                    }
-                }
-            }
-                .joinToString { it.trim() }
 
-            status = seriesDetails.selectFirst(seriesStatusSelector)?.text().parseStatus()
-            thumbnail_url = ResizeCover(seriesDetails.select(seriesThumbnailSelector).imgAttr())
-        }
+        // Genre + type
+        val genres = seriesDetails.select(seriesGenreSelector).map { it.text() }.toMutableList()
+        seriesDetails.selectFirst(seriesTypeSelector)?.ownText()
+            ?.takeIf { it.isNotBlank() }
+            ?.let { genres.add(it) }
+
+        genre = genres.map { g ->
+            g.lowercase(Locale.forLanguageTag(lang)).replaceFirstChar { c ->
+                if (c.isLowerCase()) c.titlecase(Locale.forLanguageTag(lang)) else c.toString()
+            }
+        }.joinToString { it.trim() }
+
+        status = seriesDetails.selectFirst(seriesStatusSelector)?.text().parseStatus()
+
+        // Thumbnail dengan parameter manual
+        thumbnail_url = seriesDetails.select(seriesThumbnailSelector).imgAttr()
+            ?.let { it + "?w=202&h=204" } ?: ""
     }
+}
 
     override fun chapterListSelector() = "div.komik_info-chapters li"
 
