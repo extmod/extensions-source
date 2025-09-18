@@ -37,6 +37,10 @@ class Komik : MangaThemesia("Komik", "https://komikcast.li", "id", "/daftar-komi
 
     private val preferences = Injekt.get<Application>().getSharedPreferences("source_$id", 0)
     override var baseUrl: String = preferences.getString("overrideBaseUrl", "https://komikcast.li") ?: "https://komikcast.li"
+    
+    private fun coverUrlWithParams(url: String?): String {
+    return "$url?w=20&h=24"
+}
 
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
         .add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9")
@@ -116,8 +120,9 @@ class Komik : MangaThemesia("Komik", "https://komikcast.li", "id", "/daftar-komi
     override fun searchMangaSelector() = "div.list-update_item"
 
     override fun searchMangaFromElement(element: Element) = super.searchMangaFromElement(element).apply {
-    title = element.selectFirst("h3")?.ownText() ?: ""
-    thumbnail_url = element.selectFirst("img")?.attr("data-src") ?: ""
+    title = element.selectFirst("h3.title")?.ownText() ?: ""
+    val rawUrl = element.selectFirst("img")?.attr("abs:src")
+    thumbnail_url = coverUrlWithParams(rawUrl)
 }
 
     override val seriesDetailsSelector = "div.komik_info:has(.komik_info-content)"
@@ -131,8 +136,7 @@ class Komik : MangaThemesia("Komik", "https://komikcast.li", "id", "/daftar-komi
     override fun mangaDetailsParse(document: Document) = SManga.create().apply {
     document.selectFirst(seriesDetailsSelector)?.let { seriesDetails ->
         title = seriesDetails.selectFirst(seriesTitleSelector)?.text()
-            ?.replace("bahasa indonesia", "", ignoreCase = true)
-            ?.trim() ?: ""
+            ?.replace("bahasa indonesia", "", ignoreCase = true)?.trim() ?: ""
 
         artist = seriesDetails.selectFirst(seriesArtistSelector)?.ownText().removeEmptyPlaceholder()
         author = seriesDetails.selectFirst(seriesAuthorSelector)?.ownText().removeEmptyPlaceholder()
@@ -140,14 +144,12 @@ class Komik : MangaThemesia("Komik", "https://komikcast.li", "id", "/daftar-komi
         description = seriesDetails.select(seriesDescriptionSelector)
             .joinToString("\n") { it.text() }.trim()
 
-        // Tambahkan alternative name
         seriesDetails.selectFirst(seriesAltNameSelector)?.ownText()
             ?.takeIf { it.isNotBlank() }
             ?.let { altName ->
                 description = "$description\n\n$altNamePrefix$altName".trim()
             }
 
-        // Genre + type
         val genres = seriesDetails.select(seriesGenreSelector).map { it.text() }.toMutableList()
         seriesDetails.selectFirst(seriesTypeSelector)?.ownText()
             ?.takeIf { it.isNotBlank() }
@@ -161,9 +163,10 @@ class Komik : MangaThemesia("Komik", "https://komikcast.li", "id", "/daftar-komi
 
         status = seriesDetails.selectFirst(seriesStatusSelector)?.text().parseStatus()
 
-        // Thumbnail dengan parameter manual
-        thumbnail_url = seriesDetails.select(seriesThumbnailSelector).imgAttr()
-            ?.let { it + "?w=202&h=204" } ?: ""
+        val rawUrl = seriesDetails.selectFirst(seriesThumbnailSelector)
+            ?.selectFirst("img")
+            ?.imgAttr()
+        thumbnail_url = coverUrlWithParams(rawUrl)
     }
 }
 
