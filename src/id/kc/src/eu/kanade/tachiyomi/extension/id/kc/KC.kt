@@ -1,8 +1,13 @@
 package eu.kanade.tachiyomi.extension.id.kc
 
 import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.source.model.*
+import eu.kanade.tachiyomi.source.model.Filter
+import eu.kanade.tachiyomi.source.model.FilterList
+import eu.kanade.tachiyomi.source.model.Page
+import eu.kanade.tachiyomi.source.model.SChapter
+import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.ParsedHttpSource
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.jsoup.nodes.Document
@@ -92,13 +97,13 @@ class KC : ParsedHttpSource() {
         return if (date.contains("yang lalu")) {
             val value = date.split(' ')[0].toIntOrNull() ?: 0
             when {
-                "detik" in date -> Calendar.getInstance().apply { add(Calendar.SECOND, -value) }.timeInMillis
-                "menit" in date -> Calendar.getInstance().apply { add(Calendar.MINUTE, -value) }.timeInMillis
-                "jam" in date -> Calendar.getInstance().apply { add(Calendar.HOUR_OF_DAY, -value) }.timeInMillis
-                "hari" in date -> Calendar.getInstance().apply { add(Calendar.DATE, -value) }.timeInMillis
-                "minggu" in date -> Calendar.getInstance().apply { add(Calendar.DATE, -value * 7) }.timeInMillis
-                "bulan" in date -> Calendar.getInstance().apply { add(Calendar.MONTH, -value) }.timeInMillis
-                "tahun" in date -> Calendar.getInstance().apply { add(Calendar.YEAR, -value) }.timeInMillis
+                "detik" in date -> { Calendar.getInstance().apply { add(Calendar.SECOND, -value) }.timeInMillis }
+                "menit" in date -> { Calendar.getInstance().apply { add(Calendar.MINUTE, -value) }.timeInMillis }
+                "jam" in date -> { Calendar.getInstance().apply { add(Calendar.HOUR_OF_DAY, -value) }.timeInMillis }
+                "hari" in date -> { Calendar.getInstance().apply { add(Calendar.DATE, -value) }.timeInMillis }
+                "minggu" in date -> { Calendar.getInstance().apply { add(Calendar.DATE, -value * 7) }.timeInMillis }
+                "bulan" in date -> { Calendar.getInstance().apply { add(Calendar.MONTH, -value) }.timeInMillis }
+                "tahun" in date -> { Calendar.getInstance().apply { add(Calendar.YEAR, -value) }.timeInMillis }
                 else -> 0L
             }
         } else 0L
