@@ -44,7 +44,10 @@ class KomikV : HttpSource() {
             .map { parseMangaFromElement(it) }
             .filter { it.url.isNotEmpty() && it.title.isNotEmpty() }
         
-        val hasNextPage = document.selectFirst("span:contains(Loading...)") != null
+        // Deteksi next page dari JavaScript on:click event dengan class cursor-pointer
+        val hasNextPage = document.selectFirst("span.cursor-pointer:contains(Loading...)")?.attr("on:click") != null ||
+                         mangas.isNotEmpty() && mangas.size >= 20
+        
         return MangasPage(mangas, hasNextPage)
     }
 
@@ -57,7 +60,9 @@ class KomikV : HttpSource() {
             .map { parseMangaFromElement(it) }
             .filter { it.url.isNotEmpty() && it.title.isNotEmpty() }
         
-        val hasNextPage = document.selectFirst("span:contains(Loading...)") != null
+        val hasNextPage = document.selectFirst("span.cursor-pointer:contains(Loading...)")?.attr("on:click") != null ||
+                         mangas.isNotEmpty() && mangas.size >= 20
+        
         return MangasPage(mangas, hasNextPage)
     }
 
@@ -77,7 +82,9 @@ class KomikV : HttpSource() {
             .map { parseMangaFromElement(it) }
             .filter { it.url.isNotEmpty() && it.title.isNotEmpty() }
         
-        val hasNextPage = document.selectFirst("span:contains(Loading...)") != null
+        val hasNextPage = document.selectFirst("span.cursor-pointer:contains(Loading...)")?.attr("on:click") != null ||
+                         mangas.isNotEmpty() && mangas.size >= 10
+        
         return MangasPage(mangas, hasNextPage)
     }
 
