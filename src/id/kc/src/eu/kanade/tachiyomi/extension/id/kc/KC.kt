@@ -37,6 +37,7 @@ class KC : ParsedHttpSource() {
     override fun latestUpdatesSelector() = popularMangaSelector()
     override fun searchMangaSelector() = popularMangaSelector()
 
+    override fun popularMangaNextPageSelector(): String? = null
     override fun popularMangaNextPageSelector(doc: Document): String? {
     return doc.select("div[role=navigation] div.flex.justify-between.flex-1 a")
         .firstOrNull { it.text().trim().equals("Next", ignoreCase = true) }
