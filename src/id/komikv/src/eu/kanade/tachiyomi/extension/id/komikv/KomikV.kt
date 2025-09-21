@@ -44,9 +44,9 @@ class KomikV : HttpSource() {
             .map { parseMangaFromElement(it) }
             .filter { it.url.isNotEmpty() && it.title.isNotEmpty() }
         
-        // Deteksi next page dari JavaScript on:click event dengan class cursor-pointer
-        val hasNextPage = document.selectFirst("span.cursor-pointer:contains(Loading...)")?.attr("on:click") != null ||
-                         mangas.isNotEmpty() && mangas.size >= 20
+        // Cek page dari URL
+        val currentPage = response.request.url.queryParameter("page")?.toIntOrNull() ?: 1
+        val hasNextPage = mangas.isNotEmpty() && mangas.size >= 15 && currentPage <= 5
         
         return MangasPage(mangas, hasNextPage)
     }
@@ -60,13 +60,13 @@ class KomikV : HttpSource() {
             .map { parseMangaFromElement(it) }
             .filter { it.url.isNotEmpty() && it.title.isNotEmpty() }
         
-        val hasNextPage = document.selectFirst("span.cursor-pointer:contains(Loading...)")?.attr("on:click") != null ||
-                         mangas.isNotEmpty() && mangas.size >= 20
+        val currentPage = response.request.url.queryParameter("page")?.toIntOrNull() ?: 1
+        val hasNextPage = mangas.isNotEmpty() && mangas.size >= 15 && currentPage <= 5
         
         return MangasPage(mangas, hasNextPage)
     }
 
-    // Search
+    // Search - perbaiki logika untuk mencegah loop
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
         val url = if (page > 1) {
             "$baseUrl/search/${query.trim()}/?page=$page"
@@ -82,8 +82,14 @@ class KomikV : HttpSource() {
             .map { parseMangaFromElement(it) }
             .filter { it.url.isNotEmpty() && it.title.isNotEmpty() }
         
-        val hasNextPage = document.selectFirst("span.cursor-pointer:contains(Loading...)")?.attr("on:click") != null ||
-                         mangas.isNotEmpty() && mangas.size >= 10
+        // Untuk search, deteksi page dari URL dan batasi maksimal page
+        val url = response.request.url.toString()
+        val currentPage = if (url.contains("?page=")) {
+            url.substringAfter("?page=").substringBefore("&").toIntOrNull() ?: 1
+        } else 1
+        
+        // Hanya ada next page jika manga tidak kosong, jumlah cukup, dan belum mencapai batas
+        val hasNextPage = mangas.isNotEmpty() && mangas.size >= 10 && currentPage < 10
         
         return MangasPage(mangas, hasNextPage)
     }
