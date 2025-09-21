@@ -33,32 +33,41 @@ class KC : ParsedHttpSource() {
         return GET(url.build(), headers)
     }
 
-override fun popularMangaSelector() = "div.grid > a"
-override fun latestUpdatesSelector() = popularMangaSelector()
-override fun searchMangaSelector() = popularMangaSelector()
+    override fun popularMangaSelector() = "div.grid > a"
+    override fun latestUpdatesSelector() = popularMangaSelector()
+    override fun searchMangaSelector() = popularMangaSelector()
 
-override fun popularMangaNextPageSelector() = ".flex.justify-between.flex-1 a"
-override fun latestUpdatesNextPageSelector() = popularMangaNextPageSelector()
-override fun searchMangaNextPageSelector() = popularMangaNextPageSelector()
+    override fun popularMangaNextPageSelector(doc: Document): String? {
+    return doc.select("div[role=navigation] div.flex.justify-between.flex-1 a")
+        .firstOrNull { it.text().trim().equals("Next", ignoreCase = true) }
+        ?.attr("href")
+}
+    override fun latestUpdatesNextPageSelector() = popularMangaNextPageSelector()
+    override fun searchMangaNextPageSelector() = popularMangaNextPageSelector()
 
-    private fun parseMangaElement(element: Element, titleSelector: String = "h3"): SManga {
+    override fun popularMangaFromElement(element: Element): SManga {
     val manga = SManga.create()
-    manga.thumbnail_url = element.select("img").attr("src")
-    manga.title = element.select(titleSelector).text()
+    manga.thumbnail_url = element.select("div.p-0 img").attr("src")
+    manga.title = element.select("h3").text()
     manga.setUrlWithoutDomain(element.attr("href"))
     return manga
 }
 
-    override fun popularMangaFromElement(element: Element): SManga = parseMangaElement(element)
-    override fun latestUpdatesFromElement(element: Element): SManga = parseMangaElement(element)
+    override fun latestUpdatesFromElement(element: Element): SManga = popularMangaFromElement(element)
 
-    override fun searchMangaFromElement(element: Element): SManga = parseMangaElement(element, ".px-1.my-2 p")
+    override fun searchMangaFromElement(element: Element): SManga {
+    val manga = SManga.create()
+    manga.thumbnail_url = element.select("div.p-0 img").attr("src")
+    manga.title = element.select(".px-1.my-2 p").text()
+    manga.setUrlWithoutDomain(element.attr("href"))
+    return manga
+}
 
     // Manga details
     override fun mangaDetailsParse(document: Document): SManga {
         val manga = SManga.create()
         manga.title = document.select("h1.line-clamp-2").text()
-        manga.thumbnail_url = document.select(".md\\:w\\[480px\\] img").attr("src")
+        manga.thumbnail_url = document.select("div.w-full img").attr("src")
         val genres = mutableListOf<String>()
         document.select("div.flex.flex-wrap a span").forEach { genres.add(it.text()) }
         document.select(".text-sm.py-1.pb-2 span.font-medium").forEach { genres.add(it.text()) } // tipe komik
