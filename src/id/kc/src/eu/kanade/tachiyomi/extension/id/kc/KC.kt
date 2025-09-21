@@ -30,6 +30,9 @@ class KC : ParsedHttpSource() {
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
         val url = "$baseUrl/search/".toHttpUrl().newBuilder()
         url.addQueryParameter("query", query)
+        if (page > 1) {
+            url.addQueryParameter("page", page.toString())
+        }
         return GET(url.build(), headers)
     }
 
@@ -40,7 +43,7 @@ class KC : ParsedHttpSource() {
     // Next page selectors
     override fun popularMangaNextPageSelector(): String? = "div[role=navigation] div.flex.justify-between.flex-1 a:contains(Next)"
     override fun latestUpdatesNextPageSelector(): String? = popularMangaNextPageSelector()
-    override fun searchMangaNextPageSelector(): String? = "a:contains(Next)" // Selector lebih umum untuk search
+    override fun searchMangaNextPageSelector(): String? = popularMangaNextPageSelector() // Sama dengan popular
 
     override fun popularMangaFromElement(element: Element): SManga {
         val manga = SManga.create()
