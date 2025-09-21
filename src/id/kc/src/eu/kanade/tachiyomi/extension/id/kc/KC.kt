@@ -37,32 +37,28 @@ class KC : ParsedHttpSource() {
     override fun latestUpdatesSelector() = popularMangaSelector()
     override fun searchMangaSelector() = popularMangaSelector()
 
-    override fun popularMangaNextPageSelector(): String? = "div[role=navigation] div.flex.justify-between.flex-1 a"
-    override fun popularMangaHasNextPage(document: Document): Boolean {
-    return document.select("div[role=navigation] div.flex.justify-between.flex-1 a")
-        .any { it.text().trim().equals("Next", ignoreCase = true) }
-}
-
-    override fun latestUpdatesNextPageSelector() = popularMangaNextPageSelector()
-    override fun searchMangaNextPageSelector() = popularMangaHasNextPage()
+    // Next page selectors
+    override fun popularMangaNextPageSelector(): String? = "div[role=navigation] div.flex.justify-between.flex-1 a:contains(Next)"
+    override fun latestUpdatesNextPageSelector(): String? = popularMangaNextPageSelector()
+    override fun searchMangaNextPageSelector(): String? = "a:contains(Next)" // Selector lebih umum untuk search
 
     override fun popularMangaFromElement(element: Element): SManga {
-    val manga = SManga.create()
-    manga.thumbnail_url = element.select("div.p-0 img").attr("src")
-    manga.title = element.select("h3").text()
-    manga.setUrlWithoutDomain(element.attr("href"))
-    return manga
-}
+        val manga = SManga.create()
+        manga.thumbnail_url = element.select("div.p-0 img").attr("src")
+        manga.title = element.select("h3").text()
+        manga.setUrlWithoutDomain(element.attr("href"))
+        return manga
+    }
 
     override fun latestUpdatesFromElement(element: Element): SManga = popularMangaFromElement(element)
 
     override fun searchMangaFromElement(element: Element): SManga {
-    val manga = SManga.create()
-    manga.thumbnail_url = element.select("div.p-0 img").attr("src")
-    manga.title = element.select(".px-1.my-2 p").text()
-    manga.setUrlWithoutDomain(element.attr("href"))
-    return manga
-}
+        val manga = SManga.create()
+        manga.thumbnail_url = element.select("div.p-0 img").attr("src")
+        manga.title = element.select(".px-1.my-2 p").text()
+        manga.setUrlWithoutDomain(element.attr("href"))
+        return manga
+    }
 
     // Manga details
     override fun mangaDetailsParse(document: Document): SManga {
