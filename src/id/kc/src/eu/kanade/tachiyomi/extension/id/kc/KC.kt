@@ -33,24 +33,26 @@ class KC : ParsedHttpSource() {
         return GET(url.build(), headers)
     }
 
-    // Selectors
-    override fun popularMangaSelector() = "div.grid > a"
-    override fun latestUpdatesSelector() = popularMangaSelector()
-    override fun searchMangaSelector() = popularMangaSelector()
-    override fun popularMangaNextPageSelector() = ".flex.justify-between.flex-1 a"
-    override fun latestUpdatesNextPageSelector() = popularMangaNextPageSelector()
-    override fun searchMangaNextPageSelector() = popularMangaNextPageSelector()
+override fun popularMangaSelector() = "div.grid > a"
+override fun latestUpdatesSelector() = popularMangaSelector()
+override fun searchMangaSelector() = popularMangaSelector()
 
-    // Manga from element
-    override fun popularMangaFromElement(element: Element): SManga = searchMangaFromElement(element)
-    override fun latestUpdatesFromElement(element: Element): SManga = searchMangaFromElement(element)
-    override fun searchMangaFromElement(element: Element): SManga {
-        val manga = SManga.create()
-        manga.thumbnail_url = element.select("img").attr("src")
-        manga.title = element.select("h3").text()
-        manga.setUrlWithoutDomain(element.attr("href"))
-        return manga
-    }
+override fun popularMangaNextPageSelector() = ".flex.justify-between.flex-1 a"
+override fun latestUpdatesNextPageSelector() = popularMangaNextPageSelector()
+override fun searchMangaNextPageSelector() = popularMangaNextPageSelector()
+
+    private fun parseMangaElement(element: Element, titleSelector: String = "h3"): SManga {
+    val manga = SManga.create()
+    manga.thumbnail_url = element.select("img").attr("src")
+    manga.title = element.select(titleSelector).text()
+    manga.setUrlWithoutDomain(element.attr("href"))
+    return manga
+}
+
+    override fun popularMangaFromElement(element: Element): SManga = parseMangaElement(element)
+    override fun latestUpdatesFromElement(element: Element): SManga = parseMangaElement(element)
+
+    override fun searchMangaFromElement(element: Element): SManga = parseMangaElement(element, ".px-1.my-2 p")
 
     // Manga details
     override fun mangaDetailsParse(document: Document): SManga {
