@@ -15,13 +15,22 @@ import org.jsoup.nodes.Element
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
+import java.util.concurrent.TimeUnit
 
 class KC : ParsedHttpSource() {
     override val name = "KC"
     override val baseUrl = "https://komik-cast.cc"
     override val lang = "id"
     override val supportsLatest = true
-    override val client: OkHttpClient = network.cloudflareClient
+    override val client: OkHttpClient = super.client.newBuilder()
+        .setRandomUserAgent(
+            preferences.getPrefUAType(),
+            preferences.getPrefCustomUA(),
+        )
+        .rateLimit(20)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .build()
     private val dateFormat: SimpleDateFormat = SimpleDateFormat("MMM d, yyyy", Locale.US)
 
     // Popular & latest
@@ -70,7 +79,10 @@ class KC : ParsedHttpSource() {
         manga.thumbnail_url = document.select("div.w-full img").attr("src")
         val genres = mutableListOf<String>()
         document.select("div.flex.flex-wrap a span").forEach { genres.add(it.text()) }
-        document.select(".text-sm.py-1.pb-2 span.font-medium").forEach { genres.add(it.text()) } // tipe komik
+        // Ambil hanya span pertama untuk tipe komik
+        document.select(".text-sm.py-1.pb-2 span.font-medium").firstOrNull()?.let { 
+            genres.add(it.text()) 
+        }
         manga.genre = genres.joinToString(", ")
         val statusText = document.select("div.text-sm.py-1.pb-2 span.font-medium").getOrNull(1)?.text() ?: ""
         manga.status = when {
