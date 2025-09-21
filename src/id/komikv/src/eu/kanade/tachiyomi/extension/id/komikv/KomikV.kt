@@ -36,7 +36,13 @@ class KomikV : HttpSource() {
     }
 
     // Latest Updates
-    override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/?page=$page&latest=1", headers)
+    override fun latestUpdatesRequest(page: Int): Request {
+        return if (page == 1) {
+            GET(baseUrl, headers) // Page 1 = baseUrl tanpa parameter
+        } else {
+            GET("$baseUrl/?page=$page", headers) // Page 2+ = ?page=X
+        }
+    }
     
     override fun latestUpdatesParse(response: Response): MangasPage {
         val document = Jsoup.parse(response.body!!.string())
@@ -44,10 +50,16 @@ class KomikV : HttpSource() {
             .map { parseMangaFromElement(it) }
             .filter { it.url.isNotEmpty() && it.title.isNotEmpty() }
         
-        // Cek page dari URL
-        val currentPage = response.request.url.queryParameter("page")?.toIntOrNull() ?: 1
-        // Hanya lanjut ke halaman berikutnya jika manga penuh (18) dan belum mencapai batas
-        val hasNextPage = mangas.size == 18 && currentPage < 10
+        // Cek URL saat ini untuk menentukan page number
+        val currentUrl = response.request.url.toString()
+        val currentPage = when {
+            currentUrl.contains("?page=") -> currentUrl.substringAfter("?page=").substringBefore("&").toIntOrNull() ?: 1
+            currentUrl == baseUrl -> 1 // Base URL = Page 1
+            else -> 1
+        }
+        
+        // Ada next page jika manga tidak kosong dan belum mencapai batas
+        val hasNextPage = mangas.isNotEmpty() && currentPage < 10
         
         return MangasPage(mangas, hasNextPage)
     }
@@ -61,15 +73,23 @@ class KomikV : HttpSource() {
             .map { parseMangaFromElement(it) }
             .filter { it.url.isNotEmpty() && it.title.isNotEmpty() }
         
-        val currentPage = response.request.url.queryParameter("page")?.toIntOrNull() ?: 1
-        // Sama seperti latest, cek apakah manga penuh
-        val hasNextPage = mangas.size == 18 && currentPage < 10
+        // Cek URL saat ini untuk menentukan page number
+        val currentUrl = response.request.url.toString()
+        val currentPage = when {
+            currentUrl.contains("?page=") -> currentUrl.substringAfter("?page=").toIntOrNull() ?: 1
+            currentUrl.endsWith("/popular/") -> 1
+            else -> 1
+        }
+        
+        // Ada next page jika manga tidak kosong dan belum mencapai batas
+        val hasNextPage = mangas.isNotEmpty() && currentPage < 10
         
         return MangasPage(mangas, hasNextPage)
     }
 
     // Search
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
+        if (page == 1) seenUrls.clear()
         val url = if (page > 1) {
             "$baseUrl/search/${query.trim()}/?page=$page"
         } else {
@@ -80,19 +100,20 @@ class KomikV : HttpSource() {
     
     override fun searchMangaParse(response: Response): MangasPage {
         val document = Jsoup.parse(response.body!!.string())
-        val mangas = document.select("div.overflow-hidden")
+        val allMangas = document.select("div.overflow-hidden")
             .map { parseMangaFromElement(it) }
             .filter { it.url.isNotEmpty() && it.title.isNotEmpty() }
+        
+        val newMangas = allMangas.filter { seenUrls.add(it.url) }
         
         val url = response.request.url.toString()
         val currentPage = if (url.contains("?page=")) {
             url.substringAfter("?page=").substringBefore("&").toIntOrNull() ?: 1
         } else 1
         
-        // Untuk search, mungkin jumlah per halaman berbeda, jadi cek juga manga.size
-        val hasNextPage = mangas.size >= 15 && currentPage < 20
+        val hasNextPage = newMangas.isNotEmpty() && allMangas.size >= 15 && currentPage < 20
         
-        return MangasPage(mangas, hasNextPage)
+        return MangasPage(newMangas, hasNextPage)
     }
 
     // Manga Details
