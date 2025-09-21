@@ -23,11 +23,7 @@ class KC : ParsedHttpSource() {
     override val lang = "id"
     override val supportsLatest = true
     override val client: OkHttpClient = super.client.newBuilder()
-        .setRandomUserAgent(
-            preferences.getPrefUAType(),
-            preferences.getPrefCustomUA(),
-        )
-        .rateLimit(20)
+        .rateLimit(4)
         .readTimeout(30, TimeUnit.SECONDS)
         .connectTimeout(15, TimeUnit.SECONDS)
         .build()
