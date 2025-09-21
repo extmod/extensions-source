@@ -89,7 +89,6 @@ class KomikV : HttpSource() {
 
     // Search
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
-        if (page == 1) seenUrls.clear()
         val url = if (page > 1) {
             "$baseUrl/search/${query.trim()}/?page=$page"
         } else {
@@ -100,20 +99,18 @@ class KomikV : HttpSource() {
     
     override fun searchMangaParse(response: Response): MangasPage {
         val document = Jsoup.parse(response.body!!.string())
-        val allMangas = document.select("div.overflow-hidden")
+        val mangas = document.select("div.overflow-hidden")
             .map { parseMangaFromElement(it) }
             .filter { it.url.isNotEmpty() && it.title.isNotEmpty() }
-        
-        val newMangas = allMangas.filter { seenUrls.add(it.url) }
         
         val url = response.request.url.toString()
         val currentPage = if (url.contains("?page=")) {
             url.substringAfter("?page=").substringBefore("&").toIntOrNull() ?: 1
         } else 1
         
-        val hasNextPage = newMangas.isNotEmpty() && allMangas.size >= 15 && currentPage < 20
+        val hasNextPage = mangas.isNotEmpty() && currentPage < 20
         
-        return MangasPage(newMangas, hasNextPage)
+        return MangasPage(mangas, hasNextPage)
     }
 
     // Manga Details
