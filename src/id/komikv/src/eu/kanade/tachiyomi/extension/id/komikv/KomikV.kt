@@ -8,12 +8,12 @@ import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.online.ParsedHttpSource
 import okhttp3.Headers
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
-import java.net.URLEncoder
 import java.util.Calendar
 
 class KomikV : ParsedHttpSource() {
@@ -37,22 +37,28 @@ class KomikV : ParsedHttpSource() {
         manga.thumbnail_url = if (img.isNotEmpty()) "https://wsrv.nl/?w=150&h=110&url=${img.replace(".lol", ".li")}" else ""
         return manga
     }
-    override fun latestUpdatesNextPageSelector(): String? = null
 
     // Popular
     override fun popularMangaRequest(page: Int): Request = GET("$baseUrl/popular/?page=$page", headers)
     override fun popularMangaSelector(): String = "div.overflow-hidden"
     override fun popularMangaFromElement(element: Element): SManga = latestUpdatesFromElement(element)
-    override fun popularMangaNextPageSelector(): String? = null
 
     // Search
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
-        val encodedQuery = URLEncoder.encode(query.trim(), "UTF-8")
-        return GET("$baseUrl/search/$encodedQuery/?page=$page", headers)
+        val url = if (page > 1) {
+            "$baseUrl/search/${query.trim()}/?page=$page"
+        } else {
+            "$baseUrl/search/${query.trim()}/"
+        }
+        return GET(url, headers)
     }
     override fun searchMangaSelector(): String = "div.overflow-hidden"
     override fun searchMangaFromElement(element: Element): SManga = latestUpdatesFromElement(element)
-    override fun searchMangaNextPageSelector(): String? = null
+
+    // Next Page Selectors
+    override fun popularMangaNextPageSelector() = "span:contains(Loading...)"
+    override fun latestUpdatesNextPageSelector() = popularMangaNextPageSelector()
+    override fun searchMangaNextPageSelector() = popularMangaNextPageSelector()
 
     // Manga Details
     override fun mangaDetailsParse(document: Document): SManga {
