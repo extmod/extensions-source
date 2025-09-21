@@ -46,7 +46,8 @@ class KomikV : HttpSource() {
         
         // Cek page dari URL
         val currentPage = response.request.url.queryParameter("page")?.toIntOrNull() ?: 1
-        val hasNextPage = mangas.isNotEmpty() && mangas.size >= 15 && currentPage <= 5
+        // Hanya lanjut ke halaman berikutnya jika manga penuh (18) dan belum mencapai batas
+        val hasNextPage = mangas.size == 18 && currentPage < 10
         
         return MangasPage(mangas, hasNextPage)
     }
@@ -61,12 +62,13 @@ class KomikV : HttpSource() {
             .filter { it.url.isNotEmpty() && it.title.isNotEmpty() }
         
         val currentPage = response.request.url.queryParameter("page")?.toIntOrNull() ?: 1
-        val hasNextPage = mangas.isNotEmpty() && mangas.size >= 15 && currentPage <= 5
+        // Sama seperti latest, cek apakah manga penuh
+        val hasNextPage = mangas.size == 18 && currentPage < 10
         
         return MangasPage(mangas, hasNextPage)
     }
 
-    // Search - perbaiki logika untuk mencegah loop
+    // Search
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
         val url = if (page > 1) {
             "$baseUrl/search/${query.trim()}/?page=$page"
@@ -82,14 +84,13 @@ class KomikV : HttpSource() {
             .map { parseMangaFromElement(it) }
             .filter { it.url.isNotEmpty() && it.title.isNotEmpty() }
         
-        // Untuk search, deteksi page dari URL dan batasi maksimal page
         val url = response.request.url.toString()
         val currentPage = if (url.contains("?page=")) {
             url.substringAfter("?page=").substringBefore("&").toIntOrNull() ?: 1
         } else 1
         
-        // Hanya ada next page jika manga tidak kosong, jumlah cukup, dan belum mencapai batas
-        val hasNextPage = mangas.isNotEmpty() && mangas.size >= 10 && currentPage < 10
+        // Untuk search, mungkin jumlah per halaman berbeda, jadi cek juga manga.size
+        val hasNextPage = mangas.size >= 15 && currentPage < 20
         
         return MangasPage(mangas, hasNextPage)
     }
