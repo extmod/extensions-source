@@ -37,14 +37,14 @@ class KC : ParsedHttpSource() {
     override fun latestUpdatesSelector() = popularMangaSelector()
     override fun searchMangaSelector() = popularMangaSelector()
 
-    override fun popularMangaNextPageSelector(): String? = null
-    override fun popularMangaNextPageSelector(doc: Document): String? {
-    return doc.select("div[role=navigation] div.flex.justify-between.flex-1 a")
-        .firstOrNull { it.text().trim().equals("Next", ignoreCase = true) }
-        ?.attr("href")
+    override fun popularMangaNextPageSelector(): String? = "div[role=navigation] div.flex.justify-between.flex-1 a"
+    override fun popularMangaHasNextPage(document: Document): Boolean {
+    return document.select("div[role=navigation] div.flex.justify-between.flex-1 a")
+        .any { it.text().trim().equals("Next", ignoreCase = true) }
 }
+
     override fun latestUpdatesNextPageSelector() = popularMangaNextPageSelector()
-    override fun searchMangaNextPageSelector() = popularMangaNextPageSelector()
+    override fun searchMangaNextPageSelector() = popularMangaHasNextPage()
 
     override fun popularMangaFromElement(element: Element): SManga {
     val manga = SManga.create()
