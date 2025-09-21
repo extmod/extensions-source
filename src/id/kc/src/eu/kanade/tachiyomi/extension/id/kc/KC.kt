@@ -63,8 +63,13 @@ class KC : ParsedHttpSource() {
 
     override fun searchMangaFromElement(element: Element): SManga {
         val manga = SManga.create()
-        manga.thumbnail_url = element.select("div.p-0 img").attr("src")
-        manga.title = element.select(".px-1.my-2 p").text()
+        val thumbnailUrl = element.select("div.p-0 img").attr("src")
+        manga.thumbnail_url = if (thumbnailUrl.contains("org")) {
+            thumbnailUrl.replace("org", "cc")
+        } else {
+            thumbnailUrl
+        }
+        manga.title = element.select(".px-1.my-2 p.font-medium").text()
         manga.setUrlWithoutDomain(element.attr("href"))
         return manga
     }
@@ -80,6 +85,7 @@ class KC : ParsedHttpSource() {
         document.select(".text-sm.py-1.pb-2 span.font-medium").firstOrNull()?.let { 
             genres.add(it.text()) 
         }
+        manga.description = document.select("p.my-2").text() + "\n"
         manga.genre = genres.joinToString(", ")
         val statusText = document.select("div.text-sm.py-1.pb-2 span.font-medium").getOrNull(1)?.text() ?: ""
         manga.status = when {
@@ -87,7 +93,6 @@ class KC : ParsedHttpSource() {
             statusText.contains("Completed", true) -> SManga.COMPLETED
             else -> SManga.UNKNOWN
         }
-        manga.description = document.select("p.my-2").text()
         return manga
     }
 
