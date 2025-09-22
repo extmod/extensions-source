@@ -16,7 +16,7 @@ import org.jsoup.nodes.Element
 import java.net.URLEncoder
 import java.util.Calendar
 
-class KomikV_VersionB : ParsedHttpSource() {
+class KomikV : ParsedHttpSource() {
     override val name = "KomikV"
     override val baseUrl = "https://komikav.net"
     override val lang = "id"
