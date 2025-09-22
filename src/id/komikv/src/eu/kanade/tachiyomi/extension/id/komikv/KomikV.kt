@@ -164,7 +164,6 @@ class KomikV : ParsedHttpSource() {
     override fun chapterFromElement(element: Element): SChapter {
     val chapter = SChapter.create()
 
-    // ambil URL
     val href = element.attr("href").trim()
     try {
         chapter.setUrlWithoutDomain(href)
@@ -172,14 +171,11 @@ class KomikV : ParsedHttpSource() {
         chapter.url = href
     }
 
-    // ambil judul langsung dari <p>
     chapter.name = element.selectFirst("p")?.text()?.trim()
         ?: element.text().trim()
 
-    // ambil waktu, buang kata "lalu"
     val timeText = element.selectFirst("p.text-xs")?.text()?.trim() ?: ""
-    val cleanedTime = timeText.replace("lalu", "").trim()
-    chapter.date_upload = parseDate(cleanedTime)
+    chapter.date_upload = parseDate(timeText)
 
     return chapter
 }
