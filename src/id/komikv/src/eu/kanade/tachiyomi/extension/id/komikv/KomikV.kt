@@ -5,9 +5,12 @@ import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.Page
+import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.online.ParsedHttpSource
+import eu.kanade.tachiyomi.util.asJsoup
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import java.net.URLEncoder
@@ -22,12 +25,29 @@ class KomikV : ParsedHttpSource() {
 
     override val client: OkHttpClient = network.cloudflareClient
 
+    // Safety cap to avoid endless paging loops on sites that always render a "Load More" button.
+    private val MAX_PAGE = 50
+    // If a single response dumps *everything* (server returns all items), avoid loading all to memory
+    private val MAX_ITEMS_PER_RESPONSE = 500
+    private val TRUNCATE_TO = 50
+
+    // Keep first-page first-item URL for each listing to detect duplicate/homepage fallback
+    private var firstPopularUrl: String? = null
+    private var firstLatestUrl: String? = null
+    private var firstSearchUrl: String? = null
+
+    // Keep seen URL sets to dedupe across pages and detect overlap
+    private val seenPopularUrls = mutableSetOf<String>()
+    private val seenLatestUrls = mutableSetOf<String>()
+    private val seenSearchUrls = mutableSetOf<String>()
+
     // --- Popular ---
     override fun popularMangaRequest(page: Int): Request {
+        if (page > MAX_PAGE) return GET("$baseUrl/?page=99999", headers)
         return if (page <= 1) {
             GET(baseUrl, headers)
         } else {
-            GET("$baseUrl/popular/?page=$page", headers)
+            GET("$baseUrl/?page=$page", headers)
         }
     }
 
@@ -50,11 +70,54 @@ class KomikV : ParsedHttpSource() {
         }
     }
 
-    // Jangan pakai tombol JS "Load More" sebagai next selector — gunakan selector item itu sendiri
+    // We return the item selector as "next" check — paging decision handled in parse override below.
     override fun popularMangaNextPageSelector(): String = popularMangaSelector()
+
+    // Robust parser: dedupe, detect duplicated homepage dump, and truncate giant responses.
+    override fun popularMangaParse(response: Response): MangasPage {
+        val document = response.asJsoup()
+        var mangas = document.select(popularMangaSelector()).map { popularMangaFromElement(it) }
+
+        // If the site returns an enormous concatenated page (server dump), truncate to avoid browser/app lag
+        if (mangas.size > MAX_ITEMS_PER_RESPONSE) {
+            mangas = mangas.take(TRUNCATE_TO)
+        }
+
+        val pageParam = response.request.url.queryParameter("page") ?: "1"
+        val pageNum = pageParam.toIntOrNull() ?: 1
+        val firstUrlOnThisPage = mangas.firstOrNull()?.url
+
+        if (pageNum == 1) {
+            firstPopularUrl = firstUrlOnThisPage
+            // reset seen set when starting from page 1
+            seenPopularUrls.clear()
+        }
+
+        // Dedupe by previously seen URLs and keep only new items
+        val newMangas = mangas.filter { seenPopularUrls.add(it.url) }
+
+        // If page returned zero items -> no next
+        if (mangas.isEmpty()) return MangasPage(emptyList(), false)
+
+        // If server returns homepage (first item equals first page first item), stop
+        if (pageNum > 1 && firstPopularUrl != null && firstUrlOnThisPage == firstPopularUrl) {
+            return MangasPage(emptyList(), false)
+        }
+
+        // If large overlap (more than 50% already seen) -> likely duplicate dump or server-side issue -> stop
+        val overlapRatio = 1.0 - (if (mangas.isEmpty()) 1.0 else newMangas.size.toDouble() / mangas.size.toDouble())
+        if (pageNum > 1 && overlapRatio > 0.5) {
+            return MangasPage(newMangas, false)
+        }
+
+        // Otherwise continue unless we've hit MAX_PAGE
+        val hasNext = pageNum < MAX_PAGE
+        return MangasPage(newMangas, hasNext)
+    }
 
     // --- Latest ---
     override fun latestUpdatesRequest(page: Int): Request {
+        if (page > MAX_PAGE) return GET("$baseUrl/?page=99999", headers)
         return if (page <= 1) {
             GET(baseUrl, headers)
         } else {
@@ -66,12 +129,45 @@ class KomikV : ParsedHttpSource() {
     override fun latestUpdatesFromElement(element: Element): SManga = popularMangaFromElement(element)
     override fun latestUpdatesNextPageSelector(): String = latestUpdatesSelector()
 
+    override fun latestUpdatesParse(response: Response): MangasPage {
+        val document = response.asJsoup()
+        var mangas = document.select(latestUpdatesSelector()).map { latestUpdatesFromElement(it) }
+
+        if (mangas.size > MAX_ITEMS_PER_RESPONSE) mangas = mangas.take(TRUNCATE_TO)
+
+        val pageParam = response.request.url.queryParameter("page") ?: "1"
+        val pageNum = pageParam.toIntOrNull() ?: 1
+        val firstUrlOnThisPage = mangas.firstOrNull()?.url
+
+        if (pageNum == 1) {
+            firstLatestUrl = firstUrlOnThisPage
+            seenLatestUrls.clear()
+        }
+
+        val newMangas = mangas.filter { seenLatestUrls.add(it.url) }
+
+        if (mangas.isEmpty()) return MangasPage(emptyList(), false)
+
+        if (pageNum > 1 && firstLatestUrl != null && firstUrlOnThisPage == firstLatestUrl) {
+            return MangasPage(emptyList(), false)
+        }
+
+        val overlapRatio = 1.0 - (if (mangas.isEmpty()) 1.0 else newMangas.size.toDouble() / mangas.size.toDouble())
+        if (pageNum > 1 && overlapRatio > 0.5) {
+            return MangasPage(newMangas, false)
+        }
+
+        val hasNext = pageNum < MAX_PAGE
+        return MangasPage(newMangas, hasNext)
+    }
+
     // --- Search ---
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
+        if (page > MAX_PAGE) return GET("$baseUrl/?page=99999", headers)
         return if (query.isNotEmpty()) {
             val q = URLEncoder.encode(query, "UTF-8")
-            val baseSearch = "$baseUrl/search/=$q"
-            if (page <= 1) GET(baseSearch, headers) else GET("$baseSearch&page=$page", headers)
+            val baseSearch = "$baseUrl/search/$q/"
+            if (page <= 1) GET(baseSearch, headers) else GET("$baseSearch?page=$page", headers)
         } else {
             if (page <= 1) GET(baseUrl, headers) else GET("$baseUrl/?page=$page", headers)
         }
@@ -80,6 +176,38 @@ class KomikV : ParsedHttpSource() {
     override fun searchMangaSelector(): String = popularMangaSelector()
     override fun searchMangaFromElement(element: Element): SManga = popularMangaFromElement(element)
     override fun searchMangaNextPageSelector(): String = searchMangaSelector()
+
+    override fun searchMangaParse(response: Response): MangasPage {
+        val document = response.asJsoup()
+        var mangas = document.select(searchMangaSelector()).map { searchMangaFromElement(it) }
+
+        if (mangas.size > MAX_ITEMS_PER_RESPONSE) mangas = mangas.take(TRUNCATE_TO)
+
+        val pageParam = response.request.url.queryParameter("page") ?: "1"
+        val pageNum = pageParam.toIntOrNull() ?: 1
+        val firstUrlOnThisPage = mangas.firstOrNull()?.url
+
+        if (pageNum == 1) {
+            firstSearchUrl = firstUrlOnThisPage
+            seenSearchUrls.clear()
+        }
+
+        val newMangas = mangas.filter { seenSearchUrls.add(it.url) }
+
+        if (mangas.isEmpty()) return MangasPage(emptyList(), false)
+
+        if (pageNum > 1 && firstSearchUrl != null && firstUrlOnThisPage == firstSearchUrl) {
+            return MangasPage(emptyList(), false)
+        }
+
+        val overlapRatio = 1.0 - (if (mangas.isEmpty()) 1.0 else newMangas.size.toDouble() / mangas.size.toDouble())
+        if (pageNum > 1 && overlapRatio > 0.5) {
+            return MangasPage(newMangas, false)
+        }
+
+        val hasNext = pageNum < MAX_PAGE
+        return MangasPage(newMangas, hasNext)
+    }
 
     // --- Manga details ---
     override fun mangaDetailsParse(document: Document): SManga {
