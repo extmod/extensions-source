@@ -126,16 +126,16 @@ class KomikV : ParsedHttpSource() {
 
             val normalized = statusTextRaw.replace(Regex("[^A-Za-z0-9]"), "").lowercase()
             status = when {
-                normalized.contains("ongoing") || (normalized.contains("on") && normalized.contains("go")) -> SManga.ONGOING
-                normalized.contains("completed") || normalized.contains("complete") -> SManga.COMPLETED
-                else -> SManga.UNKNOWN
+    normalized.contains("on-going") -> SManga.ONGOING
+    normalized.contains("completed") -> SManga.COMPLETED
+    else -> SManga.UNKNOWN
             }
 
-            val authorText = document.selectFirst("a[href^=\"/tax/author/\"]")?.text()?.trim()
+            val authorText = document.selectFirst("p.text-sm a")?.text()?.trim()
             if (!authorText.isNullOrBlank()) author = authorText
             artist = author
 
-            val genres = document.select("a[href^=\"/tax/genre/\"]").map { it.text().trim() }.filter { it.isNotEmpty() }.toMutableList()
+            val genres = document.select(".mt-4 a").map { it.text().trim() }.filter { it.isNotEmpty() }.toMutableList()
             if (typeText.isNotBlank()) {
                 if (!genres.contains(typeText)) genres.add(typeText)
             }
