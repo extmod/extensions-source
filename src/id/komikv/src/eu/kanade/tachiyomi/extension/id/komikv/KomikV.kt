@@ -21,13 +21,11 @@ class KomikV : ParsedHttpSource() {
     override val baseUrl = "https://komikav.net"
     override val lang = "id"
     override val supportsLatest = true
-
     override val client: OkHttpClient = network.cloudflareClient
 
     private val ITEMS_PER_PAGE = 18
     private val MAX_PAGE = 50
 
-    // --- Requests ---
     override fun popularMangaRequest(page: Int): Request {
         val url = if (page <= 1) "$baseUrl/popular/" else "$baseUrl/popular/?page=$page"
         return GET(url, headers)
@@ -50,8 +48,9 @@ class KomikV : ParsedHttpSource() {
         }
     }
 
-    // --- Selectors / FromElement ---
-    override fun popularMangaSelector(): String = "div.grid a"
+    override fun popularMangaSelector(): String =
+        "div.grid > div.flex > div:first-child a.relative, div.grid a.relative"
+
     override fun latestUpdatesSelector(): String = popularMangaSelector()
     override fun searchMangaSelector(): String = popularMangaSelector()
 
@@ -60,25 +59,29 @@ class KomikV : ParsedHttpSource() {
     override fun searchMangaFromElement(element: Element): SManga = elementToSManga(element)
 
     private fun elementToSManga(element: Element): SManga {
+        val anchor = if (element.tagName().equals("a", true)) {
+            element
+        } else {
+            element.selectFirst("a.relative") ?: element.selectFirst("a") ?: element
+        }
+        val img = anchor.selectFirst("img")
+        val titleCandidate = element.selectFirst("h2")?.text()?.trim().orEmpty()
+        val titleFinal = when {
+            titleCandidate.isNotBlank() -> titleCandidate
+            img?.hasAttr("alt") == true -> img.attr("alt").trim()
+            else -> anchor.text().trim()
+        }
         return SManga.create().apply {
-            val linkElement = element.selectFirst("a") ?: element
-            setUrlWithoutDomain(linkElement.attr("href").trim())
-
-            var t = element.select("h2").text().trim()
-            if (t.isEmpty()) t = element.select("a img").attr("alt").trim()
-            title = t
-
-            val imgElement = element.selectFirst("img")
-            thumbnail_url = imgElement?.attr("data-src")?.ifEmpty { imgElement.attr("src") } ?: ""
+            setUrlWithoutDomain(anchor.attr("href").trim())
+            title = titleFinal
+            thumbnail_url = img?.absUrl("src") ?: ""
         }
     }
 
-    // --- Next page selectors: return null because we control pagination via helper ---
     override fun popularMangaNextPageSelector(): String? = null
     override fun latestUpdatesNextPageSelector(): String? = null
     override fun searchMangaNextPageSelector(): String? = null
 
-    // --- Helper-based pagination (with heuristik #1: items.size < ITEMS_PER_PAGE means last page) ---
     private fun <T> chunkForPage(all: List<T>, page: Int): List<T> {
         val per = ITEMS_PER_PAGE
         if (all.isEmpty()) return emptyList()
@@ -89,26 +92,16 @@ class KomikV : ParsedHttpSource() {
 
     private fun parsePagedResponse(response: Response, selector: String, mapper: (Element) -> SManga): MangasPage {
         val doc = response.asJsoup()
-        val pageParam = response.request.url.queryParameter("page") ?: "1"
-        val pageNum = pageParam.toIntOrNull() ?: 1
-
-        // Select all matching elements (site tends to return cumulative content for ?page=N)
-        var all = doc.select(selector).map { mapper(it) }
-
-        // Fallbacks: some search pages may use slightly different containers
-        if (all.isEmpty() && selector == searchMangaSelector()) {
-            all = doc.select("div.grid a.group, div.archive .card").map { mapper(it) }
-        }
-
-        val items = chunkForPage(all, pageNum)
-
-        // Heuristic #1: if chunk is empty OR smaller than ITEMS_PER_PAGE, we assume it's the last page.
+        val pageNum = response.request.url.queryParameter("page")?.toIntOrNull() ?: 1
+        val mapped = doc.select(selector).map { mapper(it) }
+        val seen = mutableSetOf<String>()
+        val unique = mapped.filter { seen.add(it.url) }
+        val items = chunkForPage(unique, pageNum)
         val hasNext = when {
             items.isEmpty() -> false
             items.size < ITEMS_PER_PAGE -> false
             else -> pageNum < MAX_PAGE
         }
-
         return MangasPage(items, hasNext)
     }
 
@@ -121,39 +114,43 @@ class KomikV : ParsedHttpSource() {
     override fun searchMangaParse(response: Response): MangasPage =
         parsePagedResponse(response, searchMangaSelector(), ::searchMangaFromElement)
 
-    // --- Manga details ---
     override fun mangaDetailsParse(document: Document): SManga {
         return SManga.create().apply {
-            title = document.select("h1.text-xl").text().trim()
-            thumbnail_url = document.selectFirst("img.w-full.rounded-md")?.attr("src") ?: ""
+            title = document.selectFirst("h1")?.text()?.trim()
+                ?: document.selectFirst("h1.text-xl")?.text()?.trim().orEmpty()
+            thumbnail_url = document.selectFirst("img.w-full.rounded-md")?.absUrl("src") ?: ""
 
-            val statusText = document.select("div.w-full.rounded-r-full").text()
+            val infoDivs = document.select("div.mt-4.flex.w-full.items-center div")
+            val typeText = infoDivs.firstOrNull()?.text()?.trim().orEmpty()
+            val statusTextRaw = infoDivs.getOrNull(1)?.text()?.trim().orEmpty()
+
+            val normalized = statusTextRaw.replace(Regex("[^A-Za-z0-9]"), "").lowercase()
             status = when {
-                statusText.contains("ongoing", true) -> SManga.ONGOING
-                statusText.contains("completed", true) -> SManga.COMPLETED
+                normalized.contains("ongoing") || (normalized.contains("on") && normalized.contains("go")) -> SManga.ONGOING
+                normalized.contains("completed") || normalized.contains("complete") -> SManga.COMPLETED
                 else -> SManga.UNKNOWN
             }
 
-            val authorElements = document.select("div:contains(Author) + p a")
-            if (authorElements.isNotEmpty()) author = authorElements.joinToString(", ") { it.text() }
+            val authorText = document.selectFirst("a[href^=\"/tax/author/\"]")?.text()?.trim()
+            if (!authorText.isNullOrBlank()) author = authorText
             artist = author
 
-            val genres = document.select("div.w-full.gap-4 a").map { it.text() }
+            val genres = document.select("a[href^=\"/tax/genre/\"]").map { it.text().trim() }.filter { it.isNotEmpty() }.toMutableList()
+            if (typeText.isNotBlank()) {
+                if (!genres.contains(typeText)) genres.add(typeText)
+            }
             if (genres.isNotEmpty()) genre = genres.joinToString(", ")
 
-            val descriptionElement = document.selectFirst("div.mt-4.w-full p")
-            if (descriptionElement != null) description = descriptionElement.text().trim()
+            val desc = document.selectFirst("div.mt-4.w-full p")?.text()?.trim().orEmpty()
+            description = if (desc.isNotEmpty() && genres.isNotEmpty()) "$desc\n${genres.joinToString(", ")}" else desc
         }
     }
 
-    // --- Chapters ---
     override fun chapterListSelector(): String = "div.mt-4.flex.max-h-96.flex-col a"
-
     override fun chapterFromElement(element: Element): SChapter {
         return SChapter.create().apply {
             setUrlWithoutDomain(element.attr("href"))
-            val chapterText = element.selectFirst("div p")?.text() ?: ""
-            name = chapterText.trim()
+            name = element.selectFirst("div p")?.text()?.trim() ?: element.text().trim()
             val dateElement = element.selectFirst("div p.text-xs")
             if (dateElement != null) date_upload = parseDate(dateElement.text())
         }
@@ -189,34 +186,14 @@ class KomikV : ParsedHttpSource() {
         }
     }
 
-    // --- Pages & image parse (required) ---
     override fun pageListParse(document: Document): List<Page> {
-        val pages = mutableListOf<Page>()
-
-        val imgElements = document.select(
-            "div#reader img, div.reading-content img, img.wp-manga-chapter-img, .chapter-content img, .page-break img, article img"
-        )
-
-        val imgs = if (imgElements.isNotEmpty()) imgElements else document.select("img")
-
-        for ((index, img) in imgs.withIndex()) {
-            val src = img.attr("data-src").ifEmpty {
-                img.attr("data-lazy-src").ifEmpty {
-                    img.attr("src").ifEmpty { img.attr("data-original") }
-                }
-            }
-            pages.add(Page(index, src))
+        val imgs = document.select(".imgku img")
+        return imgs.mapIndexed { i, img ->
+            val src = img.absUrl("src")
+            Page(i, src)
         }
-
-        return pages
     }
 
-    override fun imageUrlParse(document: Document): String {
-        val img = document.selectFirst("img[data-src], img[data-lazy-src], img[src], img[data-original]")
-        return img?.attr("data-src")?.ifEmpty {
-            img.attr("data-lazy-src").ifEmpty {
-                img.attr("src").ifEmpty { img.attr("data-original") }
-            }
-        } ?: ""
-    }
+    override fun imageUrlParse(document: Document): String? = null
+
 }
