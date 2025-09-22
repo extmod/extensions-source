@@ -140,7 +140,6 @@ class KomikV : ParsedHttpSource() {
         }
     }
 
-    // TAMBAHKAN FUNGSI INI - ERROR 1
     override fun chapterFromElement(element: Element): SChapter {
         return SChapter.create().apply {
             setUrlWithoutDomain(element.selectFirst("a")?.attr("href") ?: "")
@@ -149,10 +148,8 @@ class KomikV : ParsedHttpSource() {
         }
     }
 
-    // TAMBAHKAN FUNGSI INI
     override fun chapterListSelector(): String = "div.chapter-list a"
 
-    // UBAH SIGNATURE - ERROR 2
     private fun parseDate(date: String): Long {
         val trimmed = date.trim()
         val now = System.currentTimeMillis()
@@ -184,6 +181,5 @@ class KomikV : ParsedHttpSource() {
         }
     }
 
-    // UBAH RETURN TYPE - ERROR 3  
     override fun imageUrlParse(document: Document): String = ""
 }
