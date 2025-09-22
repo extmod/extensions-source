@@ -53,28 +53,42 @@ class KomikV : ParsedHttpSource() {
     override fun latestUpdatesSelector(): String = popularMangaSelector()
     override fun searchMangaSelector(): String = popularMangaSelector()
 
-    override fun popularMangaFromElement(element: Element): SManga = elementToSManga(element)
-    override fun latestUpdatesFromElement(element: Element): SManga = elementToSManga(element)
-    override fun searchMangaFromElement(element: Element): SManga = elementToSManga(element)
+    override fun popularMangaFromElement(element: Element): SManga = searchMangaFromElement(element)
+    override fun latestUpdatesFromElement(element: Element): SManga = searchMangaFromElement(element)
 
-    private fun elementToSManga(element: Element): SManga {
-        val anchor = if (element.tagName().equals("a", true)) {
-            element
-        } else {
-            element.selectFirst("a.relative") ?: element.selectFirst("a") ?: element
+    override fun searchMangaFromElement(element: Element): SManga {
+        val manga = SManga.create()
+
+        // thumbnail: coba beberapa atribut (src, data-src, data-original) dengan absUrl
+        val imgElem = element.selectFirst("div.limit img") ?: element.selectFirst("img")
+        val thumb = imgElem?.let { img ->
+            img.absUrl("src").ifEmpty {
+                img.absUrl("data-src").ifEmpty {
+                    img.absUrl("data-original").ifEmpty {
+                        img.attr("src").trim()
+                    }
+                }
+            }
+        } ?: ""
+
+        // title: prefer h2 a, fallback teks element
+        val title = element.selectFirst("h2 a")?.text()?.trim().orEmpty().ifEmpty {
+            element.text().trim()
         }
-        val img = anchor.selectFirst("img")
-        val titleCandidate = element.selectFirst("h2")?.text()?.trim().orEmpty()
-        val titleFinal = when {
-            titleCandidate.isNotBlank() -> titleCandidate
-            img?.hasAttr("alt") == true -> img.attr("alt").trim()
-            else -> anchor.text().trim()
+
+        // url: cari anchor khusus (hindari a.text-sm), aman tanpa !!
+        val href = element.selectFirst("h2.items-center a:not(.text-sm)")?.attr("href")?.trim()
+            ?: element.selectFirst("a.relative")?.attr("href")?.trim()
+            ?: element.selectFirst("a")?.attr("href")?.trim()
+
+        if (!href.isNullOrEmpty()) {
+            manga.setUrlWithoutDomain(href)
         }
-        return SManga.create().apply {
-            setUrlWithoutDomain(anchor.attr("href").trim())
-            title = titleFinal
-            thumbnail_url = img?.absUrl("src") ?: ""
-        }
+
+        manga.title = title
+        manga.thumbnail_url = thumb
+
+        return manga
     }
 
     override fun popularMangaNextPageSelector(): String? = null
@@ -112,9 +126,10 @@ class KomikV : ParsedHttpSource() {
             title = document.selectFirst("h1.text-xl")?.text()?.trim().orEmpty()
             thumbnail_url = document.selectFirst("img.w-full.rounded-md")?.absUrl("src").orEmpty()
 
-            val tipeDanStatus = document.select("div.mt-4.flex.w-full.items-center div")
-            val type = infoDivs.firstOrNull()?.text()?.trim().orEmpty()
-            val status = infoDivs.getOrNull(1)?.text()?.trim().orEmpty()
+            // Type & Status
+            val infoDivs = document.select("div.mt-4.flex.w-full.items-center div")
+            val typeText = infoDivs.firstOrNull()?.text()?.trim().orEmpty()
+            val statusTextRaw = infoDivs.getOrNull(1)?.text()?.trim().orEmpty()
 
             status = when {
                 statusTextRaw.contains("on-going", ignoreCase = true) -> SManga.ONGOING
@@ -125,24 +140,30 @@ class KomikV : ParsedHttpSource() {
             val author = document.selectFirst("p.text-sm a:contains(Author)")?.ownText()?.trim()
             val artist = document.selectFirst("p.text-sm a:contains(Artist)")?.ownText()?.trim()
 
-            description = document.selectFirst("div.mt-4.w-full p")?.text()?.trim().orEmpty() + "\n"
-
-            val genres = document.select("div.mt-4.w-full.gap-4 a.text-md").mapNotNull { 
+            // genres
+            val genres = document.select("div.mt-4.w-full.gap-4 a.text-md").mapNotNull {
                 it.text().trim().takeIf { text -> text.isNotEmpty() }
             }.toMutableList()
-        
-            if (typeText.isNotBlank()) genres.add(typeText)
-            if (genres.isNotEmpty()) genre = genres.joinToString(", ")
 
+            if (typeText.isNotBlank()) genres.add(typeText)
+
+            // description + genres (newline)
+            val desc = document.selectFirst("div.mt-4.w-full p")?.text()?.trim().orEmpty()
+            description = if (genres.isNotEmpty()) {
+                desc + "\n\nGenres: " + genres.joinToString(", ")
+            } else {
+                desc
+            }
+
+            // assign author/artist if found
+            if (!author.isNullOrBlank()) this.author = author
+            if (!artist.isNullOrBlank()) this.artist = artist
         }
     }
 
+    // Chapter functions intentionally not implemented per request
     override fun chapterFromElement(element: Element): SChapter {
-        return SChapter.create().apply {
-            setUrlWithoutDomain(element.selectFirst("a")?.attr("href") ?: "")
-            name = element.selectFirst("a")?.text()?.trim() ?: ""
-            date_upload = element.selectFirst(".date")?.text()?.let { parseDate(it) } ?: 0
-        }
+        throw UnsupportedOperationException("chapterFromElement is not implemented for this source")
     }
 
     override fun chapterListSelector(): String = "div.chapter-list a"
@@ -178,5 +199,7 @@ class KomikV : ParsedHttpSource() {
         }
     }
 
-    override fun imageUrlParse(document: Document): String = ""
+    override fun imageUrlParse(document: Document): String {
+        throw UnsupportedOperationException("imageUrlParse is not implemented for this source")
+    }
 }
