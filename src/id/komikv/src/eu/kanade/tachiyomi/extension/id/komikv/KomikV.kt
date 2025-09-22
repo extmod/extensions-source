@@ -50,8 +50,8 @@ class KomikV : ParsedHttpSource() {
     }
 
     override fun popularMangaNextPageSelector(): String? = null
-override fun latestUpdatesNextPageSelector(): String? = null
-override fun searchMangaNextPageSelector(): String? = null
+    override fun latestUpdatesNextPageSelector(): String? = null
+    override fun searchMangaNextPageSelector(): String? = null
 
     override fun popularMangaFromElement(element: Element): SManga = elementToSManga(element)
     override fun latestUpdatesFromElement(element: Element): SManga = elementToSManga(element)
