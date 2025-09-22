@@ -27,9 +27,11 @@ class KomikV : ParsedHttpSource() {
 
     // Safety cap to avoid endless paging loops on sites that always render a "Load More" button.
     private val MAX_PAGE = 50
+    // Items per page observed on komikav (you reported ~18 per page)
+    private val ITEMS_PER_PAGE = 18
     // If a single response dumps *everything* (server returns all items), avoid loading all to memory
-    private val MAX_ITEMS_PER_RESPONSE = 500
-    private val TRUNCATE_TO = 50
+    private val MAX_ITEMS_PER_RESPONSE = 1000
+    private val TRUNCATE_TO = 200
 
     // Keep first-page first-item URL for each listing to detect duplicate/homepage fallback
     private var firstPopularUrl: String? = null
@@ -41,6 +43,27 @@ class KomikV : ParsedHttpSource() {
     private val seenLatestUrls = mutableSetOf<String>()
     private val seenSearchUrls = mutableSetOf<String>()
 
+    // Helper: get chunk for requested page from a cumulative response
+    private fun getPageChunk(all: List<SManga>, pageNum: Int): List<SManga> {
+        if (all.isEmpty()) return emptyList()
+        val per = ITEMS_PER_PAGE
+        val total = all.size
+        val start = (pageNum - 1) * per
+        val end = start + per
+
+        return when {
+            // Enough items to slice exact chunk
+            total >= end -> all.subList(start, end)
+            // Not enough for full chunk but contains some items for requested page -> take the last 'per' items
+            total > start -> {
+                val from = kotlin.math.max(0, total - per)
+                all.subList(from, total)
+            }
+            // No items for that page
+            else -> emptyList()
+        }
+    }
+
     // --- Popular ---
     override fun popularMangaRequest(page: Int): Request {
         if (page > MAX_PAGE) return GET("$baseUrl/?page=99999", headers)
@@ -51,7 +74,8 @@ class KomikV : ParsedHttpSource() {
         }
     }
 
-    override fun popularMangaSelector(): String = "div.grid div.flex.overflow-hidden.rounded-md"
+    // Broader selector: use container grid items; fallback to links inside group
+    override fun popularMangaSelector(): String = "div.grid div.flex.overflow-hidden.rounded-md, div.grid a.group"
 
     override fun popularMangaFromElement(element: Element): SManga {
         return SManga.create().apply {
@@ -73,18 +97,22 @@ class KomikV : ParsedHttpSource() {
     // We return the item selector as "next" check — paging decision handled in parse override below.
     override fun popularMangaNextPageSelector(): String = popularMangaSelector()
 
-    // Robust parser: dedupe, detect duplicated homepage dump, and truncate giant responses.
+    // Robust parser: handle server responses that append pages (cumulative content), dedupe, detect duplicated homepage dump, and truncate giant responses.
     override fun popularMangaParse(response: Response): MangasPage {
         val document = response.asJsoup()
-        var mangas = document.select(popularMangaSelector()).map { popularMangaFromElement(it) }
+        var mangasAll = document.select(popularMangaSelector()).map { popularMangaFromElement(it) }
 
-        // If the site returns an enormous concatenated page (server dump), truncate to avoid browser/app lag
-        if (mangas.size > MAX_ITEMS_PER_RESPONSE) {
-            mangas = mangas.take(TRUNCATE_TO)
+        // If server returns an enormous concatenated page (server dump), truncate to avoid browser/app lag
+        if (mangasAll.size > MAX_ITEMS_PER_RESPONSE) {
+            mangasAll = mangasAll.take(TRUNCATE_TO)
         }
 
         val pageParam = response.request.url.queryParameter("page") ?: "1"
         val pageNum = pageParam.toIntOrNull() ?: 1
+
+        // Extract only the chunk corresponding to requested page (handles cumulative responses)
+        val mangas = getPageChunk(mangasAll, pageNum)
+
         val firstUrlOnThisPage = mangas.firstOrNull()?.url
 
         if (pageNum == 1) {
@@ -131,12 +159,15 @@ class KomikV : ParsedHttpSource() {
 
     override fun latestUpdatesParse(response: Response): MangasPage {
         val document = response.asJsoup()
-        var mangas = document.select(latestUpdatesSelector()).map { latestUpdatesFromElement(it) }
+        var mangasAll = document.select(latestUpdatesSelector()).map { latestUpdatesFromElement(it) }
 
-        if (mangas.size > MAX_ITEMS_PER_RESPONSE) mangas = mangas.take(TRUNCATE_TO)
+        if (mangasAll.size > MAX_ITEMS_PER_RESPONSE) mangasAll = mangasAll.take(TRUNCATE_TO)
 
         val pageParam = response.request.url.queryParameter("page") ?: "1"
         val pageNum = pageParam.toIntOrNull() ?: 1
+
+        val mangas = getPageChunk(mangasAll, pageNum)
+
         val firstUrlOnThisPage = mangas.firstOrNull()?.url
 
         if (pageNum == 1) {
@@ -179,12 +210,19 @@ class KomikV : ParsedHttpSource() {
 
     override fun searchMangaParse(response: Response): MangasPage {
         val document = response.asJsoup()
-        var mangas = document.select(searchMangaSelector()).map { searchMangaFromElement(it) }
+        // Some search pages use slightly different containers; try a couple of fallbacks
+        var mangasAll = document.select(searchMangaSelector()).map { searchMangaFromElement(it) }
+        if (mangasAll.isEmpty()) {
+            mangasAll = document.select("div.grid a.group, div.archive .card").map { searchMangaFromElement(it) }
+        }
 
-        if (mangas.size > MAX_ITEMS_PER_RESPONSE) mangas = mangas.take(TRUNCATE_TO)
+        if (mangasAll.size > MAX_ITEMS_PER_RESPONSE) mangasAll = mangasAll.take(TRUNCATE_TO)
 
         val pageParam = response.request.url.queryParameter("page") ?: "1"
         val pageNum = pageParam.toIntOrNull() ?: 1
+
+        val mangas = getPageChunk(mangasAll, pageNum)
+
         val firstUrlOnThisPage = mangas.firstOrNull()?.url
 
         if (pageNum == 1) {
