@@ -24,7 +24,6 @@ class KomikV : ParsedHttpSource() {
     override val client: OkHttpClient = network.cloudflareClient
 
     private val ITEMS_PER_PAGE = 18
-    private val MAX_PAGE = 50
 
     override fun popularMangaRequest(page: Int): Request {
         val url = if (page <= 1) "$baseUrl/popular/" else "$baseUrl/popular/?page=$page"
@@ -94,14 +93,8 @@ class KomikV : ParsedHttpSource() {
         val doc = response.asJsoup()
         val pageNum = response.request.url.queryParameter("page")?.toIntOrNull() ?: 1
         val mapped = doc.select(selector).map { mapper(it) }
-        val seen = mutableSetOf<String>()
-        val unique = mapped.filter { seen.add(it.url) }
-        val items = chunkForPage(unique, pageNum)
-        val hasNext = when {
-            items.isEmpty() -> false
-            items.size < ITEMS_PER_PAGE -> false
-            else -> pageNum < MAX_PAGE
-        }
+        val items = chunkForPage(mapped, pageNum)
+        val hasNext = items.isNotEmpty() && items.size >= ITEMS_PER_PAGE
         return MangasPage(items, hasNext)
     }
 
@@ -117,73 +110,57 @@ class KomikV : ParsedHttpSource() {
     override fun mangaDetailsParse(document: Document): SManga {
         return SManga.create().apply {
             title = document.selectFirst("h1")?.text()?.trim()
-                ?: document.selectFirst("h1.text-xl")?.text()?.trim().orEmpty()
-            thumbnail_url = document.selectFirst("img.w-full.rounded-md")?.absUrl("src") ?: ""
+            ?: document.selectFirst("h1.text-xl")?.text()?.trim().orEmpty()
+            thumbnail_url = document.selectFirst("img.w-full.rounded-md")?.absUrl("src").orEmpty()
 
             val infoDivs = document.select("div.mt-4.flex.w-full.items-center div")
             val typeText = infoDivs.firstOrNull()?.text()?.trim().orEmpty()
             val statusTextRaw = infoDivs.getOrNull(1)?.text()?.trim().orEmpty()
 
-            val normalized = statusTextRaw.replace(Regex("[^A-Za-z0-9]"), "").lowercase()
             status = when {
-    normalized.contains("on-going") -> SManga.ONGOING
-    normalized.contains("completed") -> SManga.COMPLETED
-    else -> SManga.UNKNOWN
+                statusTextRaw.contains("on-going", ignoreCase = true) -> SManga.ONGOING
+                statusTextRaw.contains("completed", ignoreCase = true) -> SManga.COMPLETED
+                else -> SManga.UNKNOWN
             }
 
             val authorText = document.selectFirst("p.text-sm a")?.text()?.trim()
-            if (!authorText.isNullOrBlank()) author = authorText
-            artist = author
-
-            val genres = document.select(".mt-4 a").map { it.text().trim() }.filter { it.isNotEmpty() }.toMutableList()
-            if (typeText.isNotBlank()) {
-                if (!genres.contains(typeText)) genres.add(typeText)
+            if (!authorText.isNullOrBlank()) {
+                author = authorText
+                artist = authorText
             }
+
+            val genres = document.select(".mt-4 a").mapNotNull { 
+                it.text().trim().takeIf { text -> text.isNotEmpty() }
+            }.toMutableList()
+        
+            if (typeText.isNotBlank()) genres.add(typeText)
             if (genres.isNotEmpty()) genre = genres.joinToString(", ")
 
-            val desc = document.selectFirst("div.mt-4.w-full p")?.text()?.trim().orEmpty()
-            description = if (desc.isNotEmpty() && genres.isNotEmpty()) "$desc\n${genres.joinToString(", ")}" else desc
+            description = document.selectFirst("div.mt-4.w-full p")?.text()?.trim().orEmpty()
         }
     }
 
-    override fun chapterListSelector(): String = "div.mt-4.flex.max-h-96.flex-col a"
-    override fun chapterFromElement(element: Element): SChapter {
-        return SChapter.create().apply {
-            setUrlWithoutDomain(element.attr("href"))
-            name = element.selectFirst("div p")?.text()?.trim() ?: element.text().trim()
-            val dateElement = element.selectFirst("div p.text-xs")
-            if (dateElement != null) date_upload = parseDate(dateElement.text())
-        }
-    }
+    override fun parseDate(date: String): Long {
+        val trimmed = date.trim()
+        val now = System.currentTimeMillis()
+        val parts = trimmed.split(" ")
+        if (parts.size < 2) return 0L
 
-    private fun parseDate(dateStr: String): Long {
-        return try {
-            when {
-                dateStr.contains("menit", true) -> {
-                    val minutes = dateStr.replace(Regex("[^0-9]"), "").toIntOrNull() ?: 0
-                    Calendar.getInstance().apply { add(Calendar.MINUTE, -minutes) }.timeInMillis
-                }
-                dateStr.contains("jam", true) -> {
-                    val hours = dateStr.replace(Regex("[^0-9]"), "").toIntOrNull() ?: 0
-                    Calendar.getInstance().apply { add(Calendar.HOUR_OF_DAY, -hours) }.timeInMillis
-                }
-                dateStr.contains("hari", true) -> {
-                    val days = dateStr.replace(Regex("[^0-9]"), "").toIntOrNull() ?: 0
-                    Calendar.getInstance().apply { add(Calendar.DAY_OF_MONTH, -days) }.timeInMillis
-                }
-                dateStr.contains("mgg", true) || dateStr.contains("minggu", true) -> {
-                    val weeks = dateStr.replace(Regex("[^0-9]"), "").toIntOrNull() ?: 0
-                    Calendar.getInstance().apply { add(Calendar.WEEK_OF_YEAR, -weeks) }.timeInMillis
-                }
-                dateStr.contains("bln", true) || dateStr.contains("bulan", true) -> {
-                    val months = dateStr.replace(Regex("[^0-9]"), "").toIntOrNull() ?: 0
-                    Calendar.getInstance().apply { add(Calendar.MONTH, -months) }.timeInMillis
-                }
-                else -> 0L
-            }
-        } catch (e: Exception) {
-            0L
+        val number = parts[0].toIntOrNull() ?: return 0L
+        val unit = parts[1]
+
+        val multiplier = when (unit) {
+            "dtk"  -> 1000L
+            "mnt"  -> 60_000L
+            "jam"  -> 3_600_000L
+            "hari" -> 86_400_000L
+            "mgg"  -> 604_800_000L
+            "bln"  -> 2_592_000_000L
+            "thn"  -> 31_536_000_000L
+            else   -> 0L
         }
+
+        return now - (number * multiplier)
     }
 
     override fun pageListParse(document: Document): List<Page> {
