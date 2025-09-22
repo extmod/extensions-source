@@ -51,7 +51,7 @@ class KomikV : ParsedHttpSource() {
     }
 
     // --- Selectors / FromElement ---
-    override fun popularMangaSelector(): String = "div.grid div.flex.overflow-hidden.rounded-md, div.grid a.group"
+    override fun popularMangaSelector(): String = "div.grid a"
     override fun latestUpdatesSelector(): String = popularMangaSelector()
     override fun searchMangaSelector(): String = popularMangaSelector()
 
@@ -78,7 +78,7 @@ class KomikV : ParsedHttpSource() {
     override fun latestUpdatesNextPageSelector(): String? = null
     override fun searchMangaNextPageSelector(): String? = null
 
-    // --- Helper-based pagination ---
+    // --- Helper-based pagination (with heuristik #1: items.size < ITEMS_PER_PAGE means last page) ---
     private fun <T> chunkForPage(all: List<T>, page: Int): List<T> {
         val per = ITEMS_PER_PAGE
         if (all.isEmpty()) return emptyList()
@@ -92,7 +92,7 @@ class KomikV : ParsedHttpSource() {
         val pageParam = response.request.url.queryParameter("page") ?: "1"
         val pageNum = pageParam.toIntOrNull() ?: 1
 
-        // Select all matching elements (site returns cumulative content for ?page=N in practice)
+        // Select all matching elements (site tends to return cumulative content for ?page=N)
         var all = doc.select(selector).map { mapper(it) }
 
         // Fallbacks: some search pages may use slightly different containers
@@ -102,8 +102,12 @@ class KomikV : ParsedHttpSource() {
 
         val items = chunkForPage(all, pageNum)
 
-        // hasNext: if there are more items in this response beyond this page OR not reached MAX_PAGE
-        val hasNext = (pageNum * ITEMS_PER_PAGE) < all.size || pageNum < MAX_PAGE
+        // Heuristic #1: if chunk is empty OR smaller than ITEMS_PER_PAGE, we assume it's the last page.
+        val hasNext = when {
+            items.isEmpty() -> false
+            items.size < ITEMS_PER_PAGE -> false
+            else -> pageNum < MAX_PAGE
+        }
 
         return MangasPage(items, hasNext)
     }
