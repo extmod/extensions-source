@@ -166,7 +166,7 @@ class KomikV : ParsedHttpSource() {
         throw UnsupportedOperationException("chapterFromElement is not implemented for this source")
     }
 
-    override fun chapterListSelector(): String = "div.chapter-list a"
+    override fun chapterListSelector(): String = "div.grid.gap-y-3 a"
 
     private fun parseDate(date: String): Long {
         val trimmed = date.trim()
