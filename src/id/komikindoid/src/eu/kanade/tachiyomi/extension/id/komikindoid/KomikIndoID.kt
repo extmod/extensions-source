@@ -69,8 +69,6 @@ class KomikV : ParsedHttpSource() {
         return searchMangaFromElement(element)
     }
 
-    override fun imageUrlParse(document: Document): String = throw UnsupportedOperationException()
-
     override fun popularMangaRequest(page: Int): Request {
         if (page <= 1) resetSeen()
         return GET("$baseUrl/popular/?page=$page", headers)
