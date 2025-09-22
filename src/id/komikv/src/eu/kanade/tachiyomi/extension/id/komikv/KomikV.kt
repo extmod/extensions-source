@@ -110,7 +110,7 @@ class KomikV : ParsedHttpSource() {
     override fun mangaDetailsParse(document: Document): SManga {
         return SManga.create().apply {
             title = document.selectFirst("h1")?.text()?.trim()
-            ?: document.selectFirst("h1.text-xl")?.text()?.trim().orEmpty()
+                ?: document.selectFirst("h1.text-xl")?.text()?.trim().orEmpty()
             thumbnail_url = document.selectFirst("img.w-full.rounded-md")?.absUrl("src").orEmpty()
 
             val infoDivs = document.select("div.mt-4.flex.w-full.items-center div")
@@ -140,7 +140,20 @@ class KomikV : ParsedHttpSource() {
         }
     }
 
-    override fun parseDate(date: String): Long {
+    // TAMBAHKAN FUNGSI INI - ERROR 1
+    override fun chapterFromElement(element: Element): SChapter {
+        return SChapter.create().apply {
+            setUrlWithoutDomain(element.selectFirst("a")?.attr("href") ?: "")
+            name = element.selectFirst("a")?.text()?.trim() ?: ""
+            date_upload = element.selectFirst(".date")?.text()?.let { parseDate(it) } ?: 0
+        }
+    }
+
+    // TAMBAHKAN FUNGSI INI
+    override fun chapterListSelector(): String = "div.chapter-list a"
+
+    // UBAH SIGNATURE - ERROR 2
+    private fun parseDate(date: String): Long {
         val trimmed = date.trim()
         val now = System.currentTimeMillis()
         val parts = trimmed.split(" ")
@@ -171,6 +184,6 @@ class KomikV : ParsedHttpSource() {
         }
     }
 
-    override fun imageUrlParse(document: Document): String? = null
-
+    // UBAH RETURN TYPE - ERROR 3  
+    override fun imageUrlParse(document: Document): String = ""
 }
