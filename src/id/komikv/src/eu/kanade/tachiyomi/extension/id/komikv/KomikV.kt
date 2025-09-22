@@ -49,10 +49,9 @@ class KomikV : ParsedHttpSource() {
         }
     }
 
-    // --- Selectors / FromElement ---
-    override fun popularMangaSelector(): String = "div.grid div.flex.overflow-hidden.rounded-md, div.grid a.group"
-    override fun latestUpdatesSelector(): String = popularMangaSelector()
-    override fun searchMangaSelector(): String = popularMangaSelector()
+    override fun popularMangaNextPageSelector(): String? = null
+override fun latestUpdatesNextPageSelector(): String? = null
+override fun searchMangaNextPageSelector(): String? = null
 
     override fun popularMangaFromElement(element: Element): SManga = elementToSManga(element)
     override fun latestUpdatesFromElement(element: Element): SManga = elementToSManga(element)
