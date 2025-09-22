@@ -161,10 +161,28 @@ class KomikV : ParsedHttpSource() {
         }
     }
 
-    // Chapter functions intentionally not implemented per request
     override fun chapterFromElement(element: Element): SChapter {
-        throw UnsupportedOperationException("chapterFromElement is not implemented for this source")
+    val chapter = SChapter.create()
+
+    // ambil URL
+    val href = element.attr("href").trim()
+    try {
+        chapter.setUrlWithoutDomain(href)
+    } catch (_: Throwable) {
+        chapter.url = href
     }
+
+    // ambil judul langsung dari <p>
+    chapter.name = element.selectFirst("p")?.text()?.trim()
+        ?: element.text().trim()
+
+    // ambil waktu, buang kata "lalu"
+    val timeText = element.selectFirst("p.text-xs")?.text()?.trim() ?: ""
+    val cleanedTime = timeText.replace("lalu", "").trim()
+    chapter.date_upload = parseDate(cleanedTime)
+
+    return chapter
+}
 
     override fun chapterListSelector(): String = "div.grid.gap-y-3 a"
 
