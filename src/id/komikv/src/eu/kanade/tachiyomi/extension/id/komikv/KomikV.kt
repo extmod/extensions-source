@@ -109,13 +109,12 @@ class KomikV : ParsedHttpSource() {
 
     override fun mangaDetailsParse(document: Document): SManga {
         return SManga.create().apply {
-            title = document.selectFirst("h1")?.text()?.trim()
-                ?: document.selectFirst("h1.text-xl")?.text()?.trim().orEmpty()
+            title = document.selectFirst("h1.text-xl")?.text()?.trim().orEmpty()
             thumbnail_url = document.selectFirst("img.w-full.rounded-md")?.absUrl("src").orEmpty()
 
-            val infoDivs = document.select("div.mt-4.flex.w-full.items-center div")
-            val typeText = infoDivs.firstOrNull()?.text()?.trim().orEmpty()
-            val statusTextRaw = infoDivs.getOrNull(1)?.text()?.trim().orEmpty()
+            val tipeDanStatus = document.select("div.mt-4.flex.w-full.items-center div")
+            val type = infoDivs.firstOrNull()?.text()?.trim().orEmpty()
+            val status = infoDivs.getOrNull(1)?.text()?.trim().orEmpty()
 
             status = when {
                 statusTextRaw.contains("on-going", ignoreCase = true) -> SManga.ONGOING
@@ -123,20 +122,18 @@ class KomikV : ParsedHttpSource() {
                 else -> SManga.UNKNOWN
             }
 
-            val authorText = document.selectFirst("p.text-sm a")?.text()?.trim()
-            if (!authorText.isNullOrBlank()) {
-                author = authorText
-                artist = authorText
-            }
+            val author = document.selectFirst("p.text-sm a:contains(Author)")?.ownText()?.trim()
+            val artist = document.selectFirst("p.text-sm a:contains(Artist)")?.ownText()?.trim()
 
-            val genres = document.select(".mt-4 a").mapNotNull { 
+            description = document.selectFirst("div.mt-4.w-full p")?.text()?.trim().orEmpty() + "\n"
+
+            val genres = document.select("div.mt-4.w-full.gap-4 a.text-md").mapNotNull { 
                 it.text().trim().takeIf { text -> text.isNotEmpty() }
             }.toMutableList()
         
             if (typeText.isNotBlank()) genres.add(typeText)
             if (genres.isNotEmpty()) genre = genres.joinToString(", ")
 
-            description = document.selectFirst("div.mt-4.w-full p")?.text()?.trim().orEmpty()
         }
     }
 
