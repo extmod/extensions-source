@@ -104,34 +104,57 @@ class KomikV : ParsedHttpSource() {
     val manga = SManga.create()
 
     // Title & thumbnail
-    manga.title = document.selectFirst("h1.text-xl")!!.text().trim()
-    val thumbEl = document.selectFirst("img.w-full.rounded-md")!!
-    manga.thumbnail_url = thumbEl.attr("data-src").ifEmpty { thumbEl.attr("src") }
+    manga.title = document.selectFirst("h1.text-xl")?.text()?.trim() ?: ""
+    val thumbEl = document.selectFirst("img.w-full.rounded-md")
+    manga.thumbnail_url = thumbEl?.attr("data-src")?.ifEmpty { thumbEl.attr("src") } ?: ""
 
-    // Genres awal dari selector genre
-    val genres = document.select("div.w-full.gap-4 a").map { it.text().trim() }.filter { it.isNotEmpty() }.toMutableList()
+    // Genres awal
+    val genres = document.select("div.w-full.gap-4 a")
+        .map { it.text().trim() }
+        .filter { it.isNotEmpty() }
+        .toMutableList()
 
-    // Ambil tipe (Manhwa/Manhua/Manga) dari badge di area thumbnail
-    val typeText = document.selectFirst("div.relative.flex-shrink-0 div.mt-4 > div")!!.text().trim()
-    if (!genres.any { it.equals(typeText, ignoreCase = true) }) genres.add(0, typeText)
-
+    // Ambil tipe komik dari badge (contoh: Manhwa, Manhua, Manga)
+    val typeText = document.selectFirst("div.relative.flex-shrink-0 div.mt-4 > div")
+        ?.text()
+        ?.trim()
+    if (!typeText.isNullOrBlank() && !genres.any { it.equals(typeText, ignoreCase = true) }) {
+        genres.add(typeText) // ditaruh di akhir
+    }
     manga.genre = genres.distinct().joinToString(", ")
 
-    // Description & status
-    manga.description = document.selectFirst("div.mt-4.w-full p")!!.text().trim()
-    val statusText = document.selectFirst("div.w-full.rounded-r-full")!!.text()
+    // Description
+    manga.description = document.selectFirst("div.mt-4.w-full p")?.text()?.trim()
+
+    // Status
+    val statusText = document.selectFirst("div.w-full.rounded-r-full")?.text() ?: ""
     manga.status = when {
         statusText.contains("on-going", true) -> SManga.ONGOING
         statusText.contains("completed", true) -> SManga.COMPLETED
         else -> SManga.UNKNOWN
     }
 
-    // Ambil Author / Artist secara positional (nth)
-    val infoBlock = document.selectFirst("div.mt-4.flex.flex-col.gap-4 > div")!!
-    val pList = infoBlock.select("p.text-sm")
+    // Info block untuk author/artist
+    val infoBlock = document.selectFirst("div.mt-4.flex.flex-col.gap-4 > div")
+    val pList = infoBlock?.select("p.text-sm") ?: emptyList()
 
-    manga.author = pList[0].select("a").map { it.text().trim() }.distinct().joinToString(", ")
-    manga.artist  = pList[1].select("a").map { it.text().trim() }.distinct().joinToString(", ")
+    // Author (index 0)
+    manga.author = pList.getOrNull(0)
+        ?.select("a")
+        ?.map { it.text().substringBefore("(").trim() }
+        ?.filter { it.isNotEmpty() }
+        ?.distinct()
+        ?.joinToString(", ")
+        ?.ifBlank { null }
+
+    // Artist (index 1)
+    manga.artist = pList.getOrNull(1)
+        ?.select("a")
+        ?.map { it.text().substringBefore("(").trim() }
+        ?.filter { it.isNotEmpty() }
+        ?.distinct()
+        ?.joinToString(", ")
+        ?.ifBlank { null }
 
     return manga
 }
