@@ -115,17 +115,16 @@ class KomikV : ParsedHttpSource() {
         .distinct()
         .toMutableList()
 
-    // Ambil tipe komik (contoh: Manhwa / Manhua / Manga) dari area thumbnail/badge, taruh di akhir jika ada
     val typeText = document.selectFirst("div.relative.flex-shrink-0 div.mt-4 > div")
         ?.text()
         ?.trim()
     if (!typeText.isNullOrBlank() && genres.none { it.equals(typeText, ignoreCase = true) }) {
         genres.add(typeText)
     }
-    manga.genre = genres.distinct().joinToString(", ")
 
-    // Description
-    manga.description = document.selectFirst("div.mt-4.w-full p")?.text()?.trim()
+    manga.description = document.selectFirst("div.mt-4.w-full p")?.text()?.trim().orEmpty() + "\n"
+
+    manga.genre = genres.distinct().joinToString(", ")
 
     val statusText = document.selectFirst("div.w-full.rounded-r-full")?.text() ?: ""
     manga.status = when {
