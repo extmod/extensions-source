@@ -71,26 +71,6 @@ class KomikV : ParsedHttpSource() {
             }
         } ?: ""
 
-        // title: prefer h2 a, fallback teks element
-        val title = element.selectFirst("h2 a")?.text()?.trim().orEmpty().ifEmpty {
-            element.text().trim()
-        }
-
-        // url: cari anchor khusus (hindari a.text-sm), aman tanpa !!
-        val href = element.selectFirst("h2.items-center a:not(.text-sm)")?.attr("href")?.trim()
-            ?: element.selectFirst("a.relative")?.attr("href")?.trim()
-            ?: element.selectFirst("a")?.attr("href")?.trim()
-
-        if (!href.isNullOrEmpty()) {
-            manga.setUrlWithoutDomain(href)
-        }
-
-        manga.title = title
-        manga.thumbnail_url = thumb
-
-        return manga
-    }
-
     override fun popularMangaNextPageSelector(): String? = null
     override fun latestUpdatesNextPageSelector(): String? = null
     override fun searchMangaNextPageSelector(): String? = null
