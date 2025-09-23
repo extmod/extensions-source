@@ -57,19 +57,18 @@ class KomikV : ParsedHttpSource() {
     override fun latestUpdatesFromElement(element: Element): SManga = searchMangaFromElement(element)
 
     override fun searchMangaFromElement(element: Element): SManga {
-        val manga = SManga.create()
+        return SManga.create().apply {
+            val linkElement = element.selectFirst("a") ?: element
+            setUrlWithoutDomain(linkElement.attr("href").trim())
 
-        // thumbnail: coba beberapa atribut (src, data-src, data-original) dengan absUrl
-        val imgElem = element.selectFirst("div.limit img") ?: element.selectFirst("img")
-        val thumb = imgElem?.let { img ->
-            img.absUrl("src").ifEmpty {
-                img.absUrl("data-src").ifEmpty {
-                    img.absUrl("data-original").ifEmpty {
-                        img.attr("src").trim()
-                    }
-                }
-            }
-        } ?: ""
+            var t = element.select("h2").text().trim()
+            if (t.isEmpty()) t = element.select("a img").attr("alt").trim()
+            title = t
+
+            val imgElement = element.selectFirst("img")
+            thumbnail_url = imgElement?.attr("data-src")?.ifEmpty { imgElement.attr("src") } ?: ""
+        }
+    }
 
     override fun popularMangaNextPageSelector(): String? = null
     override fun latestUpdatesNextPageSelector(): String? = null
