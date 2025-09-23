@@ -2,10 +2,10 @@ package eu.kanade.tachiyomi.extension.id.komikv
 
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.source.model.FilterList
+import eu.kanade.tachiyomi.source.model.MangasPage
+import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.SChapter
-import eu.kanade.tachiyomi.source.model.Page
-import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.online.ParsedHttpSource
 import eu.kanade.tachiyomi.util.asJsoup
 import okhttp3.OkHttpClient
@@ -14,9 +14,9 @@ import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import java.net.URLEncoder
-import java.util.Calendar
 
 class KomikV : ParsedHttpSource() {
+
     override val name = "KomikV"
     override val baseUrl = "https://komikav.net"
     override val lang = "id"
@@ -82,7 +82,11 @@ class KomikV : ParsedHttpSource() {
         return if (start < all.size) all.subList(start, end) else emptyList()
     }
 
-    private fun parsePagedResponse(response: Response, selector: String, mapper: (Element) -> SManga): MangasPage {
+    private fun parsePagedResponse(
+        response: Response,
+        selector: String,
+        mapper: (Element) -> SManga
+    ): MangasPage {
         val doc = response.asJsoup()
         val pageNum = response.request.url.queryParameter("page")?.toIntOrNull() ?: 1
         val mapped = doc.select(selector).map { mapper(it) }
@@ -101,78 +105,74 @@ class KomikV : ParsedHttpSource() {
         parsePagedResponse(response, searchMangaSelector(), ::searchMangaFromElement)
 
     override fun mangaDetailsParse(document: Document): SManga {
-    val manga = SManga.create()
+        val manga = SManga.create()
 
-    // Title & thumbnail
-    manga.title = document.selectFirst("h1.text-xl")?.text()?.trim() ?: ""
-    val thumbEl = document.selectFirst("img.w-full.rounded-md")
-    manga.thumbnail_url = thumbEl?.attr("data-src")?.ifEmpty { thumbEl.attr("src") } ?: ""
+        // Title & thumbnail
+        manga.title = document.selectFirst("h1.text-xl")?.text()?.trim() ?: ""
+        val thumbEl = document.selectFirst("img.w-full.rounded-md")
+        manga.thumbnail_url = thumbEl?.attr("data-src")?.ifEmpty { thumbEl.attr("src") } ?: ""
 
-    // Genres awal (distinct + trim)
-    val genres = document.select("div.w-full.gap-4 a")
-        .map { it.text().trim() }
-        .filter { it.isNotEmpty() }
-        .distinct()
-        .toMutableList()
+        // Genres awal
+        val genres = document.select("div.w-full.gap-4 a")
+            .map { it.text().trim() }
+            .filter { it.isNotEmpty() }
+            .distinct()
+            .toMutableList()
 
-    val typeText = document.selectFirst("div.relative.flex-shrink-0 div.mt-4 > div")
-        ?.text()
-        ?.trim()
-    if (!typeText.isNullOrBlank() && genres.none { it.equals(typeText, ignoreCase = true) }) {
-        genres.add(typeText)
+        val typeText = document.selectFirst("div.relative.flex-shrink-0 div.mt-4 > div")
+            ?.text()
+            ?.trim()
+        if (!typeText.isNullOrBlank() && genres.none { it.equals(typeText, ignoreCase = true) }) {
+            genres.add(typeText)
+        }
+
+        manga.description = document.selectFirst("div.mt-4.w-full p")?.text()?.trim().orEmpty() + "\n"
+        manga.genre = genres.distinct().joinToString(", ")
+
+        val statusText = document.selectFirst("div.w-full.rounded-r-full")?.text() ?: ""
+        manga.status = when {
+            statusText.contains("on-going", true) -> SManga.ONGOING
+            statusText.contains("completed", true) -> SManga.COMPLETED
+            else -> SManga.UNKNOWN
+        }
+
+        val infoBlock = document.selectFirst("div.mt-4.flex.flex-col.gap-4 > div")
+        val pList = infoBlock?.select("p.text-sm") ?: emptyList()
+
+        manga.author = pList.getOrNull(0)
+            ?.select("a")
+            ?.map { it.text().substringBefore("(").trim() }
+            ?.filter { it.isNotEmpty() }
+            ?.distinct()
+            ?.joinToString(", ")
+            ?.takeIf { !it.isNullOrEmpty() }
+
+        manga.artist = pList.getOrNull(1)
+            ?.select("a")
+            ?.map { it.text().substringBefore("(").trim() }
+            ?.filter { it.isNotEmpty() }
+            ?.distinct()
+            ?.joinToString(", ")
+            ?.takeIf { !it.isNullOrEmpty() }
+
+        return manga
     }
-
-    manga.description = document.selectFirst("div.mt-4.w-full p")?.text()?.trim().orEmpty() + "\n"
-
-    manga.genre = genres.distinct().joinToString(", ")
-
-    val statusText = document.selectFirst("div.w-full.rounded-r-full")?.text() ?: ""
-    manga.status = when {
-        statusText.contains("on-going", true) -> SManga.ONGOING
-        statusText.contains("completed", true) -> SManga.COMPLETED
-        else -> SManga.UNKNOWN
-    }
-
-    val infoBlock = document.selectFirst("div.mt-4.flex.flex-col.gap-4 > div")
-    val pList = infoBlock?.select("p.text-sm") ?: emptyList()
-
-    manga.author = pList.getOrNull(0)
-        ?.select("a")
-        ?.map { it.text().substringBefore("(").trim() }
-        ?.filter { it.isNotEmpty() }
-        ?.distinct()
-        ?.joinToString(", ")
-        ?.takeIf { !it.isNullOrEmpty() }
-
-    manga.artist = pList.getOrNull(1)
-        ?.select("a")
-        ?.map { it.text().substringBefore("(").trim() }
-        ?.filter { it.isNotEmpty() }
-        ?.distinct()
-        ?.joinToString(", ")
-        ?.takeIf { !it.isNullOrEmpty() }
-
-    return manga
-}
 
     override fun chapterFromElement(element: Element): SChapter {
-    val chapter = SChapter.create()
+        val chapter = SChapter.create()
+        val href = element.attr("href").trim()
+        try {
+            chapter.setUrlWithoutDomain(href)
+        } catch (_: Throwable) {
+            chapter.url = href
+        }
 
-    val href = element.attr("href").trim()
-    try {
-        chapter.setUrlWithoutDomain(href)
-    } catch (_: Throwable) {
-        chapter.url = href
+        chapter.name = element.selectFirst("p")?.text()?.trim() ?: element.text().trim()
+        val timeText = element.selectFirst("p.text-xs")?.text()?.trim() ?: ""
+        chapter.date_upload = parseDate(timeText)
+
+        return chapter
     }
-
-    chapter.name = element.selectFirst("p")?.text()?.trim()
-        ?: element.text().trim()
-
-    val timeText = element.selectFirst("p.text-xs")?.text()?.trim() ?: ""
-    chapter.date_upload = parseDate(timeText)
-
-    return chapter
-}
 
     override fun chapterListSelector(): String = "div.mt-4.flex a.group"
 
@@ -186,14 +186,14 @@ class KomikV : ParsedHttpSource() {
         val unit = parts[1]
 
         val multiplier = when (unit) {
-            "dtk"  -> 1000L
-            "mnt"  -> 60_000L
-            "jam"  -> 3_600_000L
+            "dtk" -> 1000L
+            "mnt" -> 60_000L
+            "jam" -> 3_600_000L
             "hari" -> 86_400_000L
-            "mgg"  -> 604_800_000L
-            "bln"  -> 2_592_000_000L
-            "thn"  -> 31_536_000_000L
-            else   -> 0L
+            "mgg" -> 604_800_000L
+            "bln" -> 2_592_000_000L
+            "thn" -> 31_536_000_000L
+            else -> 0L
         }
 
         return now - (number * multiplier)
