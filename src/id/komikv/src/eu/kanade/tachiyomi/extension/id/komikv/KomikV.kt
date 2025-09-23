@@ -108,25 +108,25 @@ class KomikV : ParsedHttpSource() {
     val thumbEl = document.selectFirst("img.w-full.rounded-md")
     manga.thumbnail_url = thumbEl?.attr("data-src")?.ifEmpty { thumbEl.attr("src") } ?: ""
 
-    // Genres awal
+    // Genres awal (distinct + trim)
     val genres = document.select("div.w-full.gap-4 a")
         .map { it.text().trim() }
         .filter { it.isNotEmpty() }
+        .distinct()
         .toMutableList()
 
-    // Ambil tipe komik dari badge (contoh: Manhwa, Manhua, Manga)
+    // Ambil tipe komik (contoh: Manhwa / Manhua / Manga) dari area thumbnail/badge, taruh di akhir jika ada
     val typeText = document.selectFirst("div.relative.flex-shrink-0 div.mt-4 > div")
         ?.text()
         ?.trim()
-    if (!typeText.isNullOrBlank() && !genres.any { it.equals(typeText, ignoreCase = true) }) {
-        genres.add(typeText) // ditaruh di akhir
+    if (!typeText.isNullOrBlank() && genres.none { it.equals(typeText, ignoreCase = true) }) {
+        genres.add(typeText)
     }
     manga.genre = genres.distinct().joinToString(", ")
 
     // Description
     manga.description = document.selectFirst("div.mt-4.w-full p")?.text()?.trim()
 
-    // Status
     val statusText = document.selectFirst("div.w-full.rounded-r-full")?.text() ?: ""
     manga.status = when {
         statusText.contains("on-going", true) -> SManga.ONGOING
@@ -134,27 +134,24 @@ class KomikV : ParsedHttpSource() {
         else -> SManga.UNKNOWN
     }
 
-    // Info block untuk author/artist
     val infoBlock = document.selectFirst("div.mt-4.flex.flex-col.gap-4 > div")
     val pList = infoBlock?.select("p.text-sm") ?: emptyList()
 
-    // Author (index 0)
     manga.author = pList.getOrNull(0)
         ?.select("a")
         ?.map { it.text().substringBefore("(").trim() }
         ?.filter { it.isNotEmpty() }
         ?.distinct()
         ?.joinToString(", ")
-        ?.ifBlank { null }
+        ?.takeIf { !it.isNullOrEmpty() }
 
-    // Artist (index 1)
     manga.artist = pList.getOrNull(1)
         ?.select("a")
         ?.map { it.text().substringBefore("(").trim() }
         ?.filter { it.isNotEmpty() }
         ?.distinct()
         ?.joinToString(", ")
-        ?.ifBlank { null }
+        ?.takeIf { !it.isNullOrEmpty() }
 
     return manga
 }
