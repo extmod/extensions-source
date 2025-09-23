@@ -1,5 +1,5 @@
 ext {
-    extName = 'av'
+    extName = 'AV'
     extClass = '.AV'
     extVersionCode = 1
 }
