@@ -1,4 +1,4 @@
-package eu.kanade.tachiyomi.extension.id.komikv
+package eu.kanade.tachiyomi.extension.id.av
 
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.source.model.FilterList
@@ -16,8 +16,8 @@ import org.jsoup.nodes.Element
 import java.net.URLEncoder
 import java.util.Calendar
 
-class KomikV : ParsedHttpSource() {
-    override val name = "KomikV"
+class AV : ParsedHttpSource() {
+    override val name = "AV"
     override val baseUrl = "https://komikav.net"
     override val lang = "id"
     override val supportsLatest = true
