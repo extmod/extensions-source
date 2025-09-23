@@ -121,39 +121,41 @@ class KomikV : ParsedHttpSource() {
     override fun searchMangaParse(response: Response): MangasPage =
         parsePagedResponse(response, searchMangaSelector(), ::searchMangaFromElement)
 
-    private fun mangaDetailsParse(document: Document): SManga {
+    override fun mangaDetailsParse(document: Document): SManga {
     val manga = SManga.create()
-
+    
     manga.title = document.selectFirst("h1.text-xl")?.text()?.trim() ?: ""
-
+    
     manga.thumbnail_url = document.selectFirst("img[alt*='${manga.title}'], img.w-full.rounded-md")?.attr("src") ?: ""
-
+    
     val descriptionElement = document.selectFirst("div.mt-4.w-full p")
     manga.description = descriptionElement?.text()?.trim() ?: ""
-
+    
     val genreElements = document.select("a[href*='/tax/genre/']")
     val genres = genreElements.map { it.text().trim() }.filter { it.isNotEmpty() }
-
+    
     val typeElement = document.selectFirst("div.w-full.rounded-l-full.bg-red-800")
     val comicType = typeElement?.text()?.trim() ?: ""
-
+    
     val allGenres = mutableListOf<String>()
     if (comicType.isNotEmpty()) {
         allGenres.add(comicType)
     }
     allGenres.addAll(genres)
     manga.genre = allGenres.joinToString(", ")
-
-    if (manga.description.isNotEmpty() && manga.genre.isNotEmpty()) {
-        manga.description = manga.description + "\n\n" + manga.genre
-    } else if (manga.genre.isNotEmpty()) {
-        manga.description = manga.genre
+    
+    val description = manga.description
+    val genre = manga.genre
+    if (!description.isNullOrEmpty() && !genre.isNullOrEmpty()) {
+        manga.description = description + "\n\n" + genre
+    } else if (!genre.isNullOrEmpty()) {
+        manga.description = genre
     }
-
+    
     val statusElement = document.selectFirst("div.w-full.rounded-r-full")
     val statusText = statusElement?.text()?.trim() ?: ""
     manga.status = parseStatus(statusText)
-
+    
     val authorElements = document.select("a[href*='/tax/author/']")
     val authors = mutableListOf<String>()
     val artists = mutableListOf<String>()
