@@ -100,26 +100,35 @@ class KomikV : ParsedHttpSource() {
     override fun searchMangaParse(response: Response): MangasPage =
         parsePagedResponse(response, searchMangaSelector(), ::searchMangaFromElement)
 
-        override fun mangaDetailsParse(document: Document): SManga {
-        val manga = SManga.create()
-        manga.title = document.select("h1.line-clamp-2").text()
-        manga.thumbnail_url = document.select("div.w-full img").attr("src")
-        val genres = mutableListOf<String>()
-        document.select("div.flex.flex-wrap a span").forEach { genres.add(it.text()) }
-        // Ambil hanya span pertama untuk tipe komik
-        document.select(".text-sm.py-1.pb-2 span.font-medium").firstOrNull()?.let { 
-            genres.add(it.text()) 
-        }
-        manga.description = document.select("p.my-2").text() + "\n"
-        manga.genre = genres.joinToString(", ")
-        val statusText = document.select("div.text-sm.py-1.pb-2 span.font-medium").getOrNull(1)?.text() ?: ""
-        manga.status = when {
-            statusText.contains("Ongoing", true) -> SManga.ONGOING
-            statusText.contains("Completed", true) -> SManga.COMPLETED
-            else -> SManga.UNKNOWN
-        }
-        return manga
+    override fun mangaDetailsParse(document: Document): SManga {
+    val manga = SManga.create()
+
+    manga.title = document.select("h1.text-xl").text()
+    manga.thumbnail_url = document.select("img.w-full.rounded-md").attr("src")
+
+    val genres = mutableListOf<String>()
+    document.select("div.w-full.gap-4 a").forEach { genres.add(it.text()) }
+
+    manga.description = document.select("div.mt-4.w-full p").text()
+    manga.genre = genres.joinToString(", ")
+
+    val statusText = document.select("div.w-full.rounded-r-full").text()
+    manga.status = when {
+        statusText.contains("on-going", true) -> SManga.ONGOING
+        statusText.contains("completed", true) -> SManga.COMPLETED
+        else -> SManga.UNKNOWN
     }
+
+    manga.author = document.select("div:contains(Author) + p a")
+        .joinToString(", ") { it.text() }
+        .ifBlank { null }
+
+    manga.artist = document.select("div:contains(Artist) + p a")
+        .joinToString(", ") { it.text() }
+        .ifBlank { null }
+
+    return manga
+}
 
     override fun chapterFromElement(element: Element): SChapter {
     val chapter = SChapter.create()
