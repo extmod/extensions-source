@@ -200,10 +200,10 @@ class KomikV : ParsedHttpSource() {
     }
 
     override fun pageListParse(document: Document): List<Page> {
-        val imgs = document.select("img.imgku")
+        val imgs = document.select("div[itemprop='image'] img.imgku")
+    
         return imgs.mapIndexed { i, img ->
-            val src = img.absUrl("src")
-            Page(i, src)
+            Page(i, img.absUrl("src"))
         }
     }
 
