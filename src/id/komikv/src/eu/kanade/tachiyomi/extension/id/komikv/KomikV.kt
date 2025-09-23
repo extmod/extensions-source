@@ -121,74 +121,26 @@ class KomikV : ParsedHttpSource() {
     override fun searchMangaParse(response: Response): MangasPage =
         parsePagedResponse(response, searchMangaSelector(), ::searchMangaFromElement)
 
-    override fun mangaDetailsParse(document: Document): SManga {
-    val manga = SManga.create()
-    
-    manga.title = document.selectFirst("h1.text-xl")?.text()?.trim() ?: ""
-    
-    manga.thumbnail_url = document.selectFirst("img[alt*='${manga.title}'], img.w-full.rounded-md")?.attr("src") ?: ""
-    
-    val descriptionElement = document.selectFirst("div.mt-4.w-full p")
-    manga.description = descriptionElement?.text()?.trim() ?: ""
-    
-    val genreElements = document.select("a[href*='/tax/genre/']")
-    val genres = genreElements.map { it.text().trim() }.filter { it.isNotEmpty() }
-    
-    val typeElement = document.selectFirst("div.w-full.rounded-l-full.bg-red-800")
-    val comicType = typeElement?.text()?.trim() ?: ""
-    
-    val allGenres = mutableListOf<String>()
-    if (comicType.isNotEmpty()) {
-        allGenres.add(comicType)
-    }
-    allGenres.addAll(genres)
-    manga.genre = allGenres.joinToString(", ")
-    
-    val description = manga.description
-    val genre = manga.genre
-    if (!description.isNullOrEmpty() && !genre.isNullOrEmpty()) {
-        manga.description = description + "\n\n" + genre
-    } else if (!genre.isNullOrEmpty()) {
-        manga.description = genre
-    }
-    
-    val statusElement = document.selectFirst("div.w-full.rounded-r-full")
-    val statusText = statusElement?.text()?.trim() ?: ""
-    manga.status = parseStatus(statusText)
-    
-    val authorElements = document.select("a[href*='/tax/author/']")
-    val authors = mutableListOf<String>()
-    val artists = mutableListOf<String>()
-    
-    authorElements.forEach { element ->
-        val fullText = element.text().trim()
-        when {
-            fullText.contains("(Author)", false) -> {
-                val cleanAuthor = fullText.substringBefore("(").trim()
-                if (cleanAuthor.isNotEmpty()) {
-                    authors.add(cleanAuthor)
-                }
-            }
-            fullText.contains("(Artist)", false) -> {
-                val cleanArtist = fullText.substringBefore("(").trim()
-                if (cleanArtist.isNotEmpty()) {
-                    artists.add(cleanArtist)
-                }
-            }
+        override fun mangaDetailsParse(document: Document): SManga {
+        val manga = SManga.create()
+        manga.title = document.select("h1.line-clamp-2").text()
+        manga.thumbnail_url = document.select("div.w-full img").attr("src")
+        val genres = mutableListOf<String>()
+        document.select("div.flex.flex-wrap a span").forEach { genres.add(it.text()) }
+        // Ambil hanya span pertama untuk tipe komik
+        document.select(".text-sm.py-1.pb-2 span.font-medium").firstOrNull()?.let { 
+            genres.add(it.text()) 
         }
+        manga.description = document.select("p.my-2").text() + "\n"
+        manga.genre = genres.joinToString(", ")
+        val statusText = document.select("div.text-sm.py-1.pb-2 span.font-medium").getOrNull(1)?.text() ?: ""
+        manga.status = when {
+            statusText.contains("Ongoing", true) -> SManga.ONGOING
+            statusText.contains("Completed", true) -> SManga.COMPLETED
+            else -> SManga.UNKNOWN
+        }
+        return manga
     }
-    
-    manga.author = authors.joinToString(", ")
-    manga.artist = artists.joinToString(", ")
-    
-    return manga
-}
-
-private fun parseStatus(statusString: String): Int = when {
-    statusString.contains("on-going") -> SManga.ONGOING
-    statusString.contains("complete") -> SManga.COMPLETED
-    else -> SManga.UNKNOWN
-}
 
     override fun chapterFromElement(element: Element): SChapter {
     val chapter = SChapter.create()
