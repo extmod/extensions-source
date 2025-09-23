@@ -207,7 +207,6 @@ class KomikV : ParsedHttpSource() {
         }
     }
 
-    override fun imageUrlParse(document: Document): String {
-        throw UnsupportedOperationException("imageUrlParse is not implemented for this source")
-    }
+    override fun imageUrlParse(document: Document): String = ""
+
 }
