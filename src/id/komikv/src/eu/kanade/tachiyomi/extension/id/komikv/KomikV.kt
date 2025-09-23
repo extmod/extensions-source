@@ -103,29 +103,35 @@ class KomikV : ParsedHttpSource() {
     override fun mangaDetailsParse(document: Document): SManga {
     val manga = SManga.create()
 
-    manga.title = document.select("h1.text-xl").text()
-    manga.thumbnail_url = document.select("img.w-full.rounded-md").attr("src")
+    // Title & thumbnail
+    manga.title = document.selectFirst("h1.text-xl")!!.text().trim()
+    val thumbEl = document.selectFirst("img.w-full.rounded-md")!!
+    manga.thumbnail_url = thumbEl.attr("data-src").ifEmpty { thumbEl.attr("src") }
 
-    val genres = mutableListOf<String>()
-    document.select("div.w-full.gap-4 a").forEach { genres.add(it.text()) }
+    // Genres awal dari selector genre
+    val genres = document.select("div.w-full.gap-4 a").map { it.text().trim() }.filter { it.isNotEmpty() }.toMutableList()
 
-    manga.description = document.select("div.mt-4.w-full p").text()
-    manga.genre = genres.joinToString(", ")
+    // Ambil tipe (Manhwa/Manhua/Manga) dari badge di area thumbnail
+    val typeText = document.selectFirst("div.relative.flex-shrink-0 div.mt-4 > div")!!.text().trim()
+    if (!genres.any { it.equals(typeText, ignoreCase = true) }) genres.add(0, typeText)
 
-    val statusText = document.select("div.w-full.rounded-r-full").text()
+    manga.genre = genres.distinct().joinToString(", ")
+
+    // Description & status
+    manga.description = document.selectFirst("div.mt-4.w-full p")!!.text().trim()
+    val statusText = document.selectFirst("div.w-full.rounded-r-full")!!.text()
     manga.status = when {
         statusText.contains("on-going", true) -> SManga.ONGOING
         statusText.contains("completed", true) -> SManga.COMPLETED
         else -> SManga.UNKNOWN
     }
 
-    manga.author = document.select("div:contains(Author) + p a")
-        .joinToString(", ") { it.text() }
-        .ifBlank { null }
+    // Ambil Author / Artist secara positional (nth)
+    val infoBlock = document.selectFirst("div.mt-4.flex.flex-col.gap-4 > div")!!
+    val pList = infoBlock.select("p.text-sm")
 
-    manga.artist = document.select("div:contains(Artist) + p a")
-        .joinToString(", ") { it.text() }
-        .ifBlank { null }
+    manga.author = pList[0].select("a").map { it.text().trim() }.distinct().joinToString(", ")
+    manga.artist  = pList[1].select("a").map { it.text().trim() }.distinct().joinToString(", ")
 
     return manga
 }
@@ -149,7 +155,7 @@ class KomikV : ParsedHttpSource() {
     return chapter
 }
 
-    override fun chapterListSelector(): String = "div.grid.gap-y-3 a"
+    override fun chapterListSelector(): String = "div.mt-4.flex a.group"
 
     private fun parseDate(date: String): Long {
         val trimmed = date.trim()
