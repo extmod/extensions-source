@@ -39,10 +39,10 @@ class KomikV : ParsedHttpSource() {
     }
 
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
-    val baseSearch = "$baseUrl/search/$query/"
-    val url = if (page <= 1) baseSearch else "$baseSearch?page=$page"
-    return GET(url, headers)
-}
+        val baseSearch = "$baseUrl/search/$query/"
+        val url = if (page <= 1) baseSearch else "$baseSearch?page=$page"
+        return GET(url, headers)
+    }
 
     override fun popularMangaSelector(): String =
         "div.grid > div.flex > div:first-child a.relative, div.grid a.relative"
