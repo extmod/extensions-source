@@ -56,14 +56,13 @@ class KomikV : ParsedHttpSource() {
     override fun searchMangaFromElement(element: Element): SManga {
         return SManga.create().apply {
             val linkElement = element.selectFirst("a") ?: element
-            setUrlWithoutDomain(linkElement.attr("href").trim())
+        setUrlWithoutDomain(linkElement.attr("href").trim())
 
-            var t = element.select("h2").text().trim()
-            if (t.isEmpty()) t = element.select("a img").attr("alt").trim()
-            title = t
+            title = element.selectFirst("h2")?.text()?.trim().orEmpty()
 
             val imgElement = element.selectFirst("img")
-            thumbnail_url = imgElement?.attr("data-src")?.ifEmpty { imgElement.attr("src") } ?: ""
+            val rawSrc = imgElement?.absUrl("src")?.trim().orEmpty()
+            thumbnail_url = if (rawSrc.isNotEmpty()) rawSrc.replace("lol", "li") else ""
         }
     }
 
@@ -196,7 +195,7 @@ class KomikV : ParsedHttpSource() {
     override fun pageListParse(document: Document): List<Page> {
         return document.select("img.imgku").mapIndexedNotNull { index, img ->
             val imageUrl = img.absUrl("src")
-            if (imageUrl.isNotEmpty()) {
+            if (imageUrl.isNotEmpty() && !imageUrl.contains("banner")) {
                 Page(index, "", imageUrl)
             } else null
         }
