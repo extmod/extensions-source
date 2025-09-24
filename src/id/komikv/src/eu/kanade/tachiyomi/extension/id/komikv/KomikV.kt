@@ -8,6 +8,7 @@ import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.online.ParsedHttpSource
 import eu.kanade.tachiyomi.util.asJsoup
+import okhttp3.Headers
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -24,6 +25,10 @@ class KomikV : ParsedHttpSource() {
     override val client: OkHttpClient = network.cloudflareClient
 
     private val ITEMS_PER_PAGE = 18
+
+    // Tambahkan header seperti Kode B
+    override fun headersBuilder(): Headers.Builder = Headers.Builder()
+        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
 
     override fun popularMangaRequest(page: Int): Request {
         val url = if (page <= 1) "$baseUrl/popular/" else "$baseUrl/popular/?page=$page"
@@ -199,14 +204,35 @@ class KomikV : ParsedHttpSource() {
         return now - (number * multiplier)
     }
 
+    // Perbaikan utama ada di sini
     override fun pageListParse(document: Document): List<Page> {
-        val imgs = document.select("div[itemprop='image'] img.imgku")
-    
-        return imgs.mapIndexed { i, img ->
-            Page(i, img.absUrl("src"))
+        // Debug: uncomment untuk melihat struktur HTML
+        // println("Page HTML: ${document.html()}")
+        
+        val imgs = document.select("img.imgku")
+        
+        // Debug: uncomment untuk melihat berapa gambar yang ditemukan
+        // println("Found ${imgs.size} images")
+        
+        return imgs.mapIndexedNotNull { index, img ->
+            val src = img.attr("src")
+            val dataSrc = img.attr("data-src")
+            
+            // Debug: uncomment untuk melihat atribut gambar
+            // println("Image $index: src='$src', data-src='$dataSrc'")
+            
+            val imageUrl = src.ifEmpty { dataSrc }
+            if (imageUrl.isNotEmpty()) {
+                // Pastikan URL lengkap
+                val fullUrl = if (imageUrl.startsWith("http")) {
+                    imageUrl
+                } else {
+                    "$baseUrl$imageUrl"
+                }
+                Page(index, "", fullUrl)
+            } else null
         }
     }
 
     override fun imageUrlParse(document: Document): String = ""
-
 }
