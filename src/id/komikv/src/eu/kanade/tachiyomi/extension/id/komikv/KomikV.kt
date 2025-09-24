@@ -201,14 +201,14 @@ class KomikV : ParsedHttpSource() {
         return now - (number * multiplier)
     }
 
-        override fun pageListParse(document: Document): List<Page> {
-    return document.select("img.imgku").mapIndexedNotNull { index, img ->
-        val imageUrl = img.absUrl("src")
-        if (imageUrl.isNotEmpty()) {
-            Page(index, "", imageUrl)
-        } else null
+    override fun pageListParse(document: Document): List<Page> {
+        return document.select("img.imgku").mapIndexedNotNull { index, img ->
+            val imageUrl = img.absUrl("src")
+            if (imageUrl.isNotEmpty()) {
+                Page(index, "", imageUrl)
+            } else null
+        }
     }
-}
 
     override fun imageUrlParse(document: Document): String = ""
 }
