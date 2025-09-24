@@ -110,40 +110,40 @@ class KomikV : ParsedHttpSource() {
         parsePagedResponse(response, searchMangaSelector(), ::searchMangaFromElement)
 
     override fun mangaDetailsParse(document: Document): SManga {
-    if (document.text().contains("NEED LOGIN", true)) {
+        if (document.text().contains("NEED LOGIN", true)) {
         throw Exception("⚠️ Komik ini membutuhkan login untuk dilihat")
     }
 
-    val manga = SManga.create()
+        val manga = SManga.create()
 
-    manga.title = document.selectFirst("h1.text-xl")?.text()?.trim().orEmpty()
-    manga.thumbnail_url = document.selectFirst("img.w-full.rounded-md")?.attr("src").orEmpty()
+        manga.title = document.selectFirst("h1.text-xl")?.text()?.trim().orEmpty()
+        manga.thumbnail_url = document.selectFirst("img.w-full.rounded-md")?.attr("src").orEmpty()
 
-    val genres = document.select("div.w-full.gap-4 a")
+        val genres = document.select("div.w-full.gap-4 a")
         .map { it.text().trim() }
         .filter { it.isNotEmpty() }
         .toMutableList()
 
-    val typeText = document.selectFirst("div.relative.flex-shrink-0 div.mt-4 > div")
+        val typeText = document.selectFirst("div.relative.flex-shrink-0 div.mt-4 > div")
         ?.text()
         ?.trim()
-    if (!typeText.isNullOrBlank() && genres.none { it.equals(typeText, ignoreCase = true) }) {
+        if (!typeText.isNullOrBlank() && genres.none { it.equals(typeText, ignoreCase = true) }) {
         genres.add(typeText)
     }
 
-    val baseDesc = document.selectFirst("div.mt-4.w-full p")?.text()?.trim().orEmpty()
+        val baseDesc = document.selectFirst("div.mt-4.w-full p")?.text()?.trim().orEmpty()
     manga.description = baseDesc + "\n"
     manga.genre = if (genres.isNotEmpty()) genres.joinToString(", ") else ""
 
-    val statusText = document.selectFirst("div.w-full.rounded-r-full")?.text().orEmpty()
-    manga.status = when {
+        val statusText = document.selectFirst("div.w-full.rounded-r-full")?.text().orEmpty()
+        manga.status = when {
         statusText.contains("on-going", true) -> SManga.ONGOING
         statusText.contains("completed", true) -> SManga.COMPLETED
         else -> SManga.UNKNOWN
     }
 
-    val infoBlock = document.selectFirst("div.mt-4.flex.flex-col.gap-4 > div")
-    val pList = infoBlock?.select("p.text-sm") ?: emptyList()
+        val infoBlock = document.selectFirst("div.mt-4.flex.flex-col.gap-4 > div")
+        val pList = infoBlock?.select("p.text-sm") ?: emptyList()
 
     fun extractNamesFromPIndex(index: Int): String? {
         return pList.getOrNull(index)
