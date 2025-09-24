@@ -14,7 +14,6 @@ import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
-import java.net.URLEncoder
 
 class KomikV : ParsedHttpSource() {
 
@@ -26,7 +25,6 @@ class KomikV : ParsedHttpSource() {
 
     private val ITEMS_PER_PAGE = 18
 
-    // Tambahkan header seperti Kode B
     override fun headersBuilder(): Headers.Builder = Headers.Builder()
         .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
 
@@ -41,16 +39,15 @@ class KomikV : ParsedHttpSource() {
     }
 
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
-        return if (query.isNotEmpty()) {
-            val q = URLEncoder.encode(query, "UTF-8")
-            val baseSearch = "$baseUrl/search/$q/"
-            val url = if (page <= 1) baseSearch else "$baseSearch?page=$page"
-            GET(url, headers)
-        } else {
-            val url = if (page <= 1) baseUrl else "$baseUrl/?page=$page"
-            GET(url, headers)
-        }
+    return if (query.isNotEmpty()) {
+        val baseSearch = "$baseUrl/search/$query"
+        val url = if (page <= 1) baseSearch else "$baseSearch?page=$page"
+        GET(url, headers)
+    } else {
+        val url = if (page <= 1) baseUrl else "$baseUrl/?page=$page"
+        GET(url, headers)
     }
+}
 
     override fun popularMangaSelector(): String =
         "div.grid > div.flex > div:first-child a.relative, div.grid a.relative"
