@@ -111,7 +111,7 @@ class KomikV : ParsedHttpSource() {
 
     override fun mangaDetailsParse(document: Document): SManga {
         if (document.text().contains("NEED LOGIN", true)) {
-        throw Exception("⚠️ Komik ini membutuhkan login untuk dilihat")
+        throw Exception("⚠️ Login di webview, pakai akun abal abal !‼")
     }
 
         val manga = SManga.create()
