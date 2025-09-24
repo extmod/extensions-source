@@ -39,14 +39,9 @@ class KomikV : ParsedHttpSource() {
     }
 
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
-    return if (query.isNotEmpty()) {
-        val baseSearch = "$baseUrl/search/$query"
-        val url = if (page <= 1) baseSearch else "$baseSearch?page=$page"
-        GET(url, headers)
-    } else {
-        val url = if (page <= 1) baseUrl else "$baseUrl/?page=$page"
-        GET(url, headers)
-    }
+    val baseSearch = "$baseUrl/search/$query/"
+    val url = if (page <= 1) baseSearch else "$baseSearch?page=$page"
+    return GET(url, headers)
 }
 
     override fun popularMangaSelector(): String =
