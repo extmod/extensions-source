@@ -204,32 +204,12 @@ class KomikV : ParsedHttpSource() {
         return now - (number * multiplier)
     }
 
-    // Perbaikan utama ada di sini
-    override fun pageListParse(document: Document): List<Page> {
-        // Debug: uncomment untuk melihat struktur HTML
-        // println("Page HTML: ${document.html()}")
-        
-        val imgs = document.select("img.imgku")
-        
-        // Debug: uncomment untuk melihat berapa gambar yang ditemukan
-        // println("Found ${imgs.size} images")
-        
-        return imgs.mapIndexedNotNull { index, img ->
-            val src = img.attr("src")
-            val dataSrc = img.attr("data-src")
-            
-            // Debug: uncomment untuk melihat atribut gambar
-            // println("Image $index: src='$src', data-src='$dataSrc'")
-            
-            val imageUrl = src.ifEmpty { dataSrc }
+        override fun pageListParse(document: Document): List<Page> {
+        return document.select("img.imgku").mapIndexedNotNull { index, img ->
+            val imageUrl = img.absUrl("src")
             if (imageUrl.isNotEmpty()) {
-                // Pastikan URL lengkap
-                val fullUrl = if (imageUrl.startsWith("http")) {
-                    imageUrl
-                } else {
-                    "$baseUrl$imageUrl"
-                }
-                Page(index, "", fullUrl)
+                val resizedUrl = "https://images.weserv.nl/?w=300&q=70&url=$imageUrl"
+                Page(index, "", resizedUrl)
             } else null
         }
     }
