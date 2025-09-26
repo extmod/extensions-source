@@ -32,12 +32,12 @@ class KomikV : ParsedHttpSource(), ConfigurableSource {
     private val ITEMS_PER_PAGE = 18
 
     override fun headersBuilder(): Headers.Builder = Headers.Builder()
-        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-        
+    .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+
     private val preferences = Injekt.get<Application>().getSharedPreferences("source_$id", 0x0000)
-    
+
     override val baseUrl: String
-        get() = preferences.getString("overrideBaseUrl", defaultBaseUrl)!!
+    get() = preferences.getString("overrideBaseUrl", defaultBaseUrl)!!
 
     override fun popularMangaRequest(page: Int): Request {
         val url = if (page <= 1) "$baseUrl/popular/" else "$baseUrl/popular/?page=$page"
@@ -56,7 +56,7 @@ class KomikV : ParsedHttpSource(), ConfigurableSource {
     }
 
     override fun popularMangaSelector(): String =
-        "div.grid > div.flex > div:first-child a.relative, div.grid a.relative"
+    "div.grid > div.flex > div:first-child a.relative, div.grid a.relative"
 
     override fun latestUpdatesSelector(): String = popularMangaSelector()
     override fun searchMangaSelector(): String = popularMangaSelector()
@@ -96,20 +96,22 @@ class KomikV : ParsedHttpSource(), ConfigurableSource {
     ): MangasPage {
         val doc = response.asJsoup()
         val pageNum = response.request.url.queryParameter("page")?.toIntOrNull() ?: 1
-        val mapped = doc.select(selector).map { mapper(it) }
+        val mapped = doc.select(selector).map {
+            mapper(it)
+        }
         val items = chunkForPage(mapped, pageNum)
         val hasNext = items.isNotEmpty() && items.size >= ITEMS_PER_PAGE
         return MangasPage(items, hasNext)
     }
 
     override fun popularMangaParse(response: Response): MangasPage =
-        parsePagedResponse(response, popularMangaSelector(), ::popularMangaFromElement)
+    parsePagedResponse(response, popularMangaSelector(), ::popularMangaFromElement)
 
     override fun latestUpdatesParse(response: Response): MangasPage =
-        parsePagedResponse(response, latestUpdatesSelector(), ::latestUpdatesFromElement)
+    parsePagedResponse(response, latestUpdatesSelector(), ::latestUpdatesFromElement)
 
     override fun searchMangaParse(response: Response): MangasPage =
-        parsePagedResponse(response, searchMangaSelector(), ::searchMangaFromElement)
+    parsePagedResponse(response, searchMangaSelector(), ::searchMangaFromElement)
 
     override fun mangaDetailsParse(document: Document): SManga {
         if (document.text().contains("NEED LOGIN", true)) {
@@ -122,14 +124,20 @@ class KomikV : ParsedHttpSource(), ConfigurableSource {
         manga.thumbnail_url = document.selectFirst("img.w-full.rounded-md")?.attr("src").orEmpty()
 
         val genres = document.select("div.w-full.gap-4 a")
-            .map { it.text().trim() }
-            .filter { it.isNotEmpty() }
-            .toMutableList()
+        .map {
+            it.text().trim()
+        }
+        .filter {
+            it.isNotEmpty()
+        }
+        .toMutableList()
 
         val typeText = document.selectFirst("div.relative.flex-shrink-0 div.mt-4 > div")
-            ?.text()
-            ?.trim()
-        if (!typeText.isNullOrBlank() && genres.none { it.equals(typeText, ignoreCase = true) }) {
+        ?.text()
+        ?.trim()
+        if (!typeText.isNullOrBlank() && genres.none {
+            it.equals(typeText, ignoreCase = true)
+        }) {
             genres.add(typeText)
         }
 
@@ -149,11 +157,17 @@ class KomikV : ParsedHttpSource(), ConfigurableSource {
 
         fun extractNamesFromPIndex(index: Int): String? {
             return pList.getOrNull(index)
-                ?.select("a")
-                ?.map { it.text().substringBefore("(").trim() }
-                ?.filter { it.isNotEmpty() }
-                ?.joinToString(", ")
-                ?.takeIf { it.isNotEmpty() }
+            ?.select("a")
+            ?.map {
+                it.text().substringBefore("(").trim()
+            }
+            ?.filter {
+                it.isNotEmpty()
+            }
+            ?.joinToString(", ")
+            ?.takeIf {
+                it.isNotEmpty()
+            }
         }
 
         manga.author = extractNamesFromPIndex(0)
@@ -203,17 +217,16 @@ class KomikV : ParsedHttpSource(), ConfigurableSource {
         return now - (number * multiplier)
     }
 
-    override fun pageListParse(response: okhttp3.Response): List<Page> {
-        val doc = response.asJsoup()
-        val service = preferences.getString("resize_service_url", "")
-
-        return doc.select(pageSelector)
-        .mapIndexedNotNull { i, img ->
-                val src = img.imgAttr().trim()
-                if (src.contains("banner")) {
-                    null
+    override fun pageListParse(document: Document): List<Page> {
+        val service = preferences.getString("resize_service_url", "") ?: ""
+        return document.select("img")
+        .mapIndexedNotNull {
+            i, img ->
+            val src = img.attr("src").trim()
+            if (src.isBlank() || src.contains("banner")) {
+                null
             } else {
-                val finalUrl = "$service$src"
+                val finalUrl = if (service.isEmpty()) src else service + src
                 Page(i, "", finalUrl)
             }
         }
@@ -237,9 +250,9 @@ class KomikV : ParsedHttpSource(), ConfigurableSource {
             dialogTitle = "Update domain untuk ekstensi ini"
             dialogMessage = "Original: $baseUrl"
 
-            setOnPreferenceChangeListener { _, newValue ->
+            setOnPreferenceChangeListener {
+                _, newValue ->
                 val newUrl = newValue as String
-                baseUrl = newUrl
                 preferences.edit().putString("overrideBaseUrl", newUrl).apply()
                 summary = "Current domain: $newUrl"
                 true
