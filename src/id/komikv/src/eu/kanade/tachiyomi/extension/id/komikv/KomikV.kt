@@ -24,7 +24,7 @@ import org.jsoup.nodes.Element
 class KomikV : ParsedHttpSource(), ConfigurableSource {
 
     override val name = "KomikV"
-    override val baseUrl = "https://komikav.net"
+    private val defaultBaseUrl = "https://komikav.net"
     override val lang = "id"
     override val supportsLatest = true
     override val client: OkHttpClient = network.cloudflareClient
@@ -36,7 +36,8 @@ class KomikV : ParsedHttpSource(), ConfigurableSource {
         
     private val preferences = Injekt.get<Application>().getSharedPreferences("source_$id", 0x0000)
     
-    override var baseUrl = preferences.getString("overrideBaseUrl", super.baseUrl)!!
+    override val baseUrl: String
+        get() = preferences.getString("overrideBaseUrl", defaultBaseUrl)!!
 
     override fun popularMangaRequest(page: Int): Request {
         val url = if (page <= 1) "$baseUrl/popular/" else "$baseUrl/popular/?page=$page"
@@ -66,7 +67,7 @@ class KomikV : ParsedHttpSource(), ConfigurableSource {
     override fun searchMangaFromElement(element: Element): SManga {
         return SManga.create().apply {
             val linkElement = element.selectFirst("a") ?: element
-        setUrlWithoutDomain(linkElement.attr("href").trim())
+            setUrlWithoutDomain(linkElement.attr("href").trim())
 
             title = element.selectFirst("h2")?.text()?.trim().orEmpty()
 
@@ -112,8 +113,8 @@ class KomikV : ParsedHttpSource(), ConfigurableSource {
 
     override fun mangaDetailsParse(document: Document): SManga {
         if (document.text().contains("NEED LOGIN", true)) {
-        throw Exception("⚠️ Login di webview, pakai akun abal abal !‼")
-    }
+            throw Exception("⚠️ Login di webview, pakai akun abal abal !‼")
+        }
 
         val manga = SManga.create()
 
@@ -121,45 +122,45 @@ class KomikV : ParsedHttpSource(), ConfigurableSource {
         manga.thumbnail_url = document.selectFirst("img.w-full.rounded-md")?.attr("src").orEmpty()
 
         val genres = document.select("div.w-full.gap-4 a")
-        .map { it.text().trim() }
-        .filter { it.isNotEmpty() }
-        .toMutableList()
+            .map { it.text().trim() }
+            .filter { it.isNotEmpty() }
+            .toMutableList()
 
         val typeText = document.selectFirst("div.relative.flex-shrink-0 div.mt-4 > div")
-        ?.text()
-        ?.trim()
+            ?.text()
+            ?.trim()
         if (!typeText.isNullOrBlank() && genres.none { it.equals(typeText, ignoreCase = true) }) {
-        genres.add(typeText)
-    }
+            genres.add(typeText)
+        }
 
         val baseDesc = document.selectFirst("div.mt-4.w-full p")?.text()?.trim().orEmpty()
-    manga.description = baseDesc + "\n"
-    manga.genre = if (genres.isNotEmpty()) genres.joinToString(", ") else ""
+        manga.description = baseDesc + "\n"
+        manga.genre = if (genres.isNotEmpty()) genres.joinToString(", ") else ""
 
         val statusText = document.selectFirst("div.w-full.rounded-r-full")?.text().orEmpty()
         manga.status = when {
-        statusText.contains("on-going", true) -> SManga.ONGOING
-        statusText.contains("completed", true) -> SManga.COMPLETED
-        else -> SManga.UNKNOWN
-    }
+            statusText.contains("on-going", true) -> SManga.ONGOING
+            statusText.contains("completed", true) -> SManga.COMPLETED
+            else -> SManga.UNKNOWN
+        }
 
         val infoBlock = document.selectFirst("div.mt-4.flex.flex-col.gap-4 > div")
         val pList = infoBlock?.select("p.text-sm") ?: emptyList()
 
-    fun extractNamesFromPIndex(index: Int): String? {
-        return pList.getOrNull(index)
-            ?.select("a")
-            ?.map { it.text().substringBefore("(").trim() }
-            ?.filter { it.isNotEmpty() }
-            ?.joinToString(", ")
-            ?.takeIf { it.isNotEmpty() }
+        fun extractNamesFromPIndex(index: Int): String? {
+            return pList.getOrNull(index)
+                ?.select("a")
+                ?.map { it.text().substringBefore("(").trim() }
+                ?.filter { it.isNotEmpty() }
+                ?.joinToString(", ")
+                ?.takeIf { it.isNotEmpty() }
+        }
+
+        manga.author = extractNamesFromPIndex(0)
+        manga.artist = extractNamesFromPIndex(1)
+
+        return manga
     }
-
-    manga.author = extractNamesFromPIndex(0)
-    manga.artist = extractNamesFromPIndex(1)
-
-    return manga
-}
 
     override fun chapterFromElement(element: Element): SChapter {
         val chapter = SChapter.create()
@@ -202,15 +203,22 @@ class KomikV : ParsedHttpSource(), ConfigurableSource {
         return now - (number * multiplier)
     }
 
-    override fun pageListParse(document: Document): List<Page> {
-        return document.select("img.imgku").mapIndexedNotNull { index, img ->
-            val imageUrl = img.absUrl("src")
-            if (imageUrl.isNotEmpty() && !imageUrl.contains("banner")) {
-                Page(index, "", imageUrl)
-            } else null
+    override fun pageListParse(response: okhttp3.Response): List<Page> {
+        val doc = response.asJsoup()
+        val service = preferences.getString("resize_service_url", "")
+
+        return doc.select(pageSelector)
+        .mapIndexedNotNull { i, img ->
+                val src = img.imgAttr().trim()
+                if (src.contains("banner")) {
+                    null
+            } else {
+                val finalUrl = "$service$src"
+                Page(i, "", finalUrl)
+            }
         }
     }
-    
+
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
         val resizeServicePref = EditTextPreference(screen.context).apply {
             key = "resize_service_url"
