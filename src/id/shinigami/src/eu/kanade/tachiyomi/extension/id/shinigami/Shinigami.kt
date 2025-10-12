@@ -123,7 +123,9 @@ class Shinigami : HttpSource(), ConfigurableSource {
         }
     }
 
-    private val dohClient = OkHttpClient.Builder().build()
+    // Client untuk DoH resolver
+    private val dohClient = OkHttpClient.Builder()
+        .build()
 
     override val client = network.cloudflareClient.newBuilder()
         .dns(DoHResolver(dohClient))
@@ -131,6 +133,7 @@ class Shinigami : HttpSource(), ConfigurableSource {
             val request = chain.request()
             val url = request.url.toString()
 
+            // Log request untuk proxy image
             if (url.contains("wsrv.nl") || url.contains("weserv.nl")) {
                 Log.d(TAG, "🖼️ Image Request via Proxy: ${request.url.host}")
             }
@@ -142,6 +145,7 @@ class Shinigami : HttpSource(), ConfigurableSource {
             try {
                 val response = chain.proceed(request.newBuilder().headers(headers).build())
 
+                // Log response status untuk proxy
                 if (url.contains("wsrv.nl") || url.contains("weserv.nl")) {
                     if (response.isSuccessful) {
                         Log.i(TAG, "✅ Image Proxy Success: ${response.code}")
@@ -173,15 +177,18 @@ class Shinigami : HttpSource(), ConfigurableSource {
         .add("Origin", baseUrl)
         .add("Sec-GPC", "1")
 
+    // Image Proxy Manager dengan multiple fallback dan logging
     private fun getImageProxyUrl(originalUrl: String, width: Int = 300, quality: Int = 75): String {
         val proxyMode = preferences.getString("proxy_mode", "wsrv")
         val customProxy = preferences.getString("resize_service_url", null)
 
+        // Jika ada custom proxy, gunakan itu
         if (!customProxy.isNullOrBlank()) {
             Log.d(TAG, "📦 Menggunakan Custom Proxy: $customProxy")
             return "$customProxy$originalUrl"
         }
 
+        // Pilih proxy berdasarkan mode
         val proxyUrl = when (proxyMode) {
             "wsrv" -> "https://wsrv.nl/?w=$width&q=$quality&url=$originalUrl"
             "images" -> "https://images.weserv.nl/?w=$width&q=$quality&url=$originalUrl"
@@ -332,18 +339,21 @@ class Shinigami : HttpSource(), ConfigurableSource {
         return GET(page.imageUrl!!, newHeaders)
     }
 
-    override fun setupPreferenceScreen(screen: androidx.preference.PreferenceScreen) {
-        // Info preference untuk menampilkan status
-        val infoPref = Preference(screen.context).apply {
+    override fun setupPreferenceScreen(screen: PreferenceScreen) {
+        val ctx = screen.context
+
+        // Info preference untuk menampilkan status (tidak bisa diklik)
+        val infoPref = Preference(ctx).apply {
             key = "info_logs"
             title = "Cara Melihat Logs"
             summary = "Buka Logcat dengan filter 'ShinigamiExtension' untuk melihat status DNS dan proxy fallback"
-            isEnabled = false
+            setEnabled(false)
+            isSelectable = false
         }
         screen.addPreference(infoPref)
 
         // Toggle untuk menggunakan proxy
-        val useProxyPref = SwitchPreferenceCompat(screen.context).apply {
+        val useProxyPref = SwitchPreferenceCompat(ctx).apply {
             key = "use_image_proxy"
             title = "Gunakan Image Proxy"
             summary = "Aktifkan untuk menggunakan proxy image (bypass blocking). Cek logcat untuk status."
@@ -357,7 +367,7 @@ class Shinigami : HttpSource(), ConfigurableSource {
         screen.addPreference(useProxyPref)
 
         // Pilihan proxy mode
-        val proxyModePref = ListPreference(screen.context).apply {
+        val proxyModePref = ListPreference(ctx).apply {
             key = "proxy_mode"
             title = "Pilih Image Proxy"
             entries = arrayOf(
@@ -371,7 +381,7 @@ class Shinigami : HttpSource(), ConfigurableSource {
             summary = "Ganti proxy jika yang satu diblokir. Cek logcat untuk status DNS & proxy."
             setOnPreferenceChangeListener { _, newValue ->
                 val mode = newValue as String
-                val modeName = when(mode) {
+                val modeName = when (mode) {
                     "wsrv" -> "wsrv.nl"
                     "images" -> "images.weserv.nl"
                     "img" -> "img.weserv.nl"
@@ -385,11 +395,10 @@ class Shinigami : HttpSource(), ConfigurableSource {
         screen.addPreference(proxyModePref)
 
         // Custom proxy URL
-        val resizeServicePref = EditTextPreference(screen.context).apply {
+        val resizeServicePref = EditTextPreference(ctx).apply {
             key = "resize_service_url"
             title = "Custom Proxy URL (Opsional)"
             summary = "Masukkan URL proxy custom. Contoh: https://your-worker.workers.dev/?url="
-            setDefaultValue(null)
             dialogTitle = "Custom Proxy URL"
             dialogMessage = "Kosongkan untuk menggunakan proxy bawaan. URL akan digabungkan dengan URL gambar asli."
             setOnPreferenceChangeListener { _, newValue ->
@@ -405,7 +414,7 @@ class Shinigami : HttpSource(), ConfigurableSource {
         screen.addPreference(resizeServicePref)
 
         // Base URL override
-        val baseUrlPref = EditTextPreference(screen.context).apply {
+        val baseUrlPref = EditTextPreference(ctx).apply {
             key = "overrideBaseUrl"
             title = "Ubah Domain"
             summary = "Update domain untuk ekstensi ini"
