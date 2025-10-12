@@ -3,9 +3,11 @@ package eu.kanade.tachiyomi.extension.id.shinigami
 import android.app.Application
 import android.content.SharedPreferences
 import android.util.Log
-import androidx.preference.EditTextPreference
-import androidx.preference.ListPreference
-import androidx.preference.PreferenceScreen
+import android.preference.EditTextPreference
+import android.preference.ListPreference
+import android.preference.Preference
+import android.preference.PreferenceScreen
+import android.preference.SwitchPreference
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
 import eu.kanade.tachiyomi.source.ConfigurableSource
@@ -343,21 +345,21 @@ class Shinigami : HttpSource(), ConfigurableSource {
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
         // Info preference untuk menampilkan status
-        val infoPref = androidx.preference.Preference(screen.context).apply {
+        val infoPref = Preference(screen.context).apply {
             key = "info_logs"
             title = "Cara Melihat Logs"
             summary = "Buka Logcat dengan filter 'ShinigamiExtension' untuk melihat status DNS dan proxy fallback"
-            setEnabled(false)
+            isEnabled = false
         }
         screen.addPreference(infoPref)
 
         // Toggle untuk menggunakan proxy
-        val useProxyPref = androidx.preference.SwitchPreferenceCompat(screen.context).apply {
+        val useProxyPref = SwitchPreference(screen.context).apply {
             key = "use_image_proxy"
             title = "Gunakan Image Proxy"
             summary = "Aktifkan untuk menggunakan proxy image (bypass blocking). Cek logcat untuk status."
             setDefaultValue(true)
-            setOnPreferenceChangeListener { _, newValue ->
+            onPreferenceChangeListener = android.preference.Preference.OnPreferenceChangeListener { _, newValue ->
                 val enabled = newValue as Boolean
                 Log.i(TAG, "⚙️ Image Proxy: ${if (enabled) "ENABLED" else "DISABLED"}")
                 true
@@ -378,7 +380,7 @@ class Shinigami : HttpSource(), ConfigurableSource {
             entryValues = arrayOf("wsrv", "images", "img", "direct")
             setDefaultValue("wsrv")
             summary = "Ganti proxy jika yang satu diblokir. Cek logcat untuk status DNS & proxy."
-            setOnPreferenceChangeListener { _, newValue ->
+            onPreferenceChangeListener = android.preference.Preference.OnPreferenceChangeListener { _, newValue ->
                 val mode = newValue as String
                 val modeName = when(mode) {
                     "wsrv" -> "wsrv.nl"
@@ -401,7 +403,7 @@ class Shinigami : HttpSource(), ConfigurableSource {
             setDefaultValue(null)
             dialogTitle = "Custom Proxy URL"
             dialogMessage = "Kosongkan untuk menggunakan proxy bawaan. URL akan digabungkan dengan URL gambar asli."
-            setOnPreferenceChangeListener { _, newValue ->
+            onPreferenceChangeListener = android.preference.Preference.OnPreferenceChangeListener { _, newValue ->
                 val url = newValue as? String
                 if (!url.isNullOrBlank()) {
                     Log.i(TAG, "⚙️ Custom Proxy Set: $url")
@@ -421,7 +423,7 @@ class Shinigami : HttpSource(), ConfigurableSource {
             setDefaultValue(baseUrl)
             dialogTitle = "Update domain untuk ekstensi ini"
             dialogMessage = "Original: https://app.shinigami.asia"
-            setOnPreferenceChangeListener { _, newValue ->
+            onPreferenceChangeListener = android.preference.Preference.OnPreferenceChangeListener { _, newValue ->
                 val newUrl = newValue as String
                 preferences.edit().putString("overrideBaseUrl", newUrl).apply()
                 Log.i(TAG, "⚙️ Base URL Changed: $newUrl")
