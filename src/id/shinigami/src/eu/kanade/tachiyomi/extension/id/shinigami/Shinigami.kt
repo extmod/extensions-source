@@ -345,9 +345,9 @@ class Shinigami : HttpSource(), ConfigurableSource {
         // Info preference untuk menampilkan status
         val infoPref = androidx.preference.Preference(screen.context).apply {
             key = "info_logs"
-            title = "📊 Cara Melihat Logs"
+            title = "Cara Melihat Logs"
             summary = "Buka Logcat dengan filter 'ShinigamiExtension' untuk melihat status DNS dan proxy fallback"
-            isSelectable = false
+            isEnabled = false
         }
         screen.addPreference(infoPref)
 
