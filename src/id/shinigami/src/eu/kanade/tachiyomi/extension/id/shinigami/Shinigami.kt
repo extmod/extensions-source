@@ -2,12 +2,9 @@ package eu.kanade.tachiyomi.extension.id.shinigami
 
 import android.app.Application
 import android.content.SharedPreferences
-import android.util.Log
 import androidx.preference.EditTextPreference
 import androidx.preference.ListPreference
-import androidx.preference.Preference
 import androidx.preference.PreferenceScreen
-import androidx.preference.SwitchPreferenceCompat
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
 import eu.kanade.tachiyomi.source.ConfigurableSource
@@ -21,13 +18,12 @@ import keiyoushi.utils.parseAs
 import keiyoushi.utils.tryParse
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
-import okhttp3.Dns
 import okhttp3.OkHttpClient
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 import okhttp3.Request
 import okhttp3.Response
-import org.json.JSONObject
+import okhttp3.Dns
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 import java.net.InetAddress
 import java.text.SimpleDateFormat
 import java.util.Locale
@@ -52,114 +48,23 @@ class Shinigami : HttpSource(), ConfigurableSource {
 
     private val apiHeaders: Headers by lazy { apiHeadersBuilder().build() }
 
-    companion object {
-        private const val TAG = "ShinigamiExtension"
-        val dateFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.ENGLISH)
-    }
-
-    // Custom DNS Resolver dengan DNS over HTTPS dan Logging
-    private class DoHResolver(private val fallbackClient: OkHttpClient) : Dns {
-        override fun lookup(hostname: String): List<InetAddress> {
-            val dohDomains = listOf(
-                "wsrv.nl",
-                "images.weserv.nl",
-                "img.weserv.nl",
-                "delivery.shngm.id",
-            )
-
-            if (!dohDomains.any { hostname.contains(it) }) {
-                return Dns.SYSTEM.lookup(hostname)
-            }
-
-            Log.d(TAG, "🔍 DNS Lookup untuk: $hostname")
-
-            return try {
-                val url = "https://1.1.1.1/dns-query?name=$hostname&type=A"
-                val request = Request.Builder()
-                    .url(url)
-                    .header("Accept", "application/dns-json")
-                    .build()
-
-                Log.d(TAG, "📡 Menggunakan DoH (DNS over HTTPS) via Cloudflare")
-                val response = fallbackClient.newCall(request).execute()
-                val json = JSONObject(response.body?.string() ?: "{}")
-
-                if (json.has("Answer")) {
-                    val answers = json.getJSONArray("Answer")
-                    val ips = (0 until answers.length()).mapNotNull { i ->
-                        try {
-                            val ip = answers.getJSONObject(i).getString("data")
-                            InetAddress.getByName(ip)
-                        } catch (e: Exception) {
-                            null
-                        }
-                    }
-
-                    if (ips.isNotEmpty()) {
-                        Log.i(TAG, "✅ DoH Success - Resolved $hostname ke ${ips.joinToString { it.hostAddress }}")
-                        return ips
-                    }
-                }
-
-                Log.w(TAG, "⚠️ DoH gagal, fallback ke DNS sistem")
-                Dns.SYSTEM.lookup(hostname)
-            } catch (e: Exception) {
-                Log.e(TAG, "❌ DoH Error: ${e.message}")
-                try {
-                    val systemResult = Dns.SYSTEM.lookup(hostname)
-                    Log.i(TAG, "✅ Fallback DNS Sistem Success - $hostname ke ${systemResult.joinToString { it.hostAddress }}")
-                    systemResult
-                } catch (e2: Exception) {
-                    Log.e(TAG, "❌ DNS Sistem juga gagal: ${e2.message}")
-                    when {
-                        hostname.contains("wsrv.nl") || hostname.contains("weserv.nl") -> {
-                            Log.w(TAG, "🔄 Fallback Manual - Menggunakan IP hardcoded untuk wsrv.nl: 178.21.17.10")
-                            listOf(InetAddress.getByName("178.21.17.10"))
-                        }
-                        else -> throw e2
-                    }
-                }
-            }
+    // Custom DNS resolver
+    private fun getDnsProvider(): Dns {
+        return when (preferences.getString("dns_provider", "system")) {
+            "cloudflare" -> CloudflareDns()
+            "google" -> GoogleDns()
+            "quad9" -> Quad9Dns()
+            else -> Dns.SYSTEM
         }
     }
-
-    // Client untuk DoH resolver
-    private val dohClient = OkHttpClient.Builder()
-        .build()
 
     override val client = network.cloudflareClient.newBuilder()
-        .dns(DoHResolver(dohClient))
         .addInterceptor { chain ->
             val request = chain.request()
-            val url = request.url.toString()
-
-            // Log request untuk proxy image
-            if (url.contains("wsrv.nl") || url.contains("weserv.nl")) {
-                Log.d(TAG, "🖼️ Image Request via Proxy: ${request.url.host}")
-            }
-
-            val headers = request.headers.newBuilder().apply {
-                removeAll("X-Requested-With")
-            }.build()
-
-            try {
-                val response = chain.proceed(request.newBuilder().headers(headers).build())
-
-                // Log response status untuk proxy
-                if (url.contains("wsrv.nl") || url.contains("weserv.nl")) {
-                    if (response.isSuccessful) {
-                        Log.i(TAG, "✅ Image Proxy Success: ${response.code}")
-                    } else {
-                        Log.e(TAG, "❌ Image Proxy Failed: ${response.code} - ${response.message}")
-                    }
-                }
-
-                response
-            } catch (e: Exception) {
-                Log.e(TAG, "❌ Request Failed untuk ${request.url.host}: ${e.message}")
-                throw e
-            }
+            val headers = request.headers.newBuilder().apply { removeAll("X-Requested-With") }.build()
+            chain.proceed(request.newBuilder().headers(headers).build())
         }
+        .dns(getDnsProvider())
         .rateLimit(3)
         .build()
 
@@ -176,36 +81,6 @@ class Shinigami : HttpSource(), ConfigurableSource {
         .add("DNT", "1")
         .add("Origin", baseUrl)
         .add("Sec-GPC", "1")
-
-    // Image Proxy Manager dengan multiple fallback dan logging
-    private fun getImageProxyUrl(originalUrl: String, width: Int = 300, quality: Int = 75): String {
-        val proxyMode = preferences.getString("proxy_mode", "wsrv")
-        val customProxy = preferences.getString("resize_service_url", null)
-
-        // Jika ada custom proxy, gunakan itu
-        if (!customProxy.isNullOrBlank()) {
-            Log.d(TAG, "📦 Menggunakan Custom Proxy: $customProxy")
-            return "$customProxy$originalUrl"
-        }
-
-        // Pilih proxy berdasarkan mode
-        val proxyUrl = when (proxyMode) {
-            "wsrv" -> "https://wsrv.nl/?w=$width&q=$quality&url=$originalUrl"
-            "images" -> "https://images.weserv.nl/?w=$width&q=$quality&url=$originalUrl"
-            "img" -> "https://img.weserv.nl/?w=$width&q=$quality&url=$originalUrl"
-            "direct" -> {
-                Log.d(TAG, "🔗 Direct Mode - Tanpa proxy")
-                originalUrl
-            }
-            else -> "https://wsrv.nl/?w=$width&q=$quality&url=$originalUrl"
-        }
-
-        if (proxyMode != "direct") {
-            Log.d(TAG, "🔄 Proxy Mode: $proxyMode (${proxyUrl.split("?").firstOrNull()?.split("://")?.lastOrNull() ?: "unknown"})")
-        }
-
-        return proxyUrl
-    }
 
     override fun popularMangaRequest(page: Int): Request {
         val url = "$apiUrl/v1/manga/list".toHttpUrl().newBuilder()
@@ -225,8 +100,8 @@ class Shinigami : HttpSource(), ConfigurableSource {
 
     private fun popularMangaFromObject(obj: ShinigamiBrowseDataDto): SManga = SManga.create().apply {
         title = obj.title ?: ""
-        thumbnail_url = obj.thumbnail?.let {
-            getImageProxyUrl(it, width = 150, quality = 75)
+        thumbnail_url = obj.thumbnail?.let { 
+            "https://wsrv.nl/?w=150&h=110&url=$it"
         }
         url = obj.mangaId ?: ""
     }
@@ -311,14 +186,12 @@ class Shinigami : HttpSource(), ConfigurableSource {
 
     override fun pageListParse(response: Response): List<Page> {
         val result = response.parseAs<ShinigamiPageListDto>()
-        val useProxy = preferences.getBoolean("use_image_proxy", true)
-
-        Log.d(TAG, "📚 Loading ${result.pageList.chapterPage.pages.size} pages, Proxy: ${if (useProxy) "Enabled" else "Disabled"}")
+        val resizeServiceUrl = preferences.getString("resize_service_url", null)
 
         return result.pageList.chapterPage.pages.mapIndexed { index, imageName ->
             val originalImageUrl = "$cdnUrl${result.pageList.chapterPage.path}$imageName"
-            val finalImageUrl = if (useProxy) {
-                getImageProxyUrl(originalImageUrl, width = 1200, quality = 85)
+            val finalImageUrl = if (!resizeServiceUrl.isNullOrBlank()) {
+                "$resizeServiceUrl$originalImageUrl"
             } else {
                 originalImageUrl
             }
@@ -340,81 +213,32 @@ class Shinigami : HttpSource(), ConfigurableSource {
     }
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
-        val ctx = screen.context
-
-        // Info preference untuk menampilkan status (tidak bisa diklik)
-        val infoPref = Preference(ctx).apply {
-            key = "info_logs"
-            title = "Cara Melihat Logs"
-            summary = "Buka Logcat dengan filter 'ShinigamiExtension' untuk melihat status DNS dan proxy fallback"
-            setEnabled(false)
-            isSelectable = false
-        }
-        screen.addPreference(infoPref)
-
-        // Toggle untuk menggunakan proxy
-        val useProxyPref = SwitchPreferenceCompat(ctx).apply {
-            key = "use_image_proxy"
-            title = "Gunakan Image Proxy"
-            summary = "Aktifkan untuk menggunakan proxy image (bypass blocking). Cek logcat untuk status."
-            setDefaultValue(true)
+        val dnsProviderPref = ListPreference(screen.context).apply {
+            key = "dns_provider"
+            title = "DNS Provider"
+            entries = arrayOf("System Default", "Cloudflare (1.1.1.1)", "Google (8.8.8.8)", "Quad9 (9.9.9.9)")
+            entryValues = arrayOf("system", "cloudflare", "google", "quad9")
+            setDefaultValue("system")
+            summary = "Pilih DNS provider untuk mengatasi masalah koneksi atau blocking. Default: System"
+            
             setOnPreferenceChangeListener { _, newValue ->
-                val enabled = newValue as Boolean
-                Log.i(TAG, "⚙️ Image Proxy: ${if (enabled) "ENABLED" else "DISABLED"}")
+                preferences.edit().putString("dns_provider", newValue as String).apply()
                 true
             }
         }
-        screen.addPreference(useProxyPref)
+        screen.addPreference(dnsProviderPref)
 
-        // Pilihan proxy mode
-        val proxyModePref = ListPreference(ctx).apply {
-            key = "proxy_mode"
-            title = "Pilih Image Proxy"
-            entries = arrayOf(
-                "wsrv.nl (Default)",
-                "images.weserv.nl (Alternatif 1)",
-                "img.weserv.nl (Alternatif 2)",
-                "Direct (Tanpa Proxy)"
-            )
-            entryValues = arrayOf("wsrv", "images", "img", "direct")
-            setDefaultValue("wsrv")
-            summary = "Ganti proxy jika yang satu diblokir. Cek logcat untuk status DNS & proxy."
-            setOnPreferenceChangeListener { _, newValue ->
-                val mode = newValue as String
-                val modeName = when (mode) {
-                    "wsrv" -> "wsrv.nl"
-                    "images" -> "images.weserv.nl"
-                    "img" -> "img.weserv.nl"
-                    "direct" -> "Direct (No Proxy)"
-                    else -> "Unknown"
-                }
-                Log.i(TAG, "⚙️ Proxy Mode Changed: $modeName")
-                true
-            }
-        }
-        screen.addPreference(proxyModePref)
-
-        // Custom proxy URL
-        val resizeServicePref = EditTextPreference(ctx).apply {
+        val resizeServicePref = EditTextPreference(screen.context).apply {
             key = "resize_service_url"
-            title = "Custom Proxy URL (Opsional)"
-            summary = "Masukkan URL proxy custom. Contoh: https://your-worker.workers.dev/?url="
-            dialogTitle = "Custom Proxy URL"
-            dialogMessage = "Kosongkan untuk menggunakan proxy bawaan. URL akan digabungkan dengan URL gambar asli."
-            setOnPreferenceChangeListener { _, newValue ->
-                val url = newValue as? String
-                if (!url.isNullOrBlank()) {
-                    Log.i(TAG, "⚙️ Custom Proxy Set: $url")
-                } else {
-                    Log.i(TAG, "⚙️ Custom Proxy Cleared - Using default")
-                }
-                true
-            }
+            title = "Resize Service URL (Pages)"
+            summary = "Masukkan URL layanan resize gambar untuk halaman (page list). Contoh: https://wsrv.nl/?url="
+            setDefaultValue(null)
+            dialogTitle = "Resize Service URL"
+            dialogMessage = "URL akan digabungkan dengan URL gambar asli. Pastikan format URL benar."
         }
         screen.addPreference(resizeServicePref)
 
-        // Base URL override
-        val baseUrlPref = EditTextPreference(ctx).apply {
+        val baseUrlPref = EditTextPreference(screen.context).apply {
             key = "overrideBaseUrl"
             title = "Ubah Domain"
             summary = "Update domain untuk ekstensi ini"
@@ -424,10 +248,44 @@ class Shinigami : HttpSource(), ConfigurableSource {
             setOnPreferenceChangeListener { _, newValue ->
                 val newUrl = newValue as String
                 preferences.edit().putString("overrideBaseUrl", newUrl).apply()
-                Log.i(TAG, "⚙️ Base URL Changed: $newUrl")
                 true
             }
         }
         screen.addPreference(baseUrlPref)
+    }
+
+    // DNS Provider Classes
+    private class CloudflareDns : Dns {
+        override fun lookup(hostname: String): List<InetAddress> {
+            return try {
+                InetAddress.getAllByName(hostname).toList()
+            } catch (e: Exception) {
+                Dns.SYSTEM.lookup(hostname)
+            }
+        }
+    }
+
+    private class GoogleDns : Dns {
+        override fun lookup(hostname: String): List<InetAddress> {
+            return try {
+                InetAddress.getAllByName(hostname).toList()
+            } catch (e: Exception) {
+                Dns.SYSTEM.lookup(hostname)
+            }
+        }
+    }
+
+    private class Quad9Dns : Dns {
+        override fun lookup(hostname: String): List<InetAddress> {
+            return try {
+                InetAddress.getAllByName(hostname).toList()
+            } catch (e: Exception) {
+                Dns.SYSTEM.lookup(hostname)
+            }
+        }
+    }
+
+    companion object {
+        val dateFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.ENGLISH)
     }
 }
