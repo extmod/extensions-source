@@ -347,7 +347,7 @@ class Shinigami : HttpSource(), ConfigurableSource {
             key = "info_logs"
             title = "Cara Melihat Logs"
             summary = "Buka Logcat dengan filter 'ShinigamiExtension' untuk melihat status DNS dan proxy fallback"
-            isEnabled = false
+            setEnabled(false)
         }
         screen.addPreference(infoPref)
 
