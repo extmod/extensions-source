@@ -60,18 +60,18 @@ class Shinigami : HttpSource(), ConfigurableSource {
         override fun lookup(hostname: String): List<InetAddress> {
             // Daftar domain yang perlu menggunakan DoH
             val dohDomains = listOf(
-                "wsrv.nl", 
-                "images.weserv.nl", 
+                "wsrv.nl",
+                "images.weserv.nl",
                 "img.weserv.nl",
-                "delivery.shngm.id"
+                "delivery.shngm.id",
             )
-            
+
             if (!dohDomains.any { hostname.contains(it) }) {
                 return Dns.SYSTEM.lookup(hostname)
             }
-            
+
             Log.d(TAG, "🔍 DNS Lookup untuk: $hostname")
-            
+
             return try {
                 // Menggunakan Cloudflare DNS over HTTPS
                 val url = "https://1.1.1.1/dns-query?name=$hostname&type=A"
@@ -79,11 +79,11 @@ class Shinigami : HttpSource(), ConfigurableSource {
                     .url(url)
                     .header("Accept", "application/dns-json")
                     .build()
-                
+
                 Log.d(TAG, "📡 Menggunakan DoH (DNS over HTTPS) via Cloudflare")
                 val response = fallbackClient.newCall(request).execute()
                 val json = JSONObject(response.body?.string() ?: "{}")
-                
+
                 if (json.has("Answer")) {
                     val answers = json.getJSONArray("Answer")
                     val ips = (0 until answers.length()).mapNotNull { i ->
@@ -94,13 +94,13 @@ class Shinigami : HttpSource(), ConfigurableSource {
                             null
                         }
                     }
-                    
+
                     if (ips.isNotEmpty()) {
                         Log.i(TAG, "✅ DoH Success - Resolved $hostname ke ${ips.joinToString { it.hostAddress }}")
                         return ips
                     }
                 }
-                
+
                 Log.w(TAG, "⚠️ DoH gagal, fallback ke DNS sistem")
                 Dns.SYSTEM.lookup(hostname)
             } catch (e: Exception) {
@@ -134,19 +134,19 @@ class Shinigami : HttpSource(), ConfigurableSource {
         .addInterceptor { chain ->
             val request = chain.request()
             val url = request.url.toString()
-            
+
             // Log request untuk proxy image
             if (url.contains("wsrv.nl") || url.contains("weserv.nl")) {
                 Log.d(TAG, "🖼️ Image Request via Proxy: ${request.url.host}")
             }
-            
-            val headers = request.headers.newBuilder().apply { 
-                removeAll("X-Requested-With") 
+
+            val headers = request.headers.newBuilder().apply {
+                removeAll("X-Requested-With")
             }.build()
-            
+
             try {
                 val response = chain.proceed(request.newBuilder().headers(headers).build())
-                
+
                 // Log response status untuk proxy
                 if (url.contains("wsrv.nl") || url.contains("weserv.nl")) {
                     if (response.isSuccessful) {
@@ -155,7 +155,7 @@ class Shinigami : HttpSource(), ConfigurableSource {
                         Log.e(TAG, "❌ Image Proxy Failed: ${response.code} - ${response.message}")
                     }
                 }
-                
+
                 response
             } catch (e: Exception) {
                 Log.e(TAG, "❌ Request Failed untuk ${request.url.host}: ${e.message}")
@@ -183,13 +183,13 @@ class Shinigami : HttpSource(), ConfigurableSource {
     private fun getImageProxyUrl(originalUrl: String, width: Int = 300, quality: Int = 75): String {
         val proxyMode = preferences.getString("proxy_mode", "wsrv")
         val customProxy = preferences.getString("resize_service_url", null)
-        
+
         // Jika ada custom proxy, gunakan itu
         if (!customProxy.isNullOrBlank()) {
             Log.d(TAG, "📦 Menggunakan Custom Proxy: $customProxy")
             return "$customProxy$originalUrl"
         }
-        
+
         // Pilih proxy berdasarkan mode
         val proxyUrl = when (proxyMode) {
             "wsrv" -> "https://wsrv.nl/?w=$width&q=$quality&url=$originalUrl"
@@ -201,11 +201,11 @@ class Shinigami : HttpSource(), ConfigurableSource {
             }
             else -> "https://wsrv.nl/?w=$width&q=$quality&url=$originalUrl"
         }
-        
+
         if (proxyMode != "direct") {
             Log.d(TAG, "🔄 Proxy Mode: $proxyMode (${proxyUrl.split("?").firstOrNull()?.split("://")?.lastOrNull() ?: "unknown"})")
         }
-        
+
         return proxyUrl
     }
 
@@ -227,7 +227,7 @@ class Shinigami : HttpSource(), ConfigurableSource {
 
     private fun popularMangaFromObject(obj: ShinigamiBrowseDataDto): SManga = SManga.create().apply {
         title = obj.title ?: ""
-        thumbnail_url = obj.thumbnail?.let { 
+        thumbnail_url = obj.thumbnail?.let {
             getImageProxyUrl(it, width = 150, quality = 75)
         }
         url = obj.mangaId ?: ""
@@ -314,9 +314,9 @@ class Shinigami : HttpSource(), ConfigurableSource {
     override fun pageListParse(response: Response): List<Page> {
         val result = response.parseAs<ShinigamiPageListDto>()
         val useProxy = preferences.getBoolean("use_image_proxy", true)
-        
+
         Log.d(TAG, "📚 Loading ${result.pageList.chapterPage.pages.size} pages, Proxy: ${if (useProxy) "Enabled" else "Disabled"}")
-        
+
         return result.pageList.chapterPage.pages.mapIndexed { index, imageName ->
             val originalImageUrl = "$cdnUrl${result.pageList.chapterPage.path}$imageName"
             val finalImageUrl = if (useProxy) {
