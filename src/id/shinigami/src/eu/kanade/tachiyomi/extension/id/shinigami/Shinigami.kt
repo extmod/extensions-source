@@ -3,11 +3,11 @@ package eu.kanade.tachiyomi.extension.id.shinigami
 import android.app.Application
 import android.content.SharedPreferences
 import android.util.Log
-import android.preference.EditTextPreference
-import android.preference.ListPreference
-import android.preference.Preference
-import android.preference.PreferenceScreen
-import android.preference.SwitchPreference
+import androidx.preference.EditTextPreference
+import androidx.preference.ListPreference
+import androidx.preference.Preference
+import androidx.preference.PreferenceScreen
+import androidx.preference.SwitchPreferenceCompat
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
 import eu.kanade.tachiyomi.source.ConfigurableSource
@@ -60,7 +60,6 @@ class Shinigami : HttpSource(), ConfigurableSource {
     // Custom DNS Resolver dengan DNS over HTTPS dan Logging
     private class DoHResolver(private val fallbackClient: OkHttpClient) : Dns {
         override fun lookup(hostname: String): List<InetAddress> {
-            // Daftar domain yang perlu menggunakan DoH
             val dohDomains = listOf(
                 "wsrv.nl",
                 "images.weserv.nl",
@@ -75,7 +74,6 @@ class Shinigami : HttpSource(), ConfigurableSource {
             Log.d(TAG, "🔍 DNS Lookup untuk: $hostname")
 
             return try {
-                // Menggunakan Cloudflare DNS over HTTPS
                 val url = "https://1.1.1.1/dns-query?name=$hostname&type=A"
                 val request = Request.Builder()
                     .url(url)
@@ -107,14 +105,12 @@ class Shinigami : HttpSource(), ConfigurableSource {
                 Dns.SYSTEM.lookup(hostname)
             } catch (e: Exception) {
                 Log.e(TAG, "❌ DoH Error: ${e.message}")
-                // Fallback ke DNS sistem
                 try {
                     val systemResult = Dns.SYSTEM.lookup(hostname)
                     Log.i(TAG, "✅ Fallback DNS Sistem Success - $hostname ke ${systemResult.joinToString { it.hostAddress }}")
                     systemResult
                 } catch (e2: Exception) {
                     Log.e(TAG, "❌ DNS Sistem juga gagal: ${e2.message}")
-                    // Fallback manual ke IP known untuk wsrv.nl
                     when {
                         hostname.contains("wsrv.nl") || hostname.contains("weserv.nl") -> {
                             Log.w(TAG, "🔄 Fallback Manual - Menggunakan IP hardcoded untuk wsrv.nl: 178.21.17.10")
@@ -127,9 +123,7 @@ class Shinigami : HttpSource(), ConfigurableSource {
         }
     }
 
-    // Client untuk DoH resolver
-    private val dohClient = OkHttpClient.Builder()
-        .build()
+    private val dohClient = OkHttpClient.Builder().build()
 
     override val client = network.cloudflareClient.newBuilder()
         .dns(DoHResolver(dohClient))
@@ -137,7 +131,6 @@ class Shinigami : HttpSource(), ConfigurableSource {
             val request = chain.request()
             val url = request.url.toString()
 
-            // Log request untuk proxy image
             if (url.contains("wsrv.nl") || url.contains("weserv.nl")) {
                 Log.d(TAG, "🖼️ Image Request via Proxy: ${request.url.host}")
             }
@@ -149,7 +142,6 @@ class Shinigami : HttpSource(), ConfigurableSource {
             try {
                 val response = chain.proceed(request.newBuilder().headers(headers).build())
 
-                // Log response status untuk proxy
                 if (url.contains("wsrv.nl") || url.contains("weserv.nl")) {
                     if (response.isSuccessful) {
                         Log.i(TAG, "✅ Image Proxy Success: ${response.code}")
@@ -181,18 +173,15 @@ class Shinigami : HttpSource(), ConfigurableSource {
         .add("Origin", baseUrl)
         .add("Sec-GPC", "1")
 
-    // Image Proxy Manager dengan multiple fallback dan logging
     private fun getImageProxyUrl(originalUrl: String, width: Int = 300, quality: Int = 75): String {
         val proxyMode = preferences.getString("proxy_mode", "wsrv")
         val customProxy = preferences.getString("resize_service_url", null)
 
-        // Jika ada custom proxy, gunakan itu
         if (!customProxy.isNullOrBlank()) {
             Log.d(TAG, "📦 Menggunakan Custom Proxy: $customProxy")
             return "$customProxy$originalUrl"
         }
 
-        // Pilih proxy berdasarkan mode
         val proxyUrl = when (proxyMode) {
             "wsrv" -> "https://wsrv.nl/?w=$width&q=$quality&url=$originalUrl"
             "images" -> "https://images.weserv.nl/?w=$width&q=$quality&url=$originalUrl"
@@ -343,7 +332,7 @@ class Shinigami : HttpSource(), ConfigurableSource {
         return GET(page.imageUrl!!, newHeaders)
     }
 
-    override fun setupPreferenceScreen(screen: PreferenceScreen) {
+    override fun setupPreferenceScreen(screen: androidx.preference.PreferenceScreen) {
         // Info preference untuk menampilkan status
         val infoPref = Preference(screen.context).apply {
             key = "info_logs"
@@ -354,12 +343,12 @@ class Shinigami : HttpSource(), ConfigurableSource {
         screen.addPreference(infoPref)
 
         // Toggle untuk menggunakan proxy
-        val useProxyPref = SwitchPreference(screen.context).apply {
+        val useProxyPref = SwitchPreferenceCompat(screen.context).apply {
             key = "use_image_proxy"
             title = "Gunakan Image Proxy"
             summary = "Aktifkan untuk menggunakan proxy image (bypass blocking). Cek logcat untuk status."
             setDefaultValue(true)
-            onPreferenceChangeListener = android.preference.Preference.OnPreferenceChangeListener { _, newValue ->
+            setOnPreferenceChangeListener { _, newValue ->
                 val enabled = newValue as Boolean
                 Log.i(TAG, "⚙️ Image Proxy: ${if (enabled) "ENABLED" else "DISABLED"}")
                 true
@@ -380,7 +369,7 @@ class Shinigami : HttpSource(), ConfigurableSource {
             entryValues = arrayOf("wsrv", "images", "img", "direct")
             setDefaultValue("wsrv")
             summary = "Ganti proxy jika yang satu diblokir. Cek logcat untuk status DNS & proxy."
-            onPreferenceChangeListener = android.preference.Preference.OnPreferenceChangeListener { _, newValue ->
+            setOnPreferenceChangeListener { _, newValue ->
                 val mode = newValue as String
                 val modeName = when(mode) {
                     "wsrv" -> "wsrv.nl"
@@ -403,7 +392,7 @@ class Shinigami : HttpSource(), ConfigurableSource {
             setDefaultValue(null)
             dialogTitle = "Custom Proxy URL"
             dialogMessage = "Kosongkan untuk menggunakan proxy bawaan. URL akan digabungkan dengan URL gambar asli."
-            onPreferenceChangeListener = android.preference.Preference.OnPreferenceChangeListener { _, newValue ->
+            setOnPreferenceChangeListener { _, newValue ->
                 val url = newValue as? String
                 if (!url.isNullOrBlank()) {
                     Log.i(TAG, "⚙️ Custom Proxy Set: $url")
@@ -423,7 +412,7 @@ class Shinigami : HttpSource(), ConfigurableSource {
             setDefaultValue(baseUrl)
             dialogTitle = "Update domain untuk ekstensi ini"
             dialogMessage = "Original: https://app.shinigami.asia"
-            onPreferenceChangeListener = android.preference.Preference.OnPreferenceChangeListener { _, newValue ->
+            setOnPreferenceChangeListener { _, newValue ->
                 val newUrl = newValue as String
                 preferences.edit().putString("overrideBaseUrl", newUrl).apply()
                 Log.i(TAG, "⚙️ Base URL Changed: $newUrl")
