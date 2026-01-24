@@ -94,10 +94,13 @@ open class Webtoons(
     }
 
     private fun mangaFromElement(element: Element): SManga {
-        return SManga.create().apply {
-            setUrlWithoutDomain(element.absUrl("href"))
-            title = element.selectFirst(".title")!!.text()
-            thumbnail_url = element.selectFirst("img")?.absUrl("src")
+    return SManga.create().apply {
+        setUrlWithoutDomain(element.absUrl("href"))
+        title = element.selectFirst(".title")!!.text()
+
+        thumbnail_url = element.selectFirst("img")
+            ?.absUrl("src")
+            ?.let { "cover$it" }
         }
     }
 
