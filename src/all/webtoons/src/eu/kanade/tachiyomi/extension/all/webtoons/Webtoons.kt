@@ -367,45 +367,26 @@ open class Webtoons(
     val document = response.asJsoup()
     val useMaxQuality = useMaxQualityPref()
 
-    // layanan Anda (tanpa encoding)
-    val IMAGE_RESIZE_BASE = "abcd"
-
-    fun wrapWithResizeService(original: String): String {
-        if (IMAGE_RESIZE_BASE.isBlank()) return original
-        return try {
-            IMAGE_RESIZE_BASE + original
-        } catch (e: Exception) {
-            original
-        }
-    }
-
     val pages = document.select("div#_imageList > img").mapIndexed { i, element ->
-        var imageUrl = element.attr("data-url")
+        val imageUrl = element.attr("data-url").toHttpUrl()
 
-        // pertahankan behavior "use max quality" — hapus type=q90 jika diaktifkan
-        try {
-            val urlObj = imageUrl.toHttpUrl()
-            if (useMaxQuality && urlObj.queryParameter("type") == "q90") {
-                val newImageUrl = urlObj.newBuilder().apply {
-                    removeAllQueryParameters("type")
-                }.build()
-                imageUrl = newImageUrl.toString()
-            }
-        } catch (_: Exception) {
-            // fallback: jika parsing gagal, pakai imageUrl apa adanya
+        val finalImageUrl = if (useMaxQuality && imageUrl.queryParameter("type") == "q90") {
+            imageUrl.newBuilder().apply {
+                removeAllQueryParameters("type")
+            }.build().toString()
+        } else {
+            imageUrl.toString()
         }
 
-        Page(i, imageUrl = wrapWithResizeService(imageUrl))
+        // Terapkan proxy gambar tanpa encoding
+        val proxiedUrl = "https://proxygambar.vercel.app/api/gambar&w=50&q=70&url=$finalImageUrl"
+
+        Page(i, imageUrl = proxiedUrl)
     }.toMutableList()
 
     if (pages.isEmpty()) {
-        // wrap juga gambar motiontoon lewat service resize
         pages.addAll(
-            fetchMotionToonPages(document).mapIndexed { idx, p ->
-                val original = try { p.imageUrl } catch (e: Exception) { "" }
-                val wrapped = if (original.isNotEmpty()) wrapWithResizeService(original) else original
-                Page(idx, imageUrl = wrapped)
-            },
+            fetchMotionToonPages(document),
         )
     }
 
