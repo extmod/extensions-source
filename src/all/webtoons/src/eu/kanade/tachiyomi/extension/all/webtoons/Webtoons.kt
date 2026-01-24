@@ -358,43 +358,66 @@ open class Webtoons(
     )
 
     override fun pageListParse(response: Response): List<Page> {
-        val document = response.asJsoup()
-        val useMaxQuality = useMaxQualityPref()
+    val document = response.asJsoup()
+    val useMaxQuality = useMaxQualityPref()
 
-        val pages = document.select("div#_imageList > img").mapIndexed { i, element ->
-            val imageUrl = element.attr("data-url").toHttpUrl()
+    // layanan Anda (tanpa encoding)
+    val IMAGE_RESIZE_BASE = "abcd"
 
-            if (useMaxQuality && imageUrl.queryParameter("type") == "q90") {
-                val newImageUrl = imageUrl.newBuilder().apply {
+    fun wrapWithResizeService(original: String): String {
+        if (IMAGE_RESIZE_BASE.isBlank()) return original
+        return try {
+            IMAGE_RESIZE_BASE + original
+        } catch (e: Exception) {
+            original
+        }
+    }
+
+    val pages = document.select("div#_imageList > img").mapIndexed { i, element ->
+        var imageUrl = element.attr("data-url")
+
+        // pertahankan behavior "use max quality" — hapus type=q90 jika diaktifkan
+        try {
+            val urlObj = imageUrl.toHttpUrl()
+            if (useMaxQuality && urlObj.queryParameter("type") == "q90") {
+                val newImageUrl = urlObj.newBuilder().apply {
                     removeAllQueryParameters("type")
                 }.build()
-                Page(i, imageUrl = newImageUrl.toString())
-            } else {
-                Page(i, imageUrl = imageUrl.toString())
+                imageUrl = newImageUrl.toString()
             }
-        }.toMutableList()
+        } catch (_: Exception) {
+            // fallback: jika parsing gagal, pakai imageUrl apa adanya
+        }
 
-        if (pages.isEmpty()) {
-            pages.addAll(
-                fetchMotionToonPages(document),
+        Page(i, imageUrl = wrapWithResizeService(imageUrl))
+    }.toMutableList()
+
+    if (pages.isEmpty()) {
+        // wrap juga gambar motiontoon lewat service resize
+        pages.addAll(
+            fetchMotionToonPages(document).mapIndexed { idx, p ->
+                val original = try { p.imageUrl } catch (e: Exception) { "" }
+                val wrapped = if (original.isNotEmpty()) wrapWithResizeService(original) else original
+                Page(idx, imageUrl = wrapped)
+            },
+        )
+    }
+
+    if (showAuthorsNotesPref()) {
+        val note = document.select("div.creator_note p.author_text").text()
+
+        if (note.isNotEmpty()) {
+            val creator = document.select("div.creator_note a.author_name span").text().trim()
+
+            pages += Page(
+                pages.size,
+                imageUrl = TextInterceptorHelper.createUrl("Author's Notes from $creator", note),
             )
         }
-
-        if (showAuthorsNotesPref()) {
-            val note = document.select("div.creator_note p.author_text").text()
-
-            if (note.isNotEmpty()) {
-                val creator = document.select("div.creator_note a.author_name span").text().trim()
-
-                pages += Page(
-                    pages.size,
-                    imageUrl = TextInterceptorHelper.createUrl("Author's Notes from $creator", note),
-                )
-            }
-        }
-
-        return pages
     }
+
+    return pages
+}
 
     private fun fetchMotionToonPages(document: Document): List<Page> {
         val docString = document.toString()
