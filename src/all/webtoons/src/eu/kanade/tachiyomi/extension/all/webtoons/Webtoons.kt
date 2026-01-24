@@ -98,9 +98,12 @@ open class Webtoons(
         setUrlWithoutDomain(element.absUrl("href"))
         title = element.selectFirst(".title")!!.text()
 
-        thumbnail_url = element.selectFirst("img")
-            ?.absUrl("src")
-            ?.let { "cover$it" }
+        val src = element.selectFirst("img")?.absUrl("src")
+        thumbnail_url = if (src.isNullOrBlank()) {
+            null
+        } else {
+            "cover$src"
+            }
         }
     }
 
