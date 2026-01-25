@@ -134,8 +134,15 @@ class Manhuarm(
         }
 
     private val clientUtils = network.cloudflareClient.newBuilder()
-        .rateLimit(3, 2, TimeUnit.SECONDS)
+    .rateLimit(3, 2, TimeUnit.SECONDS)
+    .build()
+
+    private val jsonClient: OkHttpClient by lazy {
+    network.cloudflareClient.newBuilder()
+        .connectTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
         .build()
+    }
 
     private lateinit var translator: TranslatorEngine
 
@@ -304,20 +311,19 @@ class Manhuarm(
             .build()
 
         val dialog = try {
-            val response = client.newCall(GET("$baseUrl/wp-content/uploads/ocr-data/$chapterId.json", jsonHeaders))
-                .execute()
-
-            // If server returns error (403, etc), skip translations
+    jsonClient.newCall(GET("$baseUrl/wp-content/uploads/ocr-data/$chapterId.json", jsonHeaders))
+        .execute()
+        .use { response ->
             if (!response.isSuccessful) {
-                response.close()
                 emptyList()
             } else {
                 response.parseAs<List<PageDto>>()
+                }
             }
-        } catch (_: Exception) {
-            // If JSON parsing fails, skip translations
-            emptyList()
-        }
+        } catch (e: Exception) {
+    e.printStackTrace()
+    emptyList()
+    }
 
         if (dialog.isEmpty()) {
             return pages
