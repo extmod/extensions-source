@@ -339,7 +339,7 @@ class Manhuarm(
 
         // RESIZE IMAGE, KEEP FRAGMENT INTACT
         val originalImageUrl = page.imageUrl!!
-        val resizedImageUrl = "https://images.weserv.nl/?w=1200&q=85&url=$originalImageUrl"
+        val resizedImageUrl = "https://images.weserv.nl/?w=300&q=80&url=$originalImageUrl"
         
         // Fragment ditambahkan setelah URL resize
         Page(index, imageUrl = "$resizedImageUrl${fragment.toFragment()}")
