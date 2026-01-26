@@ -25,8 +25,14 @@ import javax.crypto.spec.SecretKeySpec
 
 class WestManga : HttpSource(), ConfigurableSource {
     override val name = "West Manga"
-    override val baseUrl by lazy { preferences.getString(PREF_DOMAIN_KEY, PREF_DOMAIN_DEFAULT)!! }
-    private val apiUrl by lazy { "https://data.${baseUrl.toHttpUrl().host}" }
+    
+    // Gunakan custom getter agar selalu membaca nilai terbaru
+    override val baseUrl: String
+        get() = preferences.getString(PREF_DOMAIN_KEY, PREF_DOMAIN_DEFAULT)!!
+    
+    private val apiUrl: String
+        get() = "https://data.${baseUrl.toHttpUrl().host}"
+    
     override val lang = "id"
     override val id = 8883916630998758688
     override val supportsLatest = true
