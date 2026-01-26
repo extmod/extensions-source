@@ -328,41 +328,49 @@ class Manhuarm(
         return pages
     }
 
+    val targetWidth = 300
+    val originalWidth = 800f // Sesuaikan dengan width asli gambar dari website
+    val scaleRatio = targetWidth.toFloat() / originalWidth
+
     return dialog.mapIndexed { index, dto ->
         val page = pages.first { it.imageUrl?.contains(dto.imageUrl, true)!! }
-        val fragment = json.encodeToString<List<Dialog>>(
-            dto.dialogues.filter { it.getTextBy(language).isNotBlank() },
-        )
+        
         if (dto.dialogues.isEmpty()) {
             return@mapIndexed page
         }
 
-        // RESIZE IMAGE, KEEP FRAGMENT INTACT
+        // Scale semua dialog coordinates
+        val scaledDialogues = dto.dialogues.map { dialogue ->
+            dialogue.apply { scale = scaleRatio }
+        }.filter { it.getTextBy(language).isNotBlank() }
+
+        val fragment = json.encodeToString<List<Dialog>>(scaledDialogues)
+        
+        // Resize: width 300, quality 80
         val originalImageUrl = page.imageUrl!!
         val resizedImageUrl = "https://images.weserv.nl/?w=300&q=80&url=$originalImageUrl"
         
-        // Fragment ditambahkan setelah URL resize
         Page(index, imageUrl = "$resizedImageUrl${fragment.toFragment()}")
     }
 }
 
-    override fun imageRequest(page: Page): Request {
-        val imageHeaders = headersBuilder()
-            .set("Accept", "image/avif,image/webp,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5")
-            .set("Referer", "$baseUrl/")
-            .set("Connection", "keep-alive")
-            .set("Accept-Language", "pt-BR,en-US;q=0.9,en;q=0.8")
-            .set("Accept-Encoding", "gzip, deflate, br, zstd")
-            .set("Sec-Fetch-Dest", "image")
-            .set("Sec-Fetch-Mode", "no-cors")
-            .set("Sec-Fetch-Site", "cross-site")
-            .set("Sec-Fetch-Storage-Access", "none")
-            .set("Priority", "u=5, i")
-            .set("TE", "trailers")
-            .build()
+override fun imageRequest(page: Page): Request {
+    val imageHeaders = headersBuilder()
+        .set("Accept", "image/avif,image/webp,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5")
+        .set("Referer", "$baseUrl/")
+        .set("Connection", "keep-alive")
+        .set("Accept-Language", "pt-BR,en-US;q=0.9,en;q=0.8")
+        .set("Accept-Encoding", "gzip, deflate, br, zstd")
+        .set("Sec-Fetch-Dest", "image")
+        .set("Sec-Fetch-Mode", "no-cors")
+        .set("Sec-Fetch-Site", "cross-site")
+        .set("Sec-Fetch-Storage-Access", "none")
+        .set("Priority", "u=5, i")
+        .set("TE", "trailers")
+        .build()
 
-        return GET(page.imageUrl!!, imageHeaders)
-    }
+    return GET(page.imageUrl!!, imageHeaders)
+}
 
     // ================================ Utils ============================================
 
