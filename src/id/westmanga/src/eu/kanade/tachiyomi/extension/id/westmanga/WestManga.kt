@@ -1,6 +1,11 @@
 package eu.kanade.tachiyomi.extension.id.westmanga
 
+import android.app.Application
+import android.content.SharedPreferences
+import androidx.preference.EditTextPreference
+import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.network.GET
+import eu.kanade.tachiyomi.source.ConfigurableSource
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.model.Page
@@ -13,18 +18,60 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.Jsoup
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 
-class WestManga : HttpSource() {
+class WestManga : HttpSource(), ConfigurableSource {
     override val name = "West Manga"
-    override val baseUrl = "https://westmanga.me"
-    private val apiUrl = "https://data.westmanga.me"
+    override val baseUrl by lazy { preferences.getString(PREF_DOMAIN_KEY, PREF_DOMAIN_DEFAULT)!! }
+    private val apiUrl by lazy { "https://data.${baseUrl.toHttpUrl().host}" }
     override val lang = "id"
     override val id = 8883916630998758688
     override val supportsLatest = true
 
     override val client = network.cloudflareClient
+
+    private val preferences: SharedPreferences by lazy {
+        Injekt.get<Application>().getSharedPreferences("source_$id", 0x0000)
+    }
+
+    override fun setupPreferenceScreen(screen: PreferenceScreen) {
+        EditTextPreference(screen.context).apply {
+            key = PREF_IMAGE_RESIZE_KEY
+            title = "Image Resize Service"
+            summary = "Layanan resize untuk gambar chapter (kosongkan jika tidak perlu resize)\nContoh: https://wsrv.nl/?url="
+            setDefaultValue(PREF_IMAGE_RESIZE_DEFAULT)
+
+            setOnPreferenceChangeListener { _, _ ->
+                true
+            }
+        }.let(screen::addPreference)
+
+        EditTextPreference(screen.context).apply {
+            key = PREF_COVER_RESIZE_KEY
+            title = "Cover Resize Service"
+            summary = "Layanan resize untuk cover manga (kosongkan jika tidak perlu resize)\nContoh: https://wsrv.nl/?url="
+            setDefaultValue(PREF_COVER_RESIZE_DEFAULT)
+
+            setOnPreferenceChangeListener { _, _ ->
+                true
+            }
+        }.let(screen::addPreference)
+
+        EditTextPreference(screen.context).apply {
+            key = PREF_DOMAIN_KEY
+            title = "Domain Override"
+            summary = "Ganti domain jika domain utama tidak bisa diakses\nDefault: $PREF_DOMAIN_DEFAULT"
+            setDefaultValue(PREF_DOMAIN_DEFAULT)
+
+            setOnPreferenceChangeListener { _, newValue ->
+                val newDomain = newValue as String
+                newDomain.startsWith("https://") || newDomain.startsWith("http://")
+            }
+        }.let(screen::addPreference)
+    }
 
     override fun headersBuilder() = super.headersBuilder()
         .set("Referer", "$baseUrl/")
@@ -71,10 +118,10 @@ class WestManga : HttpSource() {
 
     override fun searchMangaParse(response: Response): MangasPage {
         val data = response.parseAs<PaginatedData<BrowseManga>>()
+        val coverResize = preferences.getString(PREF_COVER_RESIZE_KEY, PREF_COVER_RESIZE_DEFAULT)!!
 
         val entries = data.data.map {
             SManga.create().apply {
-                // old urls compatibility
                 setUrlWithoutDomain(
                     baseUrl.toHttpUrl().newBuilder()
                         .addPathSegment("manga")
@@ -83,7 +130,11 @@ class WestManga : HttpSource() {
                         .toString(),
                 )
                 title = it.title
-                thumbnail_url = it.cover
+                thumbnail_url = if (coverResize.isNotBlank()) {
+                    coverResize + it.cover
+                } else {
+                    it.cover
+                }
             }
         }
 
@@ -116,9 +167,9 @@ class WestManga : HttpSource() {
 
     override fun mangaDetailsParse(response: Response): SManga {
         val data = response.parseAs<Data<Manga>>().data
+        val coverResize = preferences.getString(PREF_COVER_RESIZE_KEY, PREF_COVER_RESIZE_DEFAULT)!!
 
         return SManga.create().apply {
-            // old urls compatibility
             setUrlWithoutDomain(
                 baseUrl.toHttpUrl().newBuilder()
                     .addPathSegment("manga")
@@ -127,7 +178,11 @@ class WestManga : HttpSource() {
                     .toString(),
             )
             title = data.title
-            thumbnail_url = data.cover
+            thumbnail_url = if (coverResize.isNotBlank()) {
+                coverResize + data.cover
+            } else {
+                data.cover
+            }
             author = data.author
             status = when (data.status) {
                 "ongoing" -> SManga.ONGOING
@@ -206,9 +261,15 @@ class WestManga : HttpSource() {
 
     override fun pageListParse(response: Response): List<Page> {
         val data = response.parseAs<Data<ImageList>>().data
+        val imageResize = preferences.getString(PREF_IMAGE_RESIZE_KEY, PREF_IMAGE_RESIZE_DEFAULT)!!
 
         return data.images.mapIndexed { idx, img ->
-            Page(idx, imageUrl = img)
+            val finalUrl = if (imageResize.isNotBlank()) {
+                imageResize + img
+            } else {
+                img
+            }
+            Page(idx, imageUrl = finalUrl)
         }
     }
 
@@ -233,6 +294,17 @@ class WestManga : HttpSource() {
 
     override fun imageUrlParse(response: Response): String {
         throw UnsupportedOperationException()
+    }
+
+    companion object {
+        private const val PREF_IMAGE_RESIZE_KEY = "pref_image_resize"
+        private const val PREF_IMAGE_RESIZE_DEFAULT = ""
+
+        private const val PREF_COVER_RESIZE_KEY = "pref_cover_resize"
+        private const val PREF_COVER_RESIZE_DEFAULT = ""
+
+        private const val PREF_DOMAIN_KEY = "pref_domain_override"
+        private const val PREF_DOMAIN_DEFAULT = "https://westmanga.me"
     }
 }
 
