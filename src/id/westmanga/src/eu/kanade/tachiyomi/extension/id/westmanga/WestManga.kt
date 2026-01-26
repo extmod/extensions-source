@@ -88,8 +88,14 @@ class WestManga : HttpSource(), ConfigurableSource {
     override fun popularMangaParse(response: Response) =
         searchMangaParse(response)
 
-    override fun latestUpdatesRequest(page: Int) =
-        searchMangaRequest(page, "", SortFilter.latest)
+    override fun latestUpdatesRequest(page: Int): Request {
+    val filters = FilterList(
+        SortFilter("Update"),
+        ColorFilter().apply { state = 1 }
+    )
+    
+    return searchMangaRequest(page, "", filters)
+    }
 
     override fun latestUpdatesParse(response: Response) =
         searchMangaParse(response)
