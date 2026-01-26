@@ -298,49 +298,53 @@ class Manhuarm(
     // =========================== Pages ==========================================
 
     override fun pageListParse(document: Document): List<Page> {
-        val pages = super.pageListParse(document)
-        val chapterId = document.selectFirst("#wp-manga-current-chap")!!.attr("data-id")
-        val chapterUrl = document.location().toHttpUrl().newBuilder()
-            .removeAllQueryParameters("style")
-            .build()
+    val pages = super.pageListParse(document)
+    val chapterId = document.selectFirst("#wp-manga-current-chap")!!.attr("data-id")
+    val chapterUrl = document.location().toHttpUrl().newBuilder()
+        .removeAllQueryParameters("style")
+        .build()
 
-        // Use minimal headers for JSON request - Cloudflare may be blocking complex requests
-        val jsonHeaders = Headers.Builder()
-            .add("Referer", chapterUrl.toString())
-            .add("Accept", "*/*")
-            .build()
+    val jsonHeaders = Headers.Builder()
+        .add("Referer", chapterUrl.toString())
+        .add("Accept", "*/*")
+        .build()
 
-        val dialog = try {
-    jsonClient.newCall(GET("$baseUrl/wp-content/uploads/ocr-data/$chapterId.json", jsonHeaders))
-        .execute()
-        .use { response ->
-            if (!response.isSuccessful) {
-                emptyList()
-            } else {
-                response.parseAs<List<PageDto>>()
+    val dialog = try {
+        jsonClient.newCall(GET("$baseUrl/wp-content/uploads/ocr-data/$chapterId.json", jsonHeaders))
+            .execute()
+            .use { response ->
+                if (!response.isSuccessful) {
+                    emptyList()
+                } else {
+                    response.parseAs<List<PageDto>>()
                 }
             }
-        } catch (e: Exception) {
-    e.printStackTrace()
-    emptyList()
+    } catch (e: Exception) {
+        e.printStackTrace()
+        emptyList()
     }
 
-        if (dialog.isEmpty()) {
-            return pages
-        }
-
-        return dialog.mapIndexed { index, dto ->
-            val page = pages.first { it.imageUrl?.contains(dto.imageUrl, true)!! }
-            val fragment = json.encodeToString<List<Dialog>>(
-                dto.dialogues.filter { it.getTextBy(language).isNotBlank() },
-            )
-            if (dto.dialogues.isEmpty()) {
-                return@mapIndexed page
-            }
-
-            Page(index, imageUrl = "${page.imageUrl}${fragment.toFragment()}")
-        }
+    if (dialog.isEmpty()) {
+        return pages
     }
+
+    return dialog.mapIndexed { index, dto ->
+        val page = pages.first { it.imageUrl?.contains(dto.imageUrl, true)!! }
+        val fragment = json.encodeToString<List<Dialog>>(
+            dto.dialogues.filter { it.getTextBy(language).isNotBlank() },
+        )
+        if (dto.dialogues.isEmpty()) {
+            return@mapIndexed page
+        }
+
+        // RESIZE IMAGE, KEEP FRAGMENT INTACT
+        val originalImageUrl = page.imageUrl!!
+        val resizedImageUrl = "https://images.weserv.nl/?w=1200&q=85&url=$originalImageUrl"
+        
+        // Fragment ditambahkan setelah URL resize
+        Page(index, imageUrl = "$resizedImageUrl${fragment.toFragment()}")
+    }
+}
 
     override fun imageRequest(page: Page): Request {
         val imageHeaders = headersBuilder()
