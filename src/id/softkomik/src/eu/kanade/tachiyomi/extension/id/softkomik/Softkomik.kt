@@ -268,20 +268,23 @@ class Softkomik : HttpSource() {
                 return currentSessionSync
             }
 
-            val apiHeaders = headersBuilder()
-                .set("Accept", "application/json")
-                .set("Content-Type", "application/json")
-                .set("X-Requested-With", "XMLHttpRequest")
+            val bootstrapHeaders = headersBuilder()
+                .set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+                .set("User-Agent", "Mozilla/5.0")
                 .build()
 
-            val hasCookies = client.cookieJar
-                .loadForRequest(baseUrl.toHttpUrl())
-                .any { it.name == "zEm9be" || it.name == "AhyyL" }
+            val apiHeaders = headersBuilder()
+                .set("Accept", "application/json, text/plain, */*")
+                .set("Content-Type", "application/json")
+                .set("X-Requested-With", "XMLHttpRequest")
+                .set("User-Agent", "Mozilla/5.0")
+                .build()
 
-            if (!hasCookies) {
-                client.newCall(GET(baseUrl, headers)).execute().close()
-                client.newCall(GET("$baseUrl/api/me", apiHeaders)).execute().close()
-            }
+            // Paksa situs membentuk cookie/session dulu
+            client.newCall(GET(baseUrl, bootstrapHeaders)).execute().close()
+
+            // Endpoint ini dipakai untuk memicu session server-side
+            client.newCall(GET("$baseUrl/api/me", apiHeaders)).execute().close()
 
             val response = client.newCall(GET("$baseUrl/api/sessions", apiHeaders)).execute()
 
