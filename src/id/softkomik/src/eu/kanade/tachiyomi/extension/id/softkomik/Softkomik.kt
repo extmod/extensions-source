@@ -66,7 +66,7 @@ class Softkomik : HttpSource() {
                 .addQueryParameter("search", "true")
                 .addQueryParameter("limit", "20")
                 .addQueryParameter("page", page.toString())
-            return GET(url.build(), apiRequestHeaders())
+            return GET(url.build(), apiRequestHeaders("$baseUrl/"))
         }
 
         val url = "$baseUrl/komik/library".toHttpUrl().newBuilder()
@@ -140,7 +140,7 @@ class Softkomik : HttpSource() {
     // ======================== Chapters ========================
     override fun chapterListRequest(manga: SManga): Request {
         val url = "$apiUrl/komik/${manga.url}/chapter?limit=9999999"
-        return GET(url, apiRequestHeaders())
+        return GET(url, apiHeaders("$baseUrl/${manga.url}"))
     }
 
     override fun chapterListParse(response: Response): List<SChapter> {
@@ -171,9 +171,7 @@ class Softkomik : HttpSource() {
         val normalized = chapterStr.trim().replace(',', '.')
         val match = Regex("""\d+(\.\d+)?""").find(normalized) ?: return chapterStr
 
-        val value = match.value
-        val floatVal = value.toFloatOrNull() ?: return chapterStr
-
+        val floatVal = match.value.toFloatOrNull() ?: return chapterStr
         return if (floatVal == floatVal.toLong().toFloat()) {
             floatVal.toLong().toString()
         } else {
@@ -182,8 +180,7 @@ class Softkomik : HttpSource() {
     }
 
     // ======================== Pages ========================
-    override fun pageListRequest(chapter: SChapter): Request =
-        GET("$baseUrl${chapter.url}", rscHeaders)
+    override fun pageListRequest(chapter: SChapter): Request = GET("$baseUrl${chapter.url}", rscHeaders)
 
     override fun pageListParse(response: Response): List<Page> {
         val data = response.extractNextJs<ChapterPageDataDto>()
@@ -252,8 +249,6 @@ class Softkomik : HttpSource() {
     private fun apiAuthInterceptor(chain: Interceptor.Chain): Response {
         val request = chain.request()
 
-        // Jangan memicu session untuk cover/image/CDN.
-        // Hanya API utama yang benar-benar butuh token.
         if (request.url.host != "v2.softdevices.my.id") {
             return chain.proceed(request)
         }
@@ -280,22 +275,18 @@ class Softkomik : HttpSource() {
                 return currentSessionSync
             }
 
-            val bootstrapHeaders = Headers.Builder()
-                .add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-                .add("User-Agent", "Mozilla/5.0")
-                .build()
-
-            val apiHeaders = Headers.Builder()
-                .add("Accept", "application/json, text/plain, */*")
-                .add("User-Agent", "Mozilla/5.0")
-                .add("X-Requested-With", "XMLHttpRequest")
-                .build()
+            val bootstrapHeaders = browserHeaders()
+            val apiHeaders = apiHeaders("$baseUrl/")
 
             client.newCall(GET(baseUrl, bootstrapHeaders)).execute().use { response ->
                 if (!response.isSuccessful) {
-                    val body = response.peekBody(1024).string()
+                    val body = response.peekBody(512).string()
                     throw Exception("GET / gagal (${response.code}): $body")
                 }
+            }
+
+            client.newCall(GET(apiUrl, bootstrapHeaders)).execute().use { response ->
+                response.close()
             }
 
             client.newCall(GET("$baseUrl/api/me", apiHeaders)).execute().use { response ->
@@ -318,10 +309,25 @@ class Softkomik : HttpSource() {
         }
     }
 
-    private fun apiRequestHeaders(): Headers = headersBuilder()
+    private fun browserHeaders(): Headers = Headers.Builder()
+        .add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+        .add("User-Agent", "Mozilla/5.0")
+        .build()
+
+    private fun apiHeaders(referer: String = "$baseUrl/"): Headers = Headers.Builder()
         .add("Accept", "application/json, text/plain, */*")
         .add("User-Agent", "Mozilla/5.0")
         .add("X-Requested-With", "XMLHttpRequest")
+        .add("Origin", baseUrl)
+        .add("Referer", referer)
+        .build()
+
+    private fun apiRequestHeaders(referer: String = "$baseUrl/"): Headers = Headers.Builder()
+        .add("Accept", "application/json, text/plain, */*")
+        .add("User-Agent", "Mozilla/5.0")
+        .add("X-Requested-With", "XMLHttpRequest")
+        .add("Origin", baseUrl)
+        .add("Referer", referer)
         .build()
 
     override fun getFilterList() = FilterList(
