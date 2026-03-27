@@ -66,7 +66,7 @@ class Softkomik : HttpSource() {
                 .addQueryParameter("search", "true")
                 .addQueryParameter("limit", "20")
                 .addQueryParameter("page", page.toString())
-            return GET(url.build(), headers)
+            return GET(url.build(), apiRequestHeaders())
         }
 
         val url = "$baseUrl/komik/library".toHttpUrl().newBuilder()
@@ -84,7 +84,7 @@ class Softkomik : HttpSource() {
                         url.addQueryParameter("min", minValue)
                     }
                 }
-                else -> {}
+                else -> Unit
             }
         }
 
@@ -105,17 +105,21 @@ class Softkomik : HttpSource() {
                 thumbnail_url = "$coverUrl/${manga.gambar.removePrefix("/")}"
             }
         }
+
         return MangasPage(mangas, libData.page < libData.maxPage)
     }
 
     // ======================== Details ========================
-    override fun mangaDetailsRequest(manga: SManga): Request = GET("$baseUrl/${manga.url}", rscHeaders)
+    override fun mangaDetailsRequest(manga: SManga): Request =
+        GET("$baseUrl/${manga.url}", rscHeaders)
 
     override fun mangaDetailsParse(response: Response): SManga {
         val manga = response.extractNextJs<MangaDetailsDto>()
             ?: throw Exception("Could not find manga details")
 
-        val slug = response.request.url.pathSegments.lastOrNull()!!
+        val slug = response.request.url.pathSegments.lastOrNull()
+            ?: throw Exception("Could not find manga slug")
+
         return SManga.create().apply {
             setUrlWithoutDomain(slug)
             title = manga.title
@@ -136,42 +140,50 @@ class Softkomik : HttpSource() {
     // ======================== Chapters ========================
     override fun chapterListRequest(manga: SManga): Request {
         val url = "$apiUrl/komik/${manga.url}/chapter?limit=9999999"
-        return GET(url, headers)
+        return GET(url, apiRequestHeaders())
     }
 
     override fun chapterListParse(response: Response): List<SChapter> {
         val dto = response.parseAs<ChapterListDto>()
-        val slug = response.request.url.pathSegments[1]
+        val slug = response.request.url.pathSegments.getOrNull(1)
+            ?: throw Exception("Could not find chapter slug")
+
         return dto.chapter.map { chapter ->
-            val chapterNumStr = chapter.chapter
-            val chapterNum = chapterNumStr.trimStart('0').ifEmpty { "0" }
-                .substringBefore(".").toFloatOrNull() ?: -1f
-            val displayNum = formatChapterDisplay(chapterNumStr)
+            val rawChapter = chapter.chapter.trim()
+            val chapterNum = parseChapterNumber(rawChapter)
+            val displayNum = formatChapterDisplay(rawChapter)
+
             SChapter.create().apply {
-                url = "/$slug/chapter/$chapterNumStr"
-                name = "Chapter $displayNum"
+                url = "/$slug/chapter/$rawChapter"
+                name = if (displayNum.isNotBlank()) "Chapter $displayNum" else "Chapter $rawChapter"
                 chapter_number = chapterNum
             }
         }.sortedByDescending { it.chapter_number }
     }
 
-    private fun formatChapterDisplay(chapterStr: String): String {
-        val parts = chapterStr.split(".")
-        val numPart = parts[0].trimStart('0').ifEmpty { "0" }
-        val suffix = parts.drop(1).joinToString(".")
+    private fun parseChapterNumber(raw: String): Float {
+        val normalized = raw.trim().replace(',', '.')
+        val match = Regex("""\d+(\.\d+)?""").find(normalized) ?: return -1f
+        return match.value.toFloatOrNull() ?: -1f
+    }
 
-        val floatVal = numPart.toFloatOrNull() ?: return chapterStr
-        val formatted = if (floatVal == floatVal.toLong().toFloat()) {
+    private fun formatChapterDisplay(chapterStr: String): String {
+        val normalized = chapterStr.trim().replace(',', '.')
+        val match = Regex("""\d+(\.\d+)?""").find(normalized) ?: return chapterStr
+
+        val value = match.value
+        val floatVal = value.toFloatOrNull() ?: return chapterStr
+
+        return if (floatVal == floatVal.toLong().toFloat()) {
             floatVal.toLong().toString()
         } else {
             floatVal.toString().trimEnd('0').trimEnd('.')
         }
-
-        return if (suffix.isNotEmpty()) "$formatted.$suffix" else formatted
     }
 
     // ======================== Pages ========================
-    override fun pageListRequest(chapter: SChapter): Request = GET("$baseUrl${chapter.url}", rscHeaders)
+    override fun pageListRequest(chapter: SChapter): Request =
+        GET("$baseUrl${chapter.url}", rscHeaders)
 
     override fun pageListParse(response: Response): List<Page> {
         val data = response.extractNextJs<ChapterPageDataDto>()
@@ -240,7 +252,9 @@ class Softkomik : HttpSource() {
     private fun apiAuthInterceptor(chain: Interceptor.Chain): Response {
         val request = chain.request()
 
-        if (!request.url.host.endsWith("softdevices.my.id")) {
+        // Jangan memicu session untuk cover/image/CDN.
+        // Hanya API utama yang benar-benar butuh token.
+        if (request.url.host != "v2.softdevices.my.id") {
             return chain.proceed(request)
         }
 
@@ -303,6 +317,12 @@ class Softkomik : HttpSource() {
             }
         }
     }
+
+    private fun apiRequestHeaders(): Headers = headersBuilder()
+        .add("Accept", "application/json, text/plain, */*")
+        .add("User-Agent", "Mozilla/5.0")
+        .add("X-Requested-With", "XMLHttpRequest")
+        .build()
 
     override fun getFilterList() = FilterList(
         Filter.Header("Filter tidak bisa digabungkan dengan pencarian teks."),
