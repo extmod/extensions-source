@@ -35,7 +35,6 @@ class Softkomik : HttpSource() {
 
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
         .add("Referer", "$baseUrl/")
-        .add("Origin", baseUrl)
 
     // ======================== Popular ========================
     override fun popularMangaRequest(page: Int): Request {
@@ -195,7 +194,6 @@ class Softkomik : HttpSource() {
         val newHeaders = headersBuilder()
             .set("Accept", "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8")
             .set("Referer", "$baseUrl/")
-            .set("Origin", baseUrl)
             .build()
         return GET(page.imageUrl!!, newHeaders)
     }
@@ -268,35 +266,41 @@ class Softkomik : HttpSource() {
                 return currentSessionSync
             }
 
-            val bootstrapHeaders = headersBuilder()
-                .set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-                .set("User-Agent", "Mozilla/5.0")
+            val bootstrapHeaders = Headers.Builder()
+                .add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+                .add("User-Agent", "Mozilla/5.0")
                 .build()
 
-            val apiHeaders = headersBuilder()
-                .set("Accept", "application/json, text/plain, */*")
-                .set("Content-Type", "application/json")
-                .set("X-Requested-With", "XMLHttpRequest")
-                .set("User-Agent", "Mozilla/5.0")
+            val apiHeaders = Headers.Builder()
+                .add("Accept", "application/json, text/plain, */*")
+                .add("User-Agent", "Mozilla/5.0")
+                .add("X-Requested-With", "XMLHttpRequest")
                 .build()
 
-            // Paksa situs membentuk cookie/session dulu
-            client.newCall(GET(baseUrl, bootstrapHeaders)).execute().close()
-
-            // Endpoint ini dipakai untuk memicu session server-side
-            client.newCall(GET("$baseUrl/api/me", apiHeaders)).execute().close()
-
-            val response = client.newCall(GET("$baseUrl/api/sessions", apiHeaders)).execute()
-
-            if (!response.isSuccessful) {
-                val code = response.code
-                response.close()
-                throw Exception("Gagal mendapatkan akses token dari Softkomik (HTTP $code).")
+            client.newCall(GET(baseUrl, bootstrapHeaders)).execute().use { response ->
+                if (!response.isSuccessful) {
+                    val body = response.peekBody(1024).string()
+                    throw Exception("GET / gagal (${response.code}): $body")
+                }
             }
 
-            val newSession = response.use { it.parseAs<SessionDto>() }
-            session = newSession
-            return newSession
+            client.newCall(GET("$baseUrl/api/me", apiHeaders)).execute().use { response ->
+                if (!response.isSuccessful) {
+                    val body = response.peekBody(1024).string()
+                    throw Exception("GET /api/me gagal (${response.code}): $body")
+                }
+            }
+
+            client.newCall(GET("$baseUrl/api/sessions", apiHeaders)).execute().use { response ->
+                val body = response.peekBody(2048).string()
+                if (!response.isSuccessful) {
+                    throw Exception("Gagal mendapatkan akses token dari Softkomik (HTTP ${response.code}): $body")
+                }
+
+                val newSession = response.parseAs<SessionDto>()
+                session = newSession
+                return newSession
+            }
         }
     }
 
