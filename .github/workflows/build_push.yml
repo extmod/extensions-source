@@ -90,7 +90,7 @@ jobs:
 
       - name: Upload APKs (${{ matrix.chunk.number }})
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
-        if: "github.repository == 'extsup/extensions-source'"
+        if: "github.repository == 'extmod/extensions-source'"
         with:
           name: "individual-apks-${{ matrix.chunk.number }}"
           path: "**/*.apk"
@@ -102,7 +102,7 @@ jobs:
   publish:
     name: Publish extension repo
     needs: [prepare, build]
-    if: "github.repository == 'extsup/extensions-source'"
+    if: "github.repository == 'extmod/extensions-source'"
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
