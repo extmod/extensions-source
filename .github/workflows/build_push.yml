@@ -136,7 +136,7 @@ jobs:
       - name: Checkout repo branch
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          repository: extsup/extensions
+          repository: extmod/extensions
           token: ${{ secrets.BOT_PAT }}
           ref: repo
           path: repo
