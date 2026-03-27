@@ -144,7 +144,14 @@ class Softkomik : HttpSource() {
     }
 
     override fun chapterListParse(response: Response): List<SChapter> {
-        val dto = response.parseAs<ChapterListDto>()
+        val bodyStr = response.peekBody(Long.MAX_VALUE).string()
+
+        val dto = try {
+            response.parseAs<ChapterListDto>()
+        } catch (e: Exception) {
+            throw Exception("Parse chapter gagal. Body: ${bodyStr.take(500)}")
+        }
+
         val slug = response.request.url.pathSegments.getOrNull(1)
             ?: throw Exception("Could not find chapter slug")
 
@@ -260,18 +267,32 @@ class Softkomik : HttpSource() {
             .addHeader("X-Sign", session.sign)
             .build()
 
-        return chain.proceed(newRequest)
+        val response = chain.proceed(newRequest)
+
+        if (response.code == 401) {
+            response.close()
+            this.session = null
+            val freshSession = getSession()
+            return chain.proceed(
+                request.newBuilder()
+                    .addHeader("X-Token", freshSession.token)
+                    .addHeader("X-Sign", freshSession.sign)
+                    .build()
+            )
+        }
+
+        return response
     }
 
     private fun getSession(): SessionDto {
         val currentSession = session
-        if (currentSession != null && currentSession.ex > System.currentTimeMillis()) {
+        if (currentSession != null && currentSession.ex * 1000 > System.currentTimeMillis()) {
             return currentSession
         }
 
         synchronized(this) {
             val currentSessionSync = session
-            if (currentSessionSync != null && currentSessionSync.ex > System.currentTimeMillis()) {
+            if (currentSessionSync != null && currentSessionSync.ex * 1000 > System.currentTimeMillis()) {
                 return currentSessionSync
             }
 
@@ -281,7 +302,7 @@ class Softkomik : HttpSource() {
             client.newCall(GET(baseUrl, bootstrapHeaders)).execute().use { response ->
                 if (!response.isSuccessful) {
                     val body = response.peekBody(512).string()
-                    throw Exception("GET / gagal (${response.code}): $body")
+                    throw Exception("Bootstrap / gagal (${response.code}): ${body.take(200)}")
                 }
             }
 
@@ -291,18 +312,23 @@ class Softkomik : HttpSource() {
 
             client.newCall(GET("$baseUrl/api/me", apiHeaders)).execute().use { response ->
                 if (!response.isSuccessful) {
-                    val body = response.peekBody(1024).string()
-                    throw Exception("GET /api/me gagal (${response.code}): $body")
+                    val body = response.peekBody(512).string()
+                    throw Exception("/api/me gagal (${response.code}): ${body.take(200)}")
                 }
             }
 
             client.newCall(GET("$baseUrl/api/sessions", apiHeaders)).execute().use { response ->
                 val body = response.peekBody(2048).string()
                 if (!response.isSuccessful) {
-                    throw Exception("Gagal mendapatkan akses token dari Softkomik (HTTP ${response.code}): $body")
+                    throw Exception("/api/sessions gagal (${response.code}): ${body.take(500)}")
                 }
 
-                val newSession = response.parseAs<SessionDto>()
+                val newSession = try {
+                    response.parseAs<SessionDto>()
+                } catch (e: Exception) {
+                    throw Exception("Parse session gagal. Body: ${body.take(500)}")
+                }
+
                 session = newSession
                 return newSession
             }
