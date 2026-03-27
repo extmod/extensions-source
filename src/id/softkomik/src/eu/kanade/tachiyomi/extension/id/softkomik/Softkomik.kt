@@ -1,11 +1,6 @@
 package eu.kanade.tachiyomi.extension.id.softkomik
 
-import android.app.Application
-import android.content.SharedPreferences
-import androidx.preference.EditTextPreference
-import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.source.ConfigurableSource
 import eu.kanade.tachiyomi.source.model.Filter
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
@@ -13,206 +8,70 @@ import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.tachiyomi.util.asJsoup
+import keiyoushi.utils.extractNextJs
 import keiyoushi.utils.parseAs
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Interceptor
 import okhttp3.Request
 import okhttp3.Response
-import org.jsoup.nodes.Document
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
-import java.util.concurrent.TimeUnit
 
-class Softkomik :
-    HttpSource(),
-    ConfigurableSource {
-
-    // ======================== Preferences ========================
-    private val preferences: SharedPreferences by lazy {
-        Injekt.get<Application>().getSharedPreferences("source_$id", 0x0000)
-    }
-
-    private val prefDomain: String
-        get() = preferences.getString(PREF_DOMAIN_KEY, DEFAULT_DOMAIN)
-            ?.trimEnd('/')
-            ?.ifEmpty { DEFAULT_DOMAIN }
-            ?: DEFAULT_DOMAIN
-
-    private val prefImageProxy: String
-        get() = preferences.getString(PREF_IMAGE_PROXY_KEY, "")?.trim() ?: ""
-
-    // ======================== Source Info ========================
+class Softkomik : HttpSource() {
     override val name = "Softkomik"
-    override val baseUrl get() = prefDomain
+    override val baseUrl = "https://softkomik.co"
     override val lang = "id"
     override val supportsLatest = true
 
-    companion object {
-        private const val COVER_URL = "https://cover.softdevices.my.id/softkomik-cover"
-        private const val IMAGE_URL = "https://cd1.softkomik.online/softkomik"
-        private const val CHAPTER_URL = "https://v2.softdevices.my.id"
+    private var session: SessionDto? = null
 
-        private const val DEFAULT_DOMAIN = "https://softkomik.co"
-        private const val PREF_DOMAIN_KEY = "pref_custom_domain"
-        private const val PREF_IMAGE_PROXY_KEY = "pref_image_proxy"
-    }
-
-    private fun coverUrl(gambar: String): String =
-        "$COVER_URL/${gambar.removePrefix("/")}"
-
-    private val sessionClient = network.cloudflareClient.newBuilder()
-        .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
+    private val rscHeaders = headersBuilder()
+        .add("rsc", "1")
         .build()
 
     override val client = network.cloudflareClient.newBuilder()
-        .addInterceptor(::buildIdOutdatedInterceptor)
-        .addInterceptor(::sessionInterceptor)
-        .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
+        .addInterceptor(::imageInterceptor)
+        .addInterceptor(::apiAuthInterceptor)
         .build()
 
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
         .add("Referer", "$baseUrl/")
         .add("Origin", baseUrl)
 
-    // ======================== Build ID ========================
-    @Volatile
-    private var buildId = ""
-        get() = field.ifEmpty {
-            synchronized(this) {
-                field.ifEmpty { fetchBuildId().also { field = it } }
-            }
-        }
-
-    private fun fetchBuildId(document: Document? = null): String {
-        val doc = document
-            ?: sessionClient.newCall(GET(baseUrl, headers)).execute().use { it.asJsoup() }
-        val nextData = doc.selectFirst("script#__NEXT_DATA__")?.data()
-            ?: throw Exception("Could not find __NEXT_DATA__")
-        return nextData.parseAs<NextDataDto>().buildId
-    }
-
-    private fun buildIdOutdatedInterceptor(chain: Interceptor.Chain): Response {
-        val request = chain.request()
-        val response = chain.proceed(request)
-
-        if (
-            response.code == 404 &&
-            request.url.run {
-                host == baseUrl.removePrefix("https://") &&
-                    pathSegments.getOrNull(0) == "_next" &&
-                    pathSegments.getOrNull(1) == "data" &&
-                    fragment != "DO_NOT_RETRY"
-            } &&
-            response.header("Content-Type")?.contains("text/html") != false
-        ) {
-            val document = response.asJsoup()
-            val newBuildId = fetchBuildId(document)
-            synchronized(this) { buildId = newBuildId }
-
-            val newUrl = request.url.newBuilder()
-                .setPathSegment(2, newBuildId)
-                .fragment("DO_NOT_RETRY")
-                .build()
-            return chain.proceed(request.newBuilder().url(newUrl).build())
-        }
-        return response
-    }
-
-    // ======================== Session ========================
-    @Volatile
-    private var session: SessionDto? = null
-
-    private fun getSession(): SessionDto {
-        val current = session
-        if (current != null && System.currentTimeMillis() < current.ex - 60_000) {
-            return current
-        }
-        return synchronized(this) {
-            val recheck = session
-            if (recheck != null && System.currentTimeMillis() < recheck.ex - 60_000) {
-                recheck
-            } else {
-                fetchSession().also { session = it }
-            }
-        }
-    }
-
-    private fun fetchSession(): SessionDto {
-        return sessionClient.newCall(
-            GET("$baseUrl/api/sessions", headers),
-        ).execute().use { it.parseAs<SessionDto>() }
-    }
-
-    private fun sessionInterceptor(chain: Interceptor.Chain): Response {
-        val request = chain.request()
-        val response = chain.proceed(request)
-
-        val isChapterApi = request.url.host == "v2.softdevices.my.id"
-        if (!isChapterApi) return response
-
-        val bodyBytes = response.peekBody(Long.MAX_VALUE).bytes()
-        val needsRetry = response.code == 401 || bodyBytes.isEmpty()
-
-        if (needsRetry) {
-            response.close()
-            val newSession = synchronized(this) {
-                fetchSession().also { session = it }
-            }
-            val newRequest = request.newBuilder()
-                .header("X-Token", newSession.token)
-                .header("X-Sign", newSession.sign)
-                .build()
-            return chain.proceed(newRequest)
-        }
-        return response
-    }
-
-    private fun chapterHeaders(): Headers {
-        val sess = getSession()
-        return headersBuilder()
-            .add("X-Token", sess.token)
-            .add("X-Sign", sess.sign)
-            .build()
-    }
-
     // ======================== Popular ========================
     override fun popularMangaRequest(page: Int): Request {
-        val url = "$baseUrl/_next/data/$buildId/komik/library.json".toHttpUrl().newBuilder()
+        val url = "$baseUrl/komik/library".toHttpUrl().newBuilder()
             .addQueryParameter("sortBy", "popular")
             .addQueryParameter("page", page.toString())
             .build()
-        return GET(url, headers)
+        return GET(url, rscHeaders)
     }
 
     override fun popularMangaParse(response: Response) = searchMangaParse(response)
 
     // ======================== Latest ========================
     override fun latestUpdatesRequest(page: Int): Request {
-        val url = "$baseUrl/_next/data/$buildId/komik/library.json".toHttpUrl().newBuilder()
-            .addQueryParameter("sortBy", "new")
+        val url = "$baseUrl/komik/library".toHttpUrl().newBuilder()
+            .addQueryParameter("sortBy", "newKomik")
             .addQueryParameter("page", page.toString())
             .build()
-        return GET(url, headers)
+        return GET(url, rscHeaders)
     }
 
     override fun latestUpdatesParse(response: Response) = searchMangaParse(response)
 
     // ======================== Search ========================
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
-        val url = if (query.isNotEmpty()) {
-            "$CHAPTER_URL/komik".toHttpUrl().newBuilder()
+        if (query.isNotEmpty()) {
+            val url = "$apiUrl/komik".toHttpUrl().newBuilder()
                 .addQueryParameter("name", query)
+                .addQueryParameter("search", "true")
+                .addQueryParameter("limit", "20")
                 .addQueryParameter("page", page.toString())
-                .addQueryParameter("limit", "24")
-        } else {
-            "$baseUrl/_next/data/$buildId/komik/library.json".toHttpUrl().newBuilder()
-                .addQueryParameter("search", "")
-                .addQueryParameter("page", page.toString())
+            return GET(url.build(), headers)
         }
+
+        val url = "$baseUrl/komik/library".toHttpUrl().newBuilder()
+            .addQueryParameter("page", page.toString())
 
         filters.forEach { filter ->
             when (filter) {
@@ -220,53 +79,46 @@ class Softkomik :
                 is TypeFilter -> url.addQueryParameter("type", filter.selected)
                 is GenreFilter -> url.addQueryParameter("genre", filter.selected)
                 is SortFilter -> url.addQueryParameter("sortBy", filter.selected)
-                is MinChapterFilter -> url.addQueryParameter("min", filter.selected)
+                is MinChapterFilter -> {
+                    val minValue = filter.state.toIntOrNull()
+                    if (minValue != null && minValue > 0) {
+                        url.addQueryParameter("min", minValue.toString())
+                    }
+                }
                 else -> {}
             }
         }
 
-        return if (query.isNotEmpty()) {
-            GET(url.build(), chapterHeaders())
-        } else {
-            GET(url.build(), headers)
-        }
+        return GET(url.build(), rscHeaders)
     }
 
     override fun searchMangaParse(response: Response): MangasPage {
-        val isApiSearch = response.request.url.host == "v2.softdevices.my.id"
-        return if (isApiSearch) {
-            val dto = response.parseAs<LibDataDto>()
-            val mangas = dto.data.map { manga ->
-                SManga.create().apply {
-                    setUrlWithoutDomain("/${manga.title_slug}")
-                    title = manga.title
-                    thumbnail_url = coverUrl(manga.gambar)
-                }
-            }
-            MangasPage(mangas, dto.page < dto.maxPage)
+        val libData = if (response.request.url.toString().contains(apiUrl)) {
+            response.parseAs<LibDataDto>()
         } else {
-            val dto = response.parseAs<LibraryDto>()
-            val mangas = dto.pageProps.libData.data.map { manga ->
-                SManga.create().apply {
-                    setUrlWithoutDomain("/${manga.title_slug}")
-                    title = manga.title
-                    thumbnail_url = coverUrl(manga.gambar)
-                }
+            response.extractNextJs<LibDataDto>()
+        } ?: throw Exception("Could not find library data")
+
+        val mangas = libData.data.map { manga ->
+            SManga.create().apply {
+                setUrlWithoutDomain(manga.title_slug)
+                title = manga.title
+                thumbnail_url = "$coverUrl/${manga.gambar.removePrefix("/")}"
             }
-            MangasPage(mangas, dto.pageProps.libData.page < dto.pageProps.libData.maxPage)
         }
+        return MangasPage(mangas, libData.page < libData.maxPage)
     }
 
     // ======================== Details ========================
-    override fun mangaDetailsRequest(manga: SManga): Request =
-        GET("$baseUrl/_next/data/$buildId${manga.url}.json", headers)
+    override fun mangaDetailsRequest(manga: SManga): Request = GET("$baseUrl/${manga.url}", rscHeaders)
 
     override fun mangaDetailsParse(response: Response): SManga {
-        val dto = response.parseAs<DetailsDto>()
-        val manga = dto.pageProps.data
-        val slug = response.request.url.pathSegments.lastOrNull()!!.removeSuffix(".json")
+        val manga = response.extractNextJs<MangaDetailsDto>()
+            ?: throw Exception("Could not find manga details")
+
+        val slug = response.request.url.pathSegments.lastOrNull()!!
         return SManga.create().apply {
-            setUrlWithoutDomain("/$slug")
+            setUrlWithoutDomain(slug)
             title = manga.title
             author = manga.author
             description = manga.sinopsis
@@ -276,36 +128,28 @@ class Softkomik :
                 "tamat" -> SManga.COMPLETED
                 else -> SManga.UNKNOWN
             }
-            thumbnail_url = coverUrl(manga.gambar)
+            thumbnail_url = "$coverUrl/${manga.gambar.removePrefix("/")}"
         }
     }
 
-    override fun getMangaUrl(manga: SManga): String = "$baseUrl${manga.url}"
+    override fun getMangaUrl(manga: SManga): String = "$baseUrl/${manga.url}"
 
     // ======================== Chapters ========================
     override fun chapterListRequest(manga: SManga): Request {
-        val slug = manga.url.removePrefix("/")
-        return GET("$CHAPTER_URL/komik/$slug/chapter?limit=9999999", chapterHeaders())
+        val url = "$apiUrl/komik/${manga.url}/chapter?limit=9999999"
+        return GET(url, headers)
     }
 
     override fun chapterListParse(response: Response): List<SChapter> {
-        val code = response.code
-        val requestUrl = response.request.url.toString()
-        val token = response.request.header("X-Token")?.take(20) ?: "null"
-        val body = response.body.string()
-        if (body.isBlank()) {
-            throw Exception("Empty body! Code=$code URL=$requestUrl Token=$token")
-        }
-        val dto = body.parseAs<ChapterListDto>()
-        if (dto.chapter.isEmpty()) {
-            throw Exception("Tidak ada chapter ditemukan.")
-    }
+        val dto = response.parseAs<ChapterListDto>()
         val slug = response.request.url.pathSegments[1]
         return dto.chapter.map { chapter ->
-            val chapterNum = chapter.chapter.toFloatOrNull() ?: -1f
-            val displayNum = formatChapterDisplay(chapter.chapter)
+            val chapterNumStr = chapter.chapter
+            val chapterNum = chapterNumStr.trimStart('0').ifEmpty { "0" }
+                .substringBefore(".").toFloatOrNull() ?: -1f
+            val displayNum = formatChapterDisplay(chapterNumStr)
             SChapter.create().apply {
-                url = "/$slug/chapter/${chapter.chapter}"
+                url = "/$slug/chapter/$chapterNumStr"
                 name = "Chapter $displayNum"
                 chapter_number = chapterNum
             }
@@ -313,41 +157,35 @@ class Softkomik :
     }
 
     private fun formatChapterDisplay(chapterStr: String): String {
-        val floatVal = chapterStr.toFloatOrNull() ?: return chapterStr
-        return if (floatVal == floatVal.toLong().toFloat()) {
+        val parts = chapterStr.split(".")
+        val numPart = parts[0].trimStart('0').ifEmpty { "0" }
+        val suffix = parts.drop(1).joinToString(".")
+
+        val floatVal = numPart.toFloatOrNull() ?: return chapterStr
+        val formatted = if (floatVal == floatVal.toLong().toFloat()) {
             floatVal.toLong().toString()
         } else {
             floatVal.toString().trimEnd('0').trimEnd('.')
         }
+
+        return if (suffix.isNotEmpty()) "$formatted.$suffix" else formatted
     }
 
     // ======================== Pages ========================
-    override fun pageListRequest(chapter: SChapter): Request =
-        GET("$baseUrl/_next/data/$buildId${chapter.url}.json", headers)
+    override fun pageListRequest(chapter: SChapter): Request = GET("$baseUrl${chapter.url}", rscHeaders)
 
     override fun pageListParse(response: Response): List<Page> {
-        val dto = response.parseAs<ChapterPageDto>()
-        val chapterData = dto.pageProps.data.data
+        val data = response.extractNextJs<ChapterPageDataDto>()
+            ?: throw Exception("Could not find chapter data")
 
-        val slug = response.request.url.pathSegments[3]
-        val chapterNum = response.request.url.pathSegments.lastOrNull()
-            ?.removeSuffix(".json")
-            ?: throw Exception("Could not get chapter number")
+        if (data.imageSrc.isEmpty()) {
+            throw Exception("No pages found")
+        }
 
-        val imageResponse = client.newCall(
-            GET(
-                "$CHAPTER_URL/komik/$slug/chapter/$chapterNum/img/${chapterData.id}",
-                chapterHeaders(),
-            ),
-        ).execute()
+        val imageBaseUrl = "https://cd1.softkomik.online/softkomik"
 
-        val imageDto = imageResponse.parseAs<ChapterPageImagesDto>()
-        val proxy = prefImageProxy
-
-        return imageDto.imageSrc.mapIndexed { i, img ->
-            val originalUrl = "$IMAGE_URL/$img"
-            val finalUrl = if (proxy.isBlank()) originalUrl else "$proxy$originalUrl"
-            Page(i, imageUrl = finalUrl)
+        return data.imageSrc.mapIndexed { i, img ->
+            Page(i, imageUrl = "$imageBaseUrl/${img.removePrefix("/")}")
         }
     }
 
@@ -362,7 +200,103 @@ class Softkomik :
         return GET(page.imageUrl!!, newHeaders)
     }
 
-    // ======================== Filters ========================
+    // ============================= Utilities ==============================
+
+    private fun imageInterceptor(chain: Interceptor.Chain): Response {
+        val request = chain.request()
+
+        if (!cdnUrls.any { request.url.toString().startsWith(it) }) {
+            return chain.proceed(request)
+        }
+
+        val response = try {
+            chain.proceed(request)
+        } catch (e: java.net.UnknownHostException) {
+            null
+        }
+
+        if (response?.isSuccessful == true) return response
+        response?.close()
+
+        val currentHost = cdnUrls.firstOrNull { request.url.toString().startsWith(it) }
+            ?: return chain.proceed(request)
+
+        val imagePath = request.url.toString().removePrefix(currentHost).removePrefix("/")
+        val otherHosts = cdnUrls.filter { it != currentHost }
+
+        var latestResponse: Response? = null
+        for (newHost in otherHosts) {
+            latestResponse?.close()
+            val newUrl = "$newHost/$imagePath".toHttpUrl()
+            latestResponse = try {
+                chain.proceed(request.newBuilder().url(newUrl).build())
+            } catch (e: java.net.UnknownHostException) {
+                null
+            }
+            if (latestResponse?.isSuccessful == true) return latestResponse
+        }
+
+        return latestResponse ?: chain.proceed(request)
+    }
+
+    private fun apiAuthInterceptor(chain: Interceptor.Chain): Response {
+        val request = chain.request()
+
+        if (!request.url.host.endsWith("softdevices.my.id")) {
+            return chain.proceed(request)
+        }
+
+        val session = getSession()
+
+        val newRequest = request.newBuilder()
+            .addHeader("X-Token", session.token)
+            .addHeader("X-Sign", session.sign)
+            .build()
+
+        return chain.proceed(newRequest)
+    }
+
+    private fun getSession(): SessionDto {
+        val currentSession = session
+        if (currentSession != null && currentSession.ex > System.currentTimeMillis()) {
+            return currentSession
+        }
+
+        synchronized(this) {
+            val currentSessionSync = session
+            if (currentSessionSync != null && currentSessionSync.ex > System.currentTimeMillis()) {
+                return currentSessionSync
+            }
+
+            val apiHeaders = headersBuilder()
+                .set("Accept", "application/json")
+                .set("Content-Type", "application/json")
+                .set("X-Requested-With", "XMLHttpRequest")
+                .build()
+
+            val hasCookies = client.cookieJar
+                .loadForRequest(baseUrl.toHttpUrl())
+                .any { it.name == "zEm9be" || it.name == "AhyyL" }
+
+            if (!hasCookies) {
+                client.newCall(GET(baseUrl, headers)).execute().close()
+                client.newCall(GET("$baseUrl/api/me", apiHeaders)).execute().close()
+            }
+
+            val response = client.newCall(GET("$baseUrl/api/sessions", apiHeaders)).execute()
+
+            if (!response.isSuccessful) {
+                val code = response.code
+                response.close()
+                throw Exception("Gagal mendapatkan akses token dari Softkomik (HTTP $code).")
+            }
+
+            val newSession = response.use { it.parseAs<SessionDto>() }
+            session = newSession
+            return newSession
+        }
+    }
+
     override fun getFilterList() = FilterList(
         Filter.Header("Filter tidak bisa digabungkan dengan pencarian teks."),
         Filter.Separator(),
@@ -373,39 +307,14 @@ class Softkomik :
         MinChapterFilter(),
     )
 
-    // ======================== Preference Screen ========================
-    override fun setupPreferenceScreen(screen: PreferenceScreen) {
-        EditTextPreference(screen.context).apply {
-            key = PREF_DOMAIN_KEY
-            title = "Domain Softkomik"
-            summary = prefDomain
-            dialogTitle = "Domain Softkomik"
-            dialogMessage = "Masukkan domain baru (contoh: https://softkomik.com)\nKosongkan untuk kembali ke default."
-            setDefaultValue(DEFAULT_DOMAIN)
-            setOnPreferenceChangeListener { pref, newValue ->
-                val value = (newValue as? String)?.trimEnd('/') ?: DEFAULT_DOMAIN
-                pref.summary = value.ifEmpty { DEFAULT_DOMAIN }
-                true
-            }
-            screen.addPreference(this)
-        }
-
-        EditTextPreference(screen.context).apply {
-            key = PREF_IMAGE_PROXY_KEY
-            title = "Proxy Resize Gambar"
-            summary = buildProxySummary(prefImageProxy)
-            dialogTitle = "Proxy Resize Gambar"
-            dialogMessage = "Masukkan prefix URL proxy.\nContoh: https://wsrv.nl/?url=\nKosongkan untuk nonaktif."
-            setDefaultValue("")
-            setOnPreferenceChangeListener { pref, newValue ->
-                val value = (newValue as? String)?.trim() ?: ""
-                pref.summary = buildProxySummary(value)
-                true
-            }
-            screen.addPreference(this)
-        }
-    }
-
-    private fun buildProxySummary(proxy: String): String =
-        if (proxy.isBlank()) "Nonaktif (gambar asli)" else proxy
+    private val apiUrl = "https://v2.softdevices.my.id"
+    private val coverUrl = "https://cover.softdevices.my.id/softkomik-cover"
+    private val cdnUrls = listOf(
+        "https://cd1.softkomik.online/softkomik",
+        "https://psy1.komik.im",
+        "https://image.komik.im/softkomik",
+        "https://f1.softkomik.com/file/softkomik-image",
+        "https://img.softdevices.my.id/softkomik-image",
+        "https://image.softkomik.com/softkomik",
+    )
 }
