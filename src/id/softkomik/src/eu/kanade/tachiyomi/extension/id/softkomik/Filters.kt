@@ -89,7 +89,7 @@ class GenreFilter :
             Pair("Romance", "Romance"),
             Pair("School", "School"),
             Pair("School Life", "School Life"),
-            Pair("Sci-fi", "Sci-fi"),
+            Pair("Sci-fi", "Sci-fii"),
             Pair("Seinen", "Seinen"),
             Pair("Shoujo", "Shoujo"),
             Pair("Shoujo Ai", "Shoujo Ai"),
