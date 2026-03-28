@@ -30,23 +30,6 @@ data class MangaDetailsDto(
 )
 
 @Serializable
-data class ChapterDto(
-    val chapter: String,
-)
-
-@Serializable
 data class ChapterPageDataDto(
     val imageSrc: List<String> = emptyList(),
-)
-
-@Serializable
-data class ChapterListDto(
-    val chapter: List<ChapterDto>,
-)
-
-@Serializable
-data class SessionDto(
-    val ex: Long,
-    val sign: String,
-    val token: String,
 )
