@@ -15,6 +15,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Interceptor
 import okhttp3.Request
 import okhttp3.Response
+import org.jsoup.Jsoup
 
 class Softkomik : HttpSource() {
     override val name = "Softkomik"
@@ -22,18 +23,13 @@ class Softkomik : HttpSource() {
     override val lang = "id"
     override val supportsLatest = true
 
-    private var session: SessionDto? = null
-
     private val rscHeaders = headersBuilder()
         .add("rsc", "1")
         .build()
 
     override val client = network.cloudflareClient.newBuilder()
         .addInterceptor(::imageInterceptor)
-        .addInterceptor(::apiAuthInterceptor)
         .build()
-
-    private val sessionClient = network.cloudflareClient
 
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
         .add("Referer", "$baseUrl/")
@@ -68,7 +64,7 @@ class Softkomik : HttpSource() {
                 .addQueryParameter("search", "true")
                 .addQueryParameter("limit", "20")
                 .addQueryParameter("page", page.toString())
-            return GET(url.build(), apiRequestHeaders("$baseUrl/"))
+            return GET(url.build(), unauthHeaders("$baseUrl/"))
         }
 
         val url = "$baseUrl/komik/library".toHttpUrl().newBuilder()
@@ -140,34 +136,32 @@ class Softkomik : HttpSource() {
     override fun getMangaUrl(manga: SManga): String = "$baseUrl/${manga.url}"
 
     // ======================== Chapters ========================
-    override fun chapterListRequest(manga: SManga): Request {
-        val url = "$apiUrl/komik/${manga.url}/chapter?limit=9999999"
-        return GET(url, unauthHeaders("$baseUrl/${manga.url}"))
-    }
+    override fun chapterListRequest(manga: SManga): Request =
+        GET("$baseUrl/${manga.url}", headers)
 
     override fun chapterListParse(response: Response): List<SChapter> {
-        val bodyStr = response.peekBody(Long.MAX_VALUE).string()
-
-        val dto = try {
-            response.parseAs<ChapterListDto>()
-        } catch (e: Exception) {
-            throw Exception("Parse chapter gagal. Body: ${bodyStr.take(500)}")
-        }
-
-        val slug = response.request.url.pathSegments.getOrNull(1)
+        val body = response.body.string()
+        val document = Jsoup.parse(body)
+        val slug = response.request.url.pathSegments.lastOrNull()
             ?: throw Exception("Could not find chapter slug")
 
-        return dto.chapter.map { chapter ->
-            val rawChapter = chapter.chapter.trim()
-            val chapterNum = parseChapterNumber(rawChapter)
-            val displayNum = formatChapterDisplay(rawChapter)
+        val chapters = document.select(".chapter-list a").map { el ->
+            val href = el.attr("href")
+            val text = el.text().trim()
+            val rawChapter = text.removePrefix("Chapter ").trim()
 
             SChapter.create().apply {
-                url = "/$slug/chapter/$rawChapter"
-                name = if (displayNum.isNotBlank()) "Chapter $displayNum" else "Chapter $rawChapter"
-                chapter_number = chapterNum
+                url = href.ifEmpty { "/$slug/chapter/$rawChapter" }
+                name = if (text.isNotBlank()) text else "Chapter $rawChapter"
+                chapter_number = parseChapterNumber(rawChapter)
             }
-        }.sortedByDescending { it.chapter_number }
+        }
+
+        if (chapters.isEmpty()) {
+            throw Exception("No chapters found. Coba buka WebView.")
+        }
+
+        return chapters.sortedByDescending { it.chapter_number }
     }
 
     private fun parseChapterNumber(raw: String): Float {
@@ -189,7 +183,8 @@ class Softkomik : HttpSource() {
     }
 
     // ======================== Pages ========================
-    override fun pageListRequest(chapter: SChapter): Request = GET("$baseUrl${chapter.url}", rscHeaders)
+    override fun pageListRequest(chapter: SChapter): Request =
+        GET("$baseUrl${chapter.url}", rscHeaders)
 
     override fun pageListParse(response: Response): List<Page> {
         val data = response.extractNextJs<ChapterPageDataDto>()
@@ -255,115 +250,7 @@ class Softkomik : HttpSource() {
         return latestResponse ?: chain.proceed(request)
     }
 
-    private fun apiAuthInterceptor(chain: Interceptor.Chain): Response {
-        val request = chain.request()
-
-        if (request.url.host != "v2.softdevices.my.id") {
-            return chain.proceed(request)
-        }
-
-        // Chapter list tidak butuh auth
-        if (request.url.pathSegments.lastOrNull() == "chapter") {
-            return chain.proceed(request)
-        }
-
-        val session = getSession()
-
-        val newRequest = request.newBuilder()
-            .addHeader("X-Token", session.token)
-            .addHeader("X-Sign", session.sign)
-            .build()
-
-        val response = chain.proceed(newRequest)
-
-        if (response.code == 401) {
-            response.close()
-            this.session = null
-            val freshSession = getSession()
-            return chain.proceed(
-                request.newBuilder()
-                    .addHeader("X-Token", freshSession.token)
-                    .addHeader("X-Sign", freshSession.sign)
-                    .build()
-            )
-        }
-
-        return response
-    }
-
-    private fun getSession(): SessionDto {
-        val currentSession = session
-        if (currentSession != null && currentSession.ex * 1000 > System.currentTimeMillis()) {
-            return currentSession
-        }
-
-        synchronized(this) {
-            val currentSessionSync = session
-            if (currentSessionSync != null && currentSessionSync.ex * 1000 > System.currentTimeMillis()) {
-                return currentSessionSync
-            }
-
-            val bootstrapHeaders = browserHeaders()
-            val apiHeaders = apiHeaders("$baseUrl/")
-
-            sessionClient.newCall(GET(baseUrl, bootstrapHeaders)).execute().use { response ->
-                if (!response.isSuccessful) {
-                    val body = response.peekBody(512).string()
-                    throw Exception("Bootstrap / gagal (${response.code}): ${body.take(200)}")
-                }
-            }
-
-            sessionClient.newCall(GET(apiUrl, bootstrapHeaders)).execute().use { response ->
-                response.close()
-            }
-
-            sessionClient.newCall(GET("$baseUrl/api/me", apiHeaders)).execute().use { response ->
-                if (!response.isSuccessful) {
-                    val body = response.peekBody(512).string()
-                    throw Exception("/api/me gagal (${response.code}): ${body.take(200)}")
-                }
-            }
-
-            sessionClient.newCall(GET("$baseUrl/api/sessions", apiHeaders)).execute().use { response ->
-                val body = response.peekBody(2048).string()
-                if (!response.isSuccessful) {
-                    throw Exception("/api/sessions gagal (${response.code}): ${body.take(500)}")
-                }
-
-                val newSession = try {
-                    response.parseAs<SessionDto>()
-                } catch (e: Exception) {
-                    throw Exception("Parse session gagal. Body: ${body.take(500)}")
-                }
-
-                session = newSession
-                return newSession
-            }
-        }
-    }
-
-    private fun browserHeaders(): Headers = Headers.Builder()
-        .add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-        .add("User-Agent", "Mozilla/5.0")
-        .build()
-
-    private fun apiHeaders(referer: String = "$baseUrl/"): Headers = Headers.Builder()
-        .add("Accept", "application/json, text/plain, */*")
-        .add("User-Agent", "Mozilla/5.0")
-        .add("X-Requested-With", "XMLHttpRequest")
-        .add("Origin", baseUrl)
-        .add("Referer", referer)
-        .build()
-
     private fun unauthHeaders(referer: String = "$baseUrl/"): Headers = Headers.Builder()
-        .add("Accept", "application/json, text/plain, */*")
-        .add("User-Agent", "Mozilla/5.0")
-        .add("X-Requested-With", "XMLHttpRequest")
-        .add("Origin", baseUrl)
-        .add("Referer", referer)
-        .build()
-
-    private fun apiRequestHeaders(referer: String = "$baseUrl/"): Headers = Headers.Builder()
         .add("Accept", "application/json, text/plain, */*")
         .add("User-Agent", "Mozilla/5.0")
         .add("X-Requested-With", "XMLHttpRequest")
