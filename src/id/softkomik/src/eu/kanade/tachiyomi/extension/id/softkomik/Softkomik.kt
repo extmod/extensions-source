@@ -33,6 +33,9 @@ class Softkomik : HttpSource() {
         .addInterceptor(::apiAuthInterceptor)
         .build()
 
+    // Client khusus untuk getSession() — tanpa interceptor agar tidak infinite loop
+    private val sessionClient = network.cloudflareClient
+
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
         .add("Referer", "$baseUrl/")
 
@@ -299,25 +302,25 @@ class Softkomik : HttpSource() {
             val bootstrapHeaders = browserHeaders()
             val apiHeaders = apiHeaders("$baseUrl/")
 
-            client.newCall(GET(baseUrl, bootstrapHeaders)).execute().use { response ->
+            sessionClient.newCall(GET(baseUrl, bootstrapHeaders)).execute().use { response ->
                 if (!response.isSuccessful) {
                     val body = response.peekBody(512).string()
                     throw Exception("Bootstrap / gagal (${response.code}): ${body.take(200)}")
                 }
             }
 
-            client.newCall(GET(apiUrl, bootstrapHeaders)).execute().use { response ->
+            sessionClient.newCall(GET(apiUrl, bootstrapHeaders)).execute().use { response ->
                 response.close()
             }
 
-            client.newCall(GET("$baseUrl/api/me", apiHeaders)).execute().use { response ->
+            sessionClient.newCall(GET("$baseUrl/api/me", apiHeaders)).execute().use { response ->
                 if (!response.isSuccessful) {
                     val body = response.peekBody(512).string()
                     throw Exception("/api/me gagal (${response.code}): ${body.take(200)}")
                 }
             }
 
-            client.newCall(GET("$baseUrl/api/sessions", apiHeaders)).execute().use { response ->
+            sessionClient.newCall(GET("$baseUrl/api/sessions", apiHeaders)).execute().use { response ->
                 val body = response.peekBody(2048).string()
                 if (!response.isSuccessful) {
                     throw Exception("/api/sessions gagal (${response.code}): ${body.take(500)}")
