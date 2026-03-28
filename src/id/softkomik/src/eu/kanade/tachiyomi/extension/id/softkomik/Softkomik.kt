@@ -33,7 +33,6 @@ class Softkomik : HttpSource() {
         .addInterceptor(::apiAuthInterceptor)
         .build()
 
-    // Client khusus untuk getSession() — tanpa interceptor agar tidak infinite loop
     private val sessionClient = network.cloudflareClient
 
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
@@ -143,7 +142,7 @@ class Softkomik : HttpSource() {
     // ======================== Chapters ========================
     override fun chapterListRequest(manga: SManga): Request {
         val url = "$apiUrl/komik/${manga.url}/chapter?limit=9999999"
-        return GET(url, apiHeaders("$baseUrl/${manga.url}"))
+        return GET(url, unauthHeaders("$baseUrl/${manga.url}"))
     }
 
     override fun chapterListParse(response: Response): List<SChapter> {
@@ -263,6 +262,11 @@ class Softkomik : HttpSource() {
             return chain.proceed(request)
         }
 
+        // Chapter list tidak butuh auth
+        if (request.url.pathSegments.lastOrNull() == "chapter") {
+            return chain.proceed(request)
+        }
+
         val session = getSession()
 
         val newRequest = request.newBuilder()
@@ -344,6 +348,14 @@ class Softkomik : HttpSource() {
         .build()
 
     private fun apiHeaders(referer: String = "$baseUrl/"): Headers = Headers.Builder()
+        .add("Accept", "application/json, text/plain, */*")
+        .add("User-Agent", "Mozilla/5.0")
+        .add("X-Requested-With", "XMLHttpRequest")
+        .add("Origin", baseUrl)
+        .add("Referer", referer)
+        .build()
+
+    private fun unauthHeaders(referer: String = "$baseUrl/"): Headers = Headers.Builder()
         .add("Accept", "application/json, text/plain, */*")
         .add("User-Agent", "Mozilla/5.0")
         .add("X-Requested-With", "XMLHttpRequest")
