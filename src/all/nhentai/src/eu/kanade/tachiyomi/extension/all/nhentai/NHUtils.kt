@@ -10,7 +10,7 @@ object NHUtils {
 
     fun getGroups(data: Hentai): String? {
         val groups = data.tags.filter { it.type == "group" }
-        return groups.joinToString(", ") { it.name }.takeIf { it.isBlank() }
+        return groups.joinToString(", ") { it.name }.takeIf { it.isNotBlank() }
     }
 
     fun getTagDescription(data: Hentai): String {
