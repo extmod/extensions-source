@@ -65,9 +65,8 @@ open class NHentai(
     // Wajib di-override saat pakai lib:randomua
     override fun getMangaUrl(manga: SManga) = "$baseUrl${manga.url}"
 
-    private var displayFullTitle: Boolean = when (getPreferences().getString(TITLE_PREF, "full")) {
-        "full" -> true
-        else -> false
+    private val displayFullTitle: Boolean by lazy {
+        getPreferences().getString(TITLE_PREF, "full") == "full"
     }
 
     private val shortenTitleRegex = Regex("""(\[[^]]*]|[({][^)}]*[)}])""")
@@ -85,14 +84,6 @@ open class NHentai(
             entryValues = arrayOf("full", "short")
             summary = "%s"
             setDefaultValue("full")
-
-            setOnPreferenceChangeListener { _, newValue ->
-                displayFullTitle = when (newValue) {
-                    "full" -> true
-                    else -> false
-                }
-                true
-            }
         }.also(screen::addPreference)
 
         screen.addRandomUAPreference()
@@ -291,17 +282,29 @@ open class NHentai(
      * Field "body" adalah JSON string yang di-escape, bukan object langsung.
      */
     private fun Document.getHentaiData(): Hentai {
-        val scriptEl = selectFirst(
-            "script[type=application/json][data-sveltekit-fetched][data-url*='/api/v2/galleries/']",
-        ) ?: throw Exception("Data gallery tidak ditemukan. Struktur halaman mungkin berubah lagi.")
+        // Cari semua script[type=application/json] lalu filter manual
+        // karena selector CSS dengan single quote di dalam attribute value
+        // bisa bermasalah di beberapa versi Jsoup
+        val scriptEl = select("script[type=application/json][data-sveltekit-fetched]")
+            .firstOrNull { el ->
+                el.attr("data-url").contains("/api/v2/galleries/")
+            } ?: throw Exception("Data gallery tidak ditemukan")
 
-        val fetched = scriptEl.data().parseAs<SvelteKitFetched>()
+        val rawJson = scriptEl.data()
+            .takeIf { it.isNotBlank() }
+            ?: throw Exception("Script data kosong")
+
+        val fetched = rawJson.parseAs<SvelteKitFetched>()
 
         if (fetched.status != 200) {
-            throw Exception("API mengembalikan status ${fetched.status}")
+            throw Exception("API error: status ${fetched.status}")
         }
 
-        return fetched.body.parseAs()
+        val body = fetched.body
+            .takeIf { it.isNotBlank() }
+            ?: throw Exception("Body response kosong")
+
+        return body.parseAs()
     }
 
     override fun imageUrlParse(document: Document) = throw UnsupportedOperationException()
