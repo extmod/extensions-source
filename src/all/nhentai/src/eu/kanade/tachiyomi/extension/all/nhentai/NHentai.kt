@@ -49,6 +49,13 @@ open class NHentai(
 
     private val json: Json by injectLazy()
 
+    // Json khusus untuk parse SvelteKit wrapper yang punya field ekstra
+    // (statusText, headers, dll) yang tidak ada di model kita
+    private val lenientJson = Json {
+        ignoreUnknownKeys = true
+        isLenient = true
+    }
+
     override val client: OkHttpClient by lazy {
         network.cloudflareClient.newBuilder()
             .rateLimit(4)
@@ -72,8 +79,8 @@ open class NHentai(
     private val shortenTitleRegex = Regex("""(\[[^]]*]|[({][^)}]*[)}])""")
     private fun String.shortenTitle() = this.replace(shortenTitleRegex, "").trim()
 
-    // CDN yang diketahui dari nhentai — dipakai untuk image URL
-    private val cdnHosts = listOf("i1.nhentai.net", "i2.nhentai.net", "i3.nhentai.net")
+    // CDN confirmed dari https://nhentai.net/api/v2/config
+    private val cdnHosts = listOf("i1.nhentai.net", "i2.nhentai.net", "i3.nhentai.net", "i4.nhentai.net")
     private val thumbCdnHosts = listOf("t1.nhentai.net", "t2.nhentai.net", "t3.nhentai.net", "t4.nhentai.net")
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
@@ -103,7 +110,7 @@ open class NHentai(
         title = element.select("a > div").text().replace("\"", "").let {
             if (displayFullTitle) it.trim() else it.shortenTitle()
         }
-        thumbnail_url = element.selectFirst(".cover img")!!.let { img ->
+        thumbnail_url = element.selectFirst(".cover img")?.let { img ->
             if (img.hasAttr("data-src")) img.attr("abs:data-src") else img.attr("abs:src")
         }
     }
@@ -282,9 +289,6 @@ open class NHentai(
      * Field "body" adalah JSON string yang di-escape, bukan object langsung.
      */
     private fun Document.getHentaiData(): Hentai {
-        // Cari semua script[type=application/json] lalu filter manual
-        // karena selector CSS dengan single quote di dalam attribute value
-        // bisa bermasalah di beberapa versi Jsoup
         val scriptEl = select("script[type=application/json][data-sveltekit-fetched]")
             .firstOrNull { el ->
                 el.attr("data-url").contains("/api/v2/galleries/")
@@ -294,7 +298,9 @@ open class NHentai(
             .takeIf { it.isNotBlank() }
             ?: throw Exception("Script data kosong")
 
-        val fetched = rawJson.parseAs<SvelteKitFetched>()
+        // Pakai lenientJson karena wrapper punya field ekstra
+        // (statusText, headers) yang tidak ada di model SvelteKitFetched
+        val fetched = lenientJson.decodeFromString<SvelteKitFetched>(rawJson)
 
         if (fetched.status != 200) {
             throw Exception("API error: status ${fetched.status}")
@@ -304,7 +310,7 @@ open class NHentai(
             .takeIf { it.isNotBlank() }
             ?: throw Exception("Body response kosong")
 
-        return body.parseAs()
+        return lenientJson.decodeFromString(body)
     }
 
     override fun imageUrlParse(document: Document) = throw UnsupportedOperationException()
