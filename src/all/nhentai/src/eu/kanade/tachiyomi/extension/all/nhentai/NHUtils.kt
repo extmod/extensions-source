@@ -1,16 +1,17 @@
 package eu.kanade.tachiyomi.extension.all.nhentai
 
-import org.jsoup.nodes.Element
-
 object NHUtils {
     fun getArtists(data: Hentai): String {
-        val artists = data.tags.filter { it.type == "artist" }
-        return artists.joinToString(", ") { it.name }
+        return data.tags
+            .filter { it.type == "artist" }
+            .joinToString(", ") { it.name }
     }
 
     fun getGroups(data: Hentai): String? {
-        val groups = data.tags.filter { it.type == "group" }
-        return groups.joinToString(", ") { it.name }.takeIf { it.isNotBlank() }
+        return data.tags
+            .filter { it.type == "group" }
+            .joinToString(", ") { it.name }
+            .takeIf { it.isNotBlank() }
     }
 
     fun getTagDescription(data: Hentai): String {
@@ -29,9 +30,8 @@ object NHUtils {
     }
 
     fun getTags(data: Hentai): String {
-        val artists = data.tags.filter { it.type == "tag" }
-        return artists.joinToString(", ") { it.name }
+        return data.tags
+            .filter { it.type == "tag" }
+            .joinToString(", ") { it.name }
     }
-
-    private fun Element.cleanTag(): String = text().replace(Regex("\\(.*\\)"), "").trim()
 }

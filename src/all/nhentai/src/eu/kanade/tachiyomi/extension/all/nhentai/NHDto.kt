@@ -12,13 +12,8 @@ class Hentai(
     val num_favorites: Long,
     val upload_date: Long,
     val pages: List<HentaiPage>,
-    val cover: HentaiCover? = null,
-    val thumbnail: HentaiCover? = null,
-)
-
-@Serializable
-class HentaiCover(
-    val path: String,
+    val cover: HentaiImage? = null,
+    val thumbnail: HentaiImage? = null,
 )
 
 @Serializable
@@ -29,17 +24,20 @@ class Title(
 )
 
 @Serializable
-class HentaiPage(
-    val number: Int,
-    val path: String,        // e.g. "galleries/2179013/1.jpg"
-    val thumbnail: String,   // e.g. "galleries/2179013/1t.jpg"
+class HentaiImage(
+    val path: String,
     val width: Int = 0,
     val height: Int = 0,
-) {
-    // Ambil ekstensi dari path langsung, misal "1.jpg" -> "jpg"
-    val extension: String get() = path.substringAfterLast('.', "jpg")
-    val thumbnailExtension: String get() = thumbnail.substringAfterLast('.', "jpg")
-}
+)
+
+@Serializable
+class HentaiPage(
+    val number: Int,
+    val path: String,
+    val thumbnail: String,
+    val width: Int = 0,
+    val height: Int = 0,
+)
 
 @Serializable
 class Tag(
@@ -47,7 +45,9 @@ class Tag(
     val type: String,
 )
 
-// Wrapper untuk response dari script[data-sveltekit-fetched]
+// Wrapper untuk script[data-sveltekit-fetched]
+// Field statusText dan headers sengaja tidak dimasukkan,
+// parsing pakai ignoreUnknownKeys = true
 @Serializable
 class SvelteKitFetched(
     val status: Int,

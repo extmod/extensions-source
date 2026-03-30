@@ -22,7 +22,6 @@ import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.lib.randomua.addRandomUAPreference
 import keiyoushi.lib.randomua.setRandomUserAgent
 import keiyoushi.utils.getPreferences
-import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
@@ -31,7 +30,6 @@ import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import rx.Observable
-import uy.kohesive.injekt.injectLazy
 
 open class NHentai(
     override val lang: String,
@@ -47,11 +45,9 @@ open class NHentai(
 
     override val supportsLatest = true
 
-    private val json: Json by injectLazy()
-
-    // Json khusus untuk parse SvelteKit wrapper yang punya field ekstra
-    // (statusText, headers, dll) yang tidak ada di model kita
-    private val lenientJson = Json {
+    // Json dengan ignoreUnknownKeys karena SvelteKit wrapper punya field
+    // statusText dan headers yang tidak ada di model kita
+    private val json = Json {
         ignoreUnknownKeys = true
         isLenient = true
     }
@@ -62,14 +58,12 @@ open class NHentai(
             .build()
     }
 
-    // setRandomUserAgent pakai context(source: HttpSource) — dipanggil di headersBuilder
     override fun headersBuilder() = super.headersBuilder().apply {
         setRandomUserAgent(
             filterInclude = listOf("chrome"),
         )
     }
 
-    // Wajib di-override saat pakai lib:randomua
     override fun getMangaUrl(manga: SManga) = "$baseUrl${manga.url}"
 
     private val displayFullTitle: Boolean by lazy {
@@ -79,9 +73,19 @@ open class NHentai(
     private val shortenTitleRegex = Regex("""(\[[^]]*]|[({][^)}]*[)}])""")
     private fun String.shortenTitle() = this.replace(shortenTitleRegex, "").trim()
 
-    // CDN confirmed dari https://nhentai.net/api/v2/config
-    private val cdnHosts = listOf("i1.nhentai.net", "i2.nhentai.net", "i3.nhentai.net", "i4.nhentai.net")
-    private val thumbCdnHosts = listOf("t1.nhentai.net", "t2.nhentai.net", "t3.nhentai.net", "t4.nhentai.net")
+    // CDN list dari https://nhentai.net/api/v2/config
+    private val cdnHosts = listOf(
+        "i1.nhentai.net",
+        "i2.nhentai.net",
+        "i3.nhentai.net",
+        "i4.nhentai.net",
+    )
+    private val thumbCdnHosts = listOf(
+        "t1.nhentai.net",
+        "t2.nhentai.net",
+        "t3.nhentai.net",
+        "t4.nhentai.net",
+    )
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
         ListPreference(screen.context).apply {
@@ -155,12 +159,11 @@ open class NHentai(
         val offsetPage =
             filterList.findInstance<OffsetPageFilter>()?.state?.toIntOrNull()?.plus(page) ?: page
 
-        if (favoriteFilter?.state == true) {
+        return if (favoriteFilter?.state == true) {
             val url = "$baseUrl/favorites/".toHttpUrl().newBuilder()
                 .addQueryParameter("q", "$query $advQuery")
                 .addQueryParameter("page", offsetPage.toString())
-
-            return GET(url.build(), headers)
+            GET(url.build(), headers)
         } else {
             val url = "$baseUrl/search/".toHttpUrl().newBuilder()
                 .addQueryParameter("q", "$query $nhLangSearch$advQuery".ifBlank { "\"\"" })
@@ -170,7 +173,7 @@ open class NHentai(
                 url.addQueryParameter("sort", f.toUriPart())
             }
 
-            return GET(url.build(), headers)
+            GET(url.build(), headers)
         }
     }
 
@@ -206,7 +209,6 @@ open class NHentai(
                 throw Exception("Log in via WebView to view favorites")
             }
         }
-
         return super.searchMangaParse(response)
     }
 
@@ -219,29 +221,35 @@ open class NHentai(
     override fun mangaDetailsParse(document: Document): SManga {
         val data = document.getHentaiData()
         val thumbHost = thumbCdnHosts.random()
-        // Prioritas: thumbnail root → cover root → pages[0].thumbnail
         val thumbPath = data.thumbnail?.path
             ?: data.cover?.path
             ?: data.pages.firstOrNull()?.thumbnail
         return SManga.create().apply {
             title = if (displayFullTitle) {
-                data.title.english ?: data.title.japanese ?: data.title.pretty ?: "Unknown"
+                data.title.english
+                    ?: data.title.japanese
+                    ?: data.title.pretty
+                    ?: "Unknown"
             } else {
                 data.title.pretty?.shortenTitle()
-                    ?: (data.title.english ?: data.title.japanese)?.shortenTitle()
+                    ?: data.title.english?.shortenTitle()
+                    ?: data.title.japanese?.shortenTitle()
                     ?: "Unknown"
             }
             thumbnail_url = thumbPath?.let { "https://$thumbHost/$it" }
             status = SManga.COMPLETED
             artist = getArtists(data)
             author = getGroups(data) ?: getArtists(data)
-            description = "Full English and Japanese titles:\n"
-                .plus("${data.title.english ?: data.title.japanese ?: data.title.pretty ?: ""}\n")
-                .plus(data.title.japanese ?: "")
-                .plus("\n\n")
-                .plus("Pages: ${data.num_pages}\n")
-                .plus("Favorited by: ${data.num_favorites}\n")
-                .plus(getTagDescription(data))
+            description = buildString {
+                append("Full English and Japanese titles:\n")
+                append(data.title.english ?: data.title.japanese ?: data.title.pretty ?: "")
+                append("\n")
+                data.title.japanese?.let { append(it) }
+                append("\n\n")
+                append("Pages: ${data.num_pages}\n")
+                append("Favorited by: ${data.num_favorites}\n")
+                append(getTagDescription(data))
+            }
             genre = getTags(data)
             update_strategy = UpdateStrategy.ONLY_FETCH_ONCE
         }
@@ -268,7 +276,6 @@ open class NHentai(
     override fun pageListParse(document: Document): List<Page> {
         val data = document.getHentaiData()
         val cdnHost = cdnHosts.random()
-
         return data.pages.map { page ->
             Page(
                 index = page.number - 1,
@@ -277,43 +284,37 @@ open class NHentai(
         }
     }
 
+    override fun imageUrlParse(document: Document) = throw UnsupportedOperationException()
+
     /**
      * Parse data Hentai dari script SvelteKit yang di-embed di HTML.
      *
-     * nhentai sekarang pakai SvelteKit. Data gallery ada di:
+     * Struktur HTML:
      * <script type="application/json" data-sveltekit-fetched
      *   data-url="/api/v2/galleries/{id}?include=comments%2Crelated">
-     *   {"status":200,"body":"{...json string...}"}
+     *   {"status":200,"statusText":"OK","headers":{...},"body":"{...json string...}"}
      * </script>
      *
-     * Field "body" adalah JSON string yang di-escape, bukan object langsung.
+     * Field "body" adalah JSON string (bukan object langsung).
+     * Field statusText dan headers diabaikan via ignoreUnknownKeys.
      */
     private fun Document.getHentaiData(): Hentai {
         val scriptEl = select("script[type=application/json][data-sveltekit-fetched]")
-            .firstOrNull { el ->
-                el.attr("data-url").contains("/api/v2/galleries/")
-            } ?: throw Exception("Data gallery tidak ditemukan")
+            .firstOrNull { it.attr("data-url").contains("/api/v2/galleries/") }
+            ?: throw Exception("Data gallery tidak ditemukan")
 
         val rawJson = scriptEl.data()
             .takeIf { it.isNotBlank() }
             ?: throw Exception("Script data kosong")
 
-        // Pakai lenientJson karena wrapper punya field ekstra
-        // (statusText, headers) yang tidak ada di model SvelteKitFetched
-        val fetched = lenientJson.decodeFromString<SvelteKitFetched>(rawJson)
+        val fetched = json.decodeFromString<SvelteKitFetched>(rawJson)
 
         if (fetched.status != 200) {
             throw Exception("API error: status ${fetched.status}")
         }
 
-        val body = fetched.body
-            .takeIf { it.isNotBlank() }
-            ?: throw Exception("Body response kosong")
-
-        return lenientJson.decodeFromString(body)
+        return json.decodeFromString(fetched.body)
     }
-
-    override fun imageUrlParse(document: Document) = throw UnsupportedOperationException()
 
     override fun getFilterList(): FilterList = FilterList(
         Filter.Header("Separate tags with commas (,)"),
@@ -329,7 +330,6 @@ open class NHentai(
         UploadedFilter(),
         Filter.Header("Filter by pages, for example: (>20)"),
         PagesFilter(),
-
         Filter.Separator(),
         SortFilter(),
         OffsetPageFilter(),
@@ -362,8 +362,6 @@ open class NHentai(
                 Pair("Recent", "date"),
             ),
         )
-
-    private inline fun <reified T> String.parseAs(): T = json.decodeFromString(this)
 
     private open class UriPartFilter(displayName: String, val vals: Array<Pair<String, String>>) :
         Filter.Select<String>(displayName, vals.map { it.first }.toTypedArray()) {
