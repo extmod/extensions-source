@@ -1,0 +1,40 @@
+Manifest-Version: 1.0
+Built-By: Signflinger
+Created-By: Android Gradle 8.0.2
+
+Name: AndroidManifest.xml
+SHA1-Digest: QDmkE6/fQ2eZTlNPDudUYS8qJvQ=
+
+Name: build.gradle
+SHA1-Digest: oinuUlEoHFhQlIEybQbaCUxdaiM=
+
+Name: res/mipmap-hdpi/ic_launcher.png
+SHA1-Digest: O08UgLQWpr8gAANT0SS0v26fx94=
+
+Name: res/mipmap-mdpi/ic_launcher.png
+SHA1-Digest: 7xYxco9QIZZeUwm4z4LcIKd4hZY=
+
+Name: res/mipmap-xhdpi/ic_launcher.png
+SHA1-Digest: RDRJwgBavbxm3wkJDPFyo4MFyeI=
+
+Name: res/mipmap-xxhdpi/ic_launcher.png
+SHA1-Digest: f+avQrEo74kIkfeTaSe1q2vSPgk=
+
+Name: res/mipmap-xxxhdpi/ic_launcher.png
+SHA1-Digest: cmW4sfczIFyirpLtp8AvpW0MmLk=
+
+Name: src/eu/kanade/tachiyomi/extension/all/nhentai/NHDto.kt
+SHA1-Digest: 1O5MrMIvprE6vE/p5KLgUy5RU4o=
+
+Name: src/eu/kanade/tachiyomi/extension/all/nhentai/NHFactory.kt
+SHA1-Digest: LVVSXZu+6L6B13wv0pLSCPBNsbw=
+
+Name: src/eu/kanade/tachiyomi/extension/all/nhentai/NHUrlActivity.kt
+SHA1-Digest: iARelz8Odme14wZ0/wKgc7EViV8=
+
+Name: src/eu/kanade/tachiyomi/extension/all/nhentai/NHUtils.kt
+SHA1-Digest: EGLgfHgC8L+U2r4ilmxH7oXC6Sg=
+
+Name: src/eu/kanade/tachiyomi/extension/all/nhentai/NHentai.kt
+SHA1-Digest: 4FFXF3MBqZSHPI1sRbVLK81fPBs=
+
