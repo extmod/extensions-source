@@ -65,6 +65,9 @@ open class NHentai(
             .build()
     }
 
+    // Wajib di-override saat pakai lib:randomua
+    override fun getMangaUrl(manga: eu.kanade.tachiyomi.source.model.SManga) = "$baseUrl${manga.url}"
+
     private var displayFullTitle: Boolean = when (preferences.getString(TITLE_PREF, "full")) {
         "full" -> true
         else -> false
