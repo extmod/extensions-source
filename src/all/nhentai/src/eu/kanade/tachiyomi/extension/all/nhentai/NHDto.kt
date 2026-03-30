@@ -12,6 +12,13 @@ class Hentai(
     val num_favorites: Long,
     val upload_date: Long,
     val pages: List<HentaiPage>,
+    val cover: HentaiCover? = null,
+    val thumbnail: HentaiCover? = null,
+)
+
+@Serializable
+class HentaiCover(
+    val path: String,
 )
 
 @Serializable
