@@ -1,6 +1,5 @@
 package eu.kanade.tachiyomi.extension.all.nhentai
 
-import android.content.SharedPreferences
 import androidx.preference.ListPreference
 import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.extension.all.nhentai.NHUtils.getArtists
@@ -20,11 +19,9 @@ import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.UpdateStrategy
 import eu.kanade.tachiyomi.source.online.ParsedHttpSource
 import eu.kanade.tachiyomi.util.asJsoup
-import keiyoushi.lib.randomua.addRandomUAPreferenceToScreen
-import keiyoushi.lib.randomua.getPrefCustomUA
-import keiyoushi.lib.randomua.getPrefUAType
+import keiyoushi.lib.randomua.addRandomUAPreference
 import keiyoushi.lib.randomua.setRandomUserAgent
-import keiyoushi.utils.getPreferencesLazy
+import keiyoushi.utils.getPreferences
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -52,23 +49,23 @@ open class NHentai(
 
     private val json: Json by injectLazy()
 
-    private val preferences: SharedPreferences by getPreferencesLazy()
-
     override val client: OkHttpClient by lazy {
         network.cloudflareClient.newBuilder()
-            .setRandomUserAgent(
-                userAgentType = preferences.getPrefUAType(),
-                customUA = preferences.getPrefCustomUA(),
-                filterInclude = listOf("chrome"),
-            )
             .rateLimit(4)
             .build()
     }
 
-    // Wajib di-override saat pakai lib:randomua
-    override fun getMangaUrl(manga: eu.kanade.tachiyomi.source.model.SManga) = "$baseUrl${manga.url}"
+    // setRandomUserAgent pakai context(source: HttpSource) — dipanggil di headersBuilder
+    override fun headersBuilder() = super.headersBuilder().apply {
+        setRandomUserAgent(
+            filterInclude = listOf("chrome"),
+        )
+    }
 
-    private var displayFullTitle: Boolean = when (preferences.getString(TITLE_PREF, "full")) {
+    // Wajib di-override saat pakai lib:randomua
+    override fun getMangaUrl(manga: SManga) = "$baseUrl${manga.url}"
+
+    private var displayFullTitle: Boolean = when (getPreferences().getString(TITLE_PREF, "full")) {
         "full" -> true
         else -> false
     }
@@ -98,7 +95,7 @@ open class NHentai(
             }
         }.also(screen::addPreference)
 
-        addRandomUAPreferenceToScreen(screen)
+        screen.addRandomUAPreference()
     }
 
     override fun latestUpdatesRequest(page: Int) =
