@@ -227,10 +227,11 @@ open class NHentai(
             ?: data.pages.firstOrNull()?.thumbnail
         return SManga.create().apply {
             title = if (displayFullTitle) {
-                data.title.english ?: data.title.japanese ?: data.title.pretty!!
+                data.title.english ?: data.title.japanese ?: data.title.pretty ?: "Unknown"
             } else {
-                data.title.pretty
-                    ?: (data.title.english ?: data.title.japanese)!!.shortenTitle()
+                data.title.pretty?.shortenTitle()
+                    ?: (data.title.english ?: data.title.japanese)?.shortenTitle()
+                    ?: "Unknown"
             }
             thumbnail_url = thumbPath?.let { "https://$thumbHost/$it" }
             status = SManga.COMPLETED
