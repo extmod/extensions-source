@@ -221,6 +221,10 @@ open class NHentai(
     override fun mangaDetailsParse(document: Document): SManga {
         val data = document.getHentaiData()
         val thumbHost = thumbCdnHosts.random()
+        // Prioritas: thumbnail root → cover root → pages[0].thumbnail
+        val thumbPath = data.thumbnail?.path
+            ?: data.cover?.path
+            ?: data.pages.firstOrNull()?.thumbnail
         return SManga.create().apply {
             title = if (displayFullTitle) {
                 data.title.english ?: data.title.japanese ?: data.title.pretty!!
@@ -228,7 +232,7 @@ open class NHentai(
                 data.title.pretty
                     ?: (data.title.english ?: data.title.japanese)!!.shortenTitle()
             }
-            thumbnail_url = "https://$thumbHost/${data.pages[0].thumbnail}"
+            thumbnail_url = thumbPath?.let { "https://$thumbHost/$it" }
             status = SManga.COMPLETED
             artist = getArtists(data)
             author = getGroups(data) ?: getArtists(data)
