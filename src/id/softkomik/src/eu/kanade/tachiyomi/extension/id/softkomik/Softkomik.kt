@@ -81,7 +81,7 @@ class Softkomik : HttpSource() {
                 is SortFilter -> url.addQueryParameter("sortBy", filter.selected)
                 is MinChapterFilter -> {
                     if (filter.selected != "0") {
-                         url.addQueryParameter("min", filter.selected)
+                        url.addQueryParameter("min", filter.selected)
                     }
                 }
                 else -> {}
@@ -191,14 +191,11 @@ class Softkomik : HttpSource() {
             throw Exception("No pages found")
         }
 
-        val imageBaseUrl = if (data.storageInter2 == true) cdnUrls[2] else cdnUrls[0]
-
-        // FIX: Handle jika img sudah berupa URL absolut
         return imageSrc.mapIndexed { i, img ->
             val imageUrl = if (img.startsWith("http")) {
                 img
             } else {
-                "$imageBaseUrl/${img.removePrefix("/")}"
+                "$cdnUrl/${img.removePrefix("/")}"
             }
             Page(i, imageUrl = imageUrl)
         }
@@ -207,10 +204,12 @@ class Softkomik : HttpSource() {
     override fun imageUrlParse(response: Response) = throw UnsupportedOperationException()
 
     override fun imageRequest(page: Page): Request {
+        val cdnHost = cdnUrl.toHttpUrl().host
         val newHeaders = headersBuilder()
             .set("Accept", "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8")
             .set("Referer", "$baseUrl/")
             .set("Origin", baseUrl)
+            .set("Host", cdnHost)
             .build()
         return GET(page.imageUrl!!, newHeaders)
     }
@@ -236,32 +235,17 @@ class Softkomik : HttpSource() {
             null
         }
 
-        if (response?.isSuccessful == true) return response
-        response?.close()
-
-        // FIX: Jika URL bukan CDN kita, lanjutkan normal (jangan throw)
-        val currentHost = cdnUrls.firstOrNull {
-            request.url.toString().startsWith(it.trimEnd('/'))
-        } ?: return chain.proceed(request)
-
-        val imagePath = request.url.toString()
-            .removePrefix(currentHost.trimEnd('/'))
-            .removePrefix("/")
-        val otherHosts = cdnUrls.filter { it != currentHost }
-
-        var latestResponse: Response? = null
-        for (newHost in otherHosts) {
-            latestResponse?.close()
-            val newUrl = "${newHost.trimEnd('/')}/$imagePath".toHttpUrl()
-            latestResponse = try {
-                chain.proceed(request.newBuilder().url(newUrl).build())
-            } catch (e: java.net.UnknownHostException) {
-                null
-            }
-            if (latestResponse?.isSuccessful == true) return latestResponse
+        // Kalau bukan request gambar CDN, return as-is
+        if (!request.url.toString().startsWith(cdnUrl)) {
+            return response ?: chain.proceed(request)
         }
 
-        return latestResponse ?: throw java.net.UnknownHostException("All CDN hosts failed for: $imagePath")
+        val shouldRetry = response == null || response.code == 403 || response.code == 401
+        if (!shouldRetry) return response!!
+        response?.close()
+
+        // Tidak ada CDN lain, lempar error yang informatif
+        throw java.net.UnknownHostException("CDN failed (${response?.code ?: "no response"}) for: ${request.url}")
     }
 
     private fun apiAuthInterceptor(chain: Interceptor.Chain): Response {
@@ -343,13 +327,6 @@ class Softkomik : HttpSource() {
 
     private val apiUrl = "https://v2.softdevices.my.id"
     private val coverUrl = "https://cover.softdevices.my.id/softkomik-cover"
+    private val cdnUrl = "https://cdn1.softkomik.online/softkomik"
     private val userAgentMobileSafariRegex = Regex("""\s*Mobile Safari/\d+(?:\.\d+)*""", RegexOption.IGNORE_CASE)
-    private val cdnUrls = listOf(
-        "https://psy1.komik.im",
-        "https://image.komik.im/softkomik",
-        "https://cd1.softkomik.online/softkomik",
-        "https://f1.softkomik.com/file/softkomik-image",
-        "https://img.softdevices.my.id/softkomik-image",
-        "https://image.softkomik.com/softkomik",
-    )
 }
