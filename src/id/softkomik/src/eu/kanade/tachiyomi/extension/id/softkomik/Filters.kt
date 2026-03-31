@@ -40,17 +40,7 @@ class SortFilter :
         ),
     )
 
-class MinChapterFilter :
-    SelectFilter(
-        "Min Chapter",
-        arrayOf(
-            Pair("Semua", "0"),
-            Pair("10+", "10"),
-            Pair("20+", "20"),
-            Pair("50+", "50"),
-            Pair("100+", "100"),
-        ),
-    )
+class MinChapterFilter : Filter.Text("Minimal Chapter")
 
 class GenreFilter :
     SelectFilter(
@@ -89,7 +79,7 @@ class GenreFilter :
             Pair("Romance", "Romance"),
             Pair("School", "School"),
             Pair("School Life", "School Life"),
-            Pair("Sci-fi", "Sci-fii"),
+            Pair("Sci-fi", "Sci-fi"),
             Pair("Seinen", "Seinen"),
             Pair("Shoujo", "Shoujo"),
             Pair("Shoujo Ai", "Shoujo Ai"),
