@@ -80,9 +80,8 @@ class Softkomik : HttpSource() {
                 is GenreFilter -> url.addQueryParameter("genre", filter.selected)
                 is SortFilter -> url.addQueryParameter("sortBy", filter.selected)
                 is MinChapterFilter -> {
-                    val minValue = filter.state.toIntOrNull()
-                    if (minValue != null && minValue > 0) {
-                        url.addQueryParameter("min", minValue.toString())
+                    if (filter.selected != "0") {
+                         url.addQueryParameter("min", filter.selected)
                     }
                 }
                 else -> {}
