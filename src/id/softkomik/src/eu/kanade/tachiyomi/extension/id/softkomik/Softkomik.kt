@@ -141,7 +141,8 @@ class Softkomik : HttpSource() {
 
     override fun chapterListParse(response: Response): List<SChapter> {
         val dto = response.parseAs<ChapterListDto>()
-        val slug = response.request.url.pathSegments[1]
+        val pathSegments = response.request.url.pathSegments
+        val slug = pathSegments[pathSegments.size - 2]
         return dto.chapter.map { chapter ->
             val chapterNumStr = chapter.chapter
             val chapterNum = chapterNumStr.substringBefore(".").toFloatOrNull() ?: -1f
