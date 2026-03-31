@@ -80,8 +80,9 @@ class Softkomik : HttpSource() {
                 is GenreFilter -> url.addQueryParameter("genre", filter.selected)
                 is SortFilter -> url.addQueryParameter("sortBy", filter.selected)
                 is MinChapterFilter -> {
-                    if (filter.selected != "0") {
-                        url.addQueryParameter("min", filter.selected)
+                    val minValue = filter.state.toIntOrNull()
+                    if (minValue != null && minValue > 0) {
+                        url.addQueryParameter("min", minValue.toString())
                     }
                 }
                 else -> {}
@@ -141,8 +142,7 @@ class Softkomik : HttpSource() {
 
     override fun chapterListParse(response: Response): List<SChapter> {
         val dto = response.parseAs<ChapterListDto>()
-        val pathSegments = response.request.url.pathSegments
-        val slug = pathSegments[pathSegments.size - 2]
+        val slug = response.request.url.pathSegments[1]
         return dto.chapter.map { chapter ->
             val chapterNumStr = chapter.chapter
             val chapterNum = chapterNumStr.substringBefore(".").toFloatOrNull() ?: -1f
@@ -192,25 +192,20 @@ class Softkomik : HttpSource() {
             throw Exception("No pages found")
         }
 
+        val imageBaseUrl = if (data.storageInter2 == true) cdnUrls[2] else cdnUrls[0]
+
         return imageSrc.mapIndexed { i, img ->
-            val imageUrl = if (img.startsWith("http")) {
-                img
-            } else {
-                "$cdnUrl/${img.removePrefix("/")}"
-            }
-            Page(i, imageUrl = imageUrl)
+            Page(i, imageUrl = "$imageBaseUrl/${img.removePrefix("/")}")
         }
     }
 
     override fun imageUrlParse(response: Response) = throw UnsupportedOperationException()
 
     override fun imageRequest(page: Page): Request {
-        val cdnHost = cdnUrl.toHttpUrl().host
         val newHeaders = headersBuilder()
             .set("Accept", "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8")
             .set("Referer", "$baseUrl/")
             .set("Origin", baseUrl)
-            .set("Host", cdnHost)
             .build()
         return GET(page.imageUrl!!, newHeaders)
     }
@@ -236,17 +231,34 @@ class Softkomik : HttpSource() {
             null
         }
 
-        // Kalau bukan request gambar CDN, return as-is
-        if (!request.url.toString().startsWith(cdnUrl)) {
-            return response ?: chain.proceed(request)
+        if (response?.isSuccessful == true) return response
+
+        val currentHost = cdnUrls.firstOrNull { request.url.toString().startsWith(it) }
+
+        // Only chapter CDN URLs should use retry host fallback.
+        // Non-CDN hosts (e.g. cover URL) should return the original response or throw if it failed, without trying other hosts.
+        if (currentHost == null) {
+            return response ?: throw (java.net.UnknownHostException(request.url.host))
         }
 
-        val shouldRetry = response == null || response.code == 403 || response.code == 401
-        if (!shouldRetry) return response!!
         response?.close()
 
-        // Tidak ada CDN lain, lempar error yang informatif
-        throw java.net.UnknownHostException("CDN failed (${response?.code ?: "no response"}) for: ${request.url}")
+        val imagePath = request.url.toString().removePrefix(currentHost).removePrefix("/")
+        val otherHosts = cdnUrls.filter { it != currentHost }
+
+        var latestResponse: Response? = null
+        for (newHost in otherHosts) {
+            latestResponse?.close()
+            val newUrl = "$newHost/$imagePath".toHttpUrl()
+            latestResponse = try {
+                chain.proceed(request.newBuilder().url(newUrl).build())
+            } catch (e: java.net.UnknownHostException) {
+                null
+            }
+            if (latestResponse?.isSuccessful == true) return latestResponse
+        }
+
+        return latestResponse ?: throw java.net.UnknownHostException("All CDN hosts failed for: $imagePath")
     }
 
     private fun apiAuthInterceptor(chain: Interceptor.Chain): Response {
@@ -293,7 +305,7 @@ class Softkomik : HttpSource() {
                 client.newCall(GET("$baseUrl/api/me", apiHeaders)).execute().close()
             }
 
-            val response = client.newCall(GET("$baseUrl/api/se", apiHeaders)).execute()
+            val response = client.newCall(GET("$baseUrl/api/me", apiHeaders)).execute()
 
             if (!response.isSuccessful) {
                 val code = response.code
@@ -307,6 +319,7 @@ class Softkomik : HttpSource() {
         }
     }
 
+    // Normalizes the User-Agent by removing "Mobile Safari" because it can cause 401 errors.
     private fun normalizeUserAgent(userAgent: String?): String? {
         if (userAgent.isNullOrBlank()) return null
 
@@ -328,6 +341,13 @@ class Softkomik : HttpSource() {
 
     private val apiUrl = "https://v2.softdevices.my.id"
     private val coverUrl = "https://cover.softdevices.my.id/softkomik-cover"
-    private val cdnUrl = "https://cdn1.softkomik.online/softkomik"
     private val userAgentMobileSafariRegex = Regex("""\s*Mobile Safari/\d+(?:\.\d+)*""", RegexOption.IGNORE_CASE)
+    private val cdnUrls = listOf(
+        "https://psy1.komik.im",
+        "https://image.komik.im/softkomik",
+        "https://cd1.softkomik.online/softkomik",
+        "https://f1.softkomik.com/file/softkomik-image",
+        "https://img.softdevices.my.id/softkomik-image",
+        "https://image.softkomik.com/softkomik",
+    )
 }
