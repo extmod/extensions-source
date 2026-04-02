@@ -15,6 +15,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Interceptor
 import okhttp3.Request
 import okhttp3.Response
+import java.net.UnknownHostException
 
 class Softkomik : HttpSource() {
     override val name = "Softkomik"
@@ -24,18 +25,24 @@ class Softkomik : HttpSource() {
 
     private var session: SessionDto? = null
 
-    private val rscHeaders = headersBuilder()
+    private val commonHeaders = headersBuilder()
         .add("rsc", "1")
+        .add("X-Requested-With", "XMLHttpRequest")
+        .add("Accept", "application/json, text/plain, */*")
+        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         .build()
 
     override val client = network.cloudflareClient.newBuilder()
         .addInterceptor(::imageInterceptor)
         .addInterceptor(::apiAuthInterceptor)
+        .addInterceptor(::retryInterceptor) // retry 403
         .build()
 
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
         .add("Referer", "$baseUrl/")
         .add("Origin", baseUrl)
+        .add("X-Requested-With", "XMLHttpRequest")
+        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
     // ======================== Popular ========================
     override fun popularMangaRequest(page: Int): Request {
@@ -43,7 +50,7 @@ class Softkomik : HttpSource() {
             .addQueryParameter("sortBy", "popular")
             .addQueryParameter("page", page.toString())
             .build()
-        return GET(url, rscHeaders)
+        return GET(url, commonHeaders)
     }
 
     override fun popularMangaParse(response: Response) = searchMangaParse(response)
@@ -54,7 +61,7 @@ class Softkomik : HttpSource() {
             .addQueryParameter("sortBy", "newKomik")
             .addQueryParameter("page", page.toString())
             .build()
-        return GET(url, rscHeaders)
+        return GET(url, commonHeaders)
     }
 
     override fun latestUpdatesParse(response: Response) = searchMangaParse(response)
@@ -67,7 +74,7 @@ class Softkomik : HttpSource() {
                 .addQueryParameter("search", "true")
                 .addQueryParameter("limit", "20")
                 .addQueryParameter("page", page.toString())
-            return GET(url.build(), headers)
+            return GET(url.build(), commonHeaders)
         }
 
         val url = "$baseUrl/komik/library".toHttpUrl().newBuilder()
@@ -89,7 +96,7 @@ class Softkomik : HttpSource() {
             }
         }
 
-        return GET(url.build(), rscHeaders)
+        return GET(url.build(), commonHeaders)
     }
 
     override fun searchMangaParse(response: Response): MangasPage {
@@ -110,7 +117,7 @@ class Softkomik : HttpSource() {
     }
 
     // ======================== Details ========================
-    override fun mangaDetailsRequest(manga: SManga): Request = GET("$baseUrl/${manga.url}", rscHeaders)
+    override fun mangaDetailsRequest(manga: SManga): Request = GET("$baseUrl/${manga.url}", commonHeaders)
 
     override fun mangaDetailsParse(response: Response): SManga {
         val manga = response.extractNextJs<MangaDetailsDto>()
@@ -136,8 +143,8 @@ class Softkomik : HttpSource() {
 
     // ======================== Chapters ========================
     override fun chapterListRequest(manga: SManga): Request {
-        val url = "$apiUrl/komik/${manga.url}/chapter?limit=9999999"
-        return GET(url, headers)
+        val url = "$apiUrl/komik/${manga.url}/chapter?limit=1000" // limit diturunkan
+        return GET(url, commonHeaders)
     }
 
     override fun chapterListParse(response: Response): List<SChapter> {
@@ -171,7 +178,7 @@ class Softkomik : HttpSource() {
     }
 
     // ======================== Pages ========================
-    override fun pageListRequest(chapter: SChapter): Request = GET("$baseUrl${chapter.url}", rscHeaders)
+    override fun pageListRequest(chapter: SChapter): Request = GET("$baseUrl${chapter.url}", commonHeaders)
 
     override fun pageListParse(response: Response): List<Page> {
         val data = response.extractNextJs<ChapterPageDataDto>()
@@ -181,7 +188,7 @@ class Softkomik : HttpSource() {
             val slug = response.request.url.pathSegments[0]
             val chapter = response.request.url.pathSegments[2]
             val url = "$apiUrl/komik/$slug/chapter/$chapter/img/${data._id}"
-            client.newCall(GET(url, headers)).execute().use {
+            client.newCall(GET(url, commonHeaders)).execute().use {
                 it.parseAs<ChapterPageImagesDto>().imageSrc
             }
         } else {
@@ -210,7 +217,28 @@ class Softkomik : HttpSource() {
         return GET(page.imageUrl!!, newHeaders)
     }
 
-    // ============================= Utilities ==============================
+    // ============================= Interceptors ==============================
+
+    private fun retryInterceptor(chain: Interceptor.Chain): Response {
+        val request = chain.request()
+        var response = chain.proceed(request)
+
+        // Jika 403 dan mengarah ke API domain, refresh session lalu ulang sekali
+        if (response.code == 403 && request.url.host.endsWith("softdevices.my.id")) {
+            response.close()
+            synchronized(this) {
+                session = null
+                getSession() // refresh token & sign
+            }
+            // Buat ulang request dengan header baru
+            val newRequest = request.newBuilder()
+                .header("X-Token", session!!.token)
+                .header("X-Sign", session!!.sign)
+                .build()
+            response = chain.proceed(newRequest)
+        }
+        return response
+    }
 
     private fun imageInterceptor(chain: Interceptor.Chain): Response {
         val originalRequest = chain.request()
@@ -227,7 +255,7 @@ class Softkomik : HttpSource() {
 
         val response = try {
             chain.proceed(request)
-        } catch (e: java.net.UnknownHostException) {
+        } catch (e: UnknownHostException) {
             null
         }
 
@@ -235,10 +263,8 @@ class Softkomik : HttpSource() {
 
         val currentHost = cdnUrls.firstOrNull { request.url.toString().startsWith(it) }
 
-        // Only chapter CDN URLs should use retry host fallback.
-        // Non-CDN hosts (e.g. cover URL) should return the original response or throw if it failed, without trying other hosts.
         if (currentHost == null) {
-            return response ?: throw (java.net.UnknownHostException(request.url.host))
+            return response ?: throw UnknownHostException(request.url.host)
         }
 
         response?.close()
@@ -252,13 +278,13 @@ class Softkomik : HttpSource() {
             val newUrl = "$newHost/$imagePath".toHttpUrl()
             latestResponse = try {
                 chain.proceed(request.newBuilder().url(newUrl).build())
-            } catch (e: java.net.UnknownHostException) {
+            } catch (e: UnknownHostException) {
                 null
             }
             if (latestResponse?.isSuccessful == true) return latestResponse
         }
 
-        return latestResponse ?: throw java.net.UnknownHostException("All CDN hosts failed for: $imagePath")
+        return latestResponse ?: throw UnknownHostException("All CDN hosts failed for: $imagePath")
     }
 
     private fun apiAuthInterceptor(chain: Interceptor.Chain): Response {
@@ -301,11 +327,11 @@ class Softkomik : HttpSource() {
                 .any { it.name == "zEm9be" || it.name == "AhyyL" }
 
             if (!hasCookies) {
-                client.newCall(GET(baseUrl, headers)).execute().close()
+                client.newCall(GET(baseUrl, commonHeaders)).execute().close()
                 client.newCall(GET("$baseUrl/api/me", apiHeaders)).execute().close()
             }
 
-            val response = client.newCall(GET("$baseUrl/api/me", apiHeaders)).execute()
+            val response = client.newCall(GET("$baseUrl/api/sessions", apiHeaders)).execute()
 
             if (!response.isSuccessful) {
                 val code = response.code
@@ -319,10 +345,9 @@ class Softkomik : HttpSource() {
         }
     }
 
-    // Normalizes the User-Agent by removing "Mobile Safari" because it can cause 401 errors.
     private fun normalizeUserAgent(userAgent: String?): String? {
         if (userAgent.isNullOrBlank()) return null
-
+        val userAgentMobileSafariRegex = Regex("""\s*Mobile Safari/\d+(?:\.\d+)*""", RegexOption.IGNORE_CASE)
         return userAgent
             .replace(userAgentMobileSafariRegex, "")
             .trim()
@@ -341,7 +366,6 @@ class Softkomik : HttpSource() {
 
     private val apiUrl = "https://v2.softdevices.my.id"
     private val coverUrl = "https://cover.softdevices.my.id/softkomik-cover"
-    private val userAgentMobileSafariRegex = Regex("""\s*Mobile Safari/\d+(?:\.\d+)*""", RegexOption.IGNORE_CASE)
     private val cdnUrls = listOf(
         "https://psy1.komik.im",
         "https://image.komik.im/softkomik",
