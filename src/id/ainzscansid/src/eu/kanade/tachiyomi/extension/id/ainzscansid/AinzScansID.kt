@@ -1,4 +1,4 @@
-package eu.kanade.tachiyomi.extension.id.ainzscansid
+package eu.kanade.tachiyomi.extension.id.ainzscans
 
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.source.model.FilterList
@@ -20,9 +20,9 @@ import uy.kohesive.injekt.injectLazy
 import java.text.SimpleDateFormat
 import java.util.Locale
 
-class AinzScansID : HttpSource() {
+class AinzScans : HttpSource() {
 
-    override val name = "AinzScansID"
+    override val name = "AinzScans"
     override val baseUrl = "https://v1.ainzscans01.com"
     override val lang = "id"
     override val supportsLatest = true
@@ -132,8 +132,13 @@ class AinzScansID : HttpSource() {
             SChapter.create().apply {
                 val chapterSlug = u["slug"]?.jsonPrimitive?.content ?: ""
                 url = "/comic/$seriesSlug/chapter/$chapterSlug"
-                name = u["title"]?.jsonPrimitive?.content
-                    ?: "Chapter ${u["number"]?.jsonPrimitive?.content}"
+                val num = u["number"]?.jsonPrimitive?.double
+                name = if (num != null) {
+                    val numStr = if (num % 1.0 == 0.0) num.toInt().toString() else num.toString()
+                    "Chapter $numStr"
+                } else {
+                    u["title"]?.jsonPrimitive?.content ?: "Chapter ?"
+                }
                 chapter_number = u["number"]?.jsonPrimitive?.double?.toFloat() ?: -1f
                 date_upload = runCatching {
                     dateFormat.parse(u["created_at"]?.jsonPrimitive?.content ?: "")?.time ?: 0L
