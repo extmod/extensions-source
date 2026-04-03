@@ -1,4 +1,4 @@
-package eu.kanade.tachiyomi.extension.id.ainzscans
+package eu.kanade.tachiyomi.extension.id.ainzscansid
 
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.source.model.FilterList
@@ -20,9 +20,9 @@ import uy.kohesive.injekt.injectLazy
 import java.text.SimpleDateFormat
 import java.util.Locale
 
-class AinzScans : HttpSource() {
+class AinzScansID : HttpSource() {
 
-    override val name = "AinzScans"
+    override val name = "AinzScansID"
     override val baseUrl = "https://v1.ainzscans01.com"
     override val lang = "id"
     override val supportsLatest = true
