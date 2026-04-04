@@ -151,6 +151,7 @@ class Softkomik : HttpSource() {
             ?: throw Exception("Could not find manga chapter data")
         val slug = response.request.url.pathSegments.lastOrNull()
             ?: throw Exception("Could not find manga slug")
+
         val pageChapters = listOf(
             manga.chapter,
             manga.chapters,
@@ -168,27 +169,25 @@ class Softkomik : HttpSource() {
                     emptyList()
                 } else {
                     apiResponse.parseAs<ChapterListDto>().chapter
-                }
             }
         }
-
-        if (chapters.isEmpty()) {
-            throw Exception("No chapters found")
-        }
-
-        return chapters.map { chapter ->
-
-        return manga.chapter.map { chapter ->
-            val chapterNumStr = chapter.chapter
-            val chapterNum = chapterNumStr.substringBefore(".").toFloatOrNull() ?: -1f
-            val displayNum = formatChapterDisplay(chapterNumStr)
-            SChapter.create().apply {
-                url = "/$slug/chapter/$chapterNumStr"
-                name = "Chapter $displayNum"
-                chapter_number = chapterNum
-            }
-        }.sortedByDescending { it.chapter_number }
     }
+
+    if (chapters.isEmpty()) {
+        throw Exception("No chapters found")
+    }
+
+    return chapters.map { chapter ->
+        val chapterNumStr = chapter.chapter
+        val chapterNum = chapterNumStr.substringBefore(".").toFloatOrNull() ?: -1f
+        val displayNum = formatChapterDisplay(chapterNumStr)
+        SChapter.create().apply {
+            url = "/$slug/chapter/$chapterNumStr"
+            name = "Chapter $displayNum"
+            chapter_number = chapterNum
+        }
+    }.sortedByDescending { it.chapter_number }
+}
 
     private fun fetchChapterList(slug: String): List<ChapterDto> {
         val chapterApiUrls = listOf(
