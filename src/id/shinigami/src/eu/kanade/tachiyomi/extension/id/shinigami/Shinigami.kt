@@ -44,8 +44,6 @@ class Shinigami : HttpSource(), ConfigurableSource {
 
     private val apiHeaders: Headers by lazy { apiHeadersBuilder().build() }
 
-    private var currentMangaTitle: String = ""
-
     override val client = network.cloudflareClient.newBuilder()
         .addInterceptor { chain ->
             val request = chain.request()
@@ -150,7 +148,6 @@ class Shinigami : HttpSource(), ConfigurableSource {
     }
 
     override fun chapterListRequest(manga: SManga): Request {
-        currentMangaTitle = manga.title
         return GET("$apiUrl/v1/chapter/${manga.url}/list?page_size=3000", apiHeaders)
     }
 
@@ -174,30 +171,18 @@ class Shinigami : HttpSource(), ConfigurableSource {
 
     override fun pageListParse(response: Response): List<Page> {
         val result = response.parseAs<ShinigamiPageListDto>()
-        val resizeServiceBase = preferences.getString("resize_service_url", null)
-        val wideResizeServiceUrl = preferences.getString("wide_resize_service_url", null)
+        val resizeServiceUrl = preferences.getString("resize_service_url", null)
 
-        val wideList = preferences.getString("wide_manga_list", "")
-            ?.split(",")?.map { it.trim().lowercase() } ?: emptyList()
-
-        val isWide = wideList.any { it.isNotBlank() && currentMangaTitle.lowercase().contains(it) }
-
-        val resizeServiceUrl = when {
-            isWide && !wideResizeServiceUrl.isNullOrBlank() -> wideResizeServiceUrl
-            !resizeServiceBase.isNullOrBlank() -> resizeServiceBase
-            else -> null
-        }
-
-    return result.pageList.chapterPage.pages.mapIndexed { index, imageName ->
-        val originalImageUrl = "$cdnUrl${result.pageList.chapterPage.path}$imageName"
-        val finalImageUrl = if (!resizeServiceUrl.isNullOrEmpty()) {
+        return result.pageList.chapterPage.pages.mapIndexed { index, imageName ->
+            val originalImageUrl = "$cdnUrl${result.pageList.chapterPage.path}$imageName"
+            val finalImageUrl = if (!resizeServiceUrl.isNullOrEmpty()) {
             "$resizeServiceUrl$originalImageUrl"
-        } else {
-            originalImageUrl
+            } else {
+                originalImageUrl
+            }
+            Page(index = index, imageUrl = finalImageUrl)
         }
-        Page(index = index, imageUrl = finalImageUrl)
     }
-}
 
     override fun imageUrlParse(response: Response): String = ""
 
@@ -213,26 +198,6 @@ class Shinigami : HttpSource(), ConfigurableSource {
     }
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
-        val wideMangaPref = EditTextPreference(screen.context).apply {
-            key = "wide_manga_list"
-            title = "Komik pakai parameter w=400"
-            summary = "Komik yang butuh lebar 400px. Pisahkan dengan koma. Contoh: One Piece, Lookism"
-            setDefaultValue("")
-            dialogTitle = "Wide Image Manga List"
-            dialogMessage = "Masukkan judul komik yang ingin menggunakan w=400, dipisah koma."
-        }
-        screen.addPreference(wideMangaPref)
-        
-        val wideResizeServicePref = EditTextPreference(screen.context).apply {
-            key = "wide_resize_service_url"
-            title = "Resize Service URL (Wide)"
-            summary = "URL resize khusus komik di whitelist. Contoh: https://imgtachi.vercel.app/img?w=400&q=80&url="
-            setDefaultValue(null)
-            dialogTitle = "Wide Resize Service URL"
-            dialogMessage = "URL ini dipakai untuk komik yang ada di daftar wide image."
-        }
-        screen.addPreference(wideResizeServicePref)
-
         val resizeServicePref = EditTextPreference(screen.context).apply {
             key = "resize_service_url"
             title = "Resize Service URL (Pages)"
