@@ -143,14 +143,24 @@ class Softkomik : HttpSource() {
 
     // ======================== Chapters ========================
     override fun chapterListRequest(manga: SManga): Request {
-        val url = "$apiUrl/komik/${manga.url}/chapter?limit=1000" // limit diturunkan
-        return GET(url, commonHeaders)
+        return GET("$baseUrl/${manga.url}", commonHeaders)
     }
 
     override fun chapterListParse(response: Response): List<SChapter> {
-        val dto = response.parseAs<ChapterListDto>()
-        val slug = response.request.url.pathSegments[1]
-        return dto.chapter.map { chapter ->
+        val manga = response.extractNextJs<MangaDetailsDto>()
+            ?: throw Exception("Could not find manga chapter data")
+        val slug = response.request.url.pathSegments.lastOrNull()
+            ?: throw Exception("Could not find manga slug")
+
+        val chapters = manga.chapter.ifEmpty {
+            fetchChapterList(slug)
+        }
+
+        if (chapters.isEmpty()) {
+            throw Exception("No chapters found")
+        }
+
+        return chapters.map { chapter ->
             val chapterNumStr = chapter.chapter
             val chapterNum = chapterNumStr.substringBefore(".").toFloatOrNull() ?: -1f
             val displayNum = formatChapterDisplay(chapterNumStr)
@@ -160,6 +170,26 @@ class Softkomik : HttpSource() {
                 chapter_number = chapterNum
             }
         }.sortedByDescending { it.chapter_number }
+    }
+
+    private fun fetchChapterList(slug: String): List<ChapterDto> {
+        val chapterApiUrls = listOf(
+            "$apiUrl/komik/$slug/chapter?limit=2000",
+            "$baseUrl/api/komik/$slug/chapter?limit=2000",
+        )
+
+        chapterApiUrls.forEach { url ->
+            runCatching {
+                client.newCall(GET(url, commonHeaders)).execute().use { apiResponse ->
+                    if (!apiResponse.isSuccessful) return@use emptyList()
+                    apiResponse.parseAs<ChapterListDto>().chapter
+                }
+            }.getOrNull()
+                ?.takeIf { it.isNotEmpty() }
+                ?.let { return it }
+        }
+
+        return emptyList()
     }
 
     private fun formatChapterDisplay(chapterStr: String): String {
