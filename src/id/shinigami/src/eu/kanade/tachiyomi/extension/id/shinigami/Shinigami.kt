@@ -130,7 +130,6 @@ class Shinigami : HttpSource(), ConfigurableSource {
     override fun mangaDetailsParse(response: Response): SManga {
         val mangaDetailsResponse = response.parseAs<ShinigamiMangaDetailDto>()
         val mangaDetails = mangaDetailsResponse.data
-        currentMangaTitle = mangaDetails.title ?: ""
         return SManga.create().apply {
             author = mangaDetails.taxonomy["Author"]?.joinToString { it.name }.orEmpty()
             artist = mangaDetails.taxonomy["Artist"]?.joinToString { it.name }.orEmpty()
@@ -151,6 +150,7 @@ class Shinigami : HttpSource(), ConfigurableSource {
     }
 
     override fun chapterListRequest(manga: SManga): Request {
+        currentMangaTitle = manga.title
         return GET("$apiUrl/v1/chapter/${manga.url}/list?page_size=3000", apiHeaders)
     }
 
