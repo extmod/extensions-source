@@ -190,6 +190,26 @@ class Softkomik : HttpSource() {
         }.sortedByDescending { it.chapter_number }
     }
 
+    private fun fetchChapterList(slug: String): List<ChapterDto> {
+        val chapterApiUrls = listOf(
+            "$apiUrl/komik/$slug/chapter?limit=2000",
+            "$baseUrl/api/komik/$slug/chapter?limit=2000",
+        )
+
+        chapterApiUrls.forEach { url ->
+            runCatching {
+                client.newCall(GET(url, commonHeaders)).execute().use { apiResponse ->
+                    if (!apiResponse.isSuccessful) return@use emptyList()
+                    apiResponse.parseAs<ChapterListDto>().chapter
+                }
+            }.getOrNull()
+                ?.takeIf { it.isNotEmpty() }
+                ?.let { return it }
+        }
+
+        return emptyList()
+    }
+
     private fun formatChapterDisplay(chapterStr: String): String {
         val parts = chapterStr.split(".")
         val numPart = parts[0]
