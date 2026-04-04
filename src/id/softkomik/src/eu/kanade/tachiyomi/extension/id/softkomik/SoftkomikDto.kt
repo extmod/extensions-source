@@ -24,6 +24,7 @@ data class MangaDetailsDto(
     val title: String,
     val author: String? = null,
     val Genre: List<String>? = emptyList(),
+    val chapter: List<ChapterDto> = emptyList(),
     val sinopsis: String? = null,
     val status: String? = null,
     val type: String? = null,
