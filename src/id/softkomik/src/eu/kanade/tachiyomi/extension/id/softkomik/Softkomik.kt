@@ -151,6 +151,32 @@ class Softkomik : HttpSource() {
             ?: throw Exception("Could not find manga chapter data")
         val slug = response.request.url.pathSegments.lastOrNull()
             ?: throw Exception("Could not find manga slug")
+        val pageChapters = listOf(
+            manga.chapter,
+            manga.chapters,
+            manga.chapterList,
+            manga.chapter_list,
+            manga.list_chapter,
+        ).firstOrNull { it.isNotEmpty() }.orEmpty()
+
+        val chapters = if (pageChapters.isNotEmpty()) {
+            pageChapters
+        } else {
+            val url = "$apiUrl/komik/$slug/chapter?limit=1000"
+            client.newCall(GET(url, commonHeaders)).execute().use { apiResponse ->
+                if (!apiResponse.isSuccessful) {
+                    emptyList()
+                } else {
+                    apiResponse.parseAs<ChapterListDto>().chapter
+                }
+            }
+        }
+
+        if (chapters.isEmpty()) {
+            throw Exception("No chapters found")
+        }
+
+        return chapters.map { chapter ->
 
         return manga.chapter.map { chapter ->
             val chapterNumStr = chapter.chapter
