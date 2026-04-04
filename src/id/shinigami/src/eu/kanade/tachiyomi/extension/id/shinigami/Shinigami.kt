@@ -182,7 +182,7 @@ class Shinigami : HttpSource(), ConfigurableSource {
         val isWide = wideList.any { it.isNotBlank() && currentMangaTitle.lowercase().contains(it) }
 
         val resizeServiceUrl = if (!resizeServiceBase.isNullOrBlank()) {
-            if (isWide) resizeServiceBase.replace("w=300", "w=400") else resizeServiceBase
+            if (isWide) resizeServiceBase.replace(Regex("w=\\d+"), "w=400") else resizeServiceBase
         } else null
 
         return result.pageList.chapterPage.pages.mapIndexed { index, imageName ->
