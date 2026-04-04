@@ -143,14 +143,40 @@ class Softkomik : HttpSource() {
 
     // ======================== Chapters ========================
     override fun chapterListRequest(manga: SManga): Request {
-        val url = "$apiUrl/komik/${manga.url}/chapter?limit=1000" // limit diturunkan
-        return GET(url, commonHeaders)
+        return GET("$baseUrl/${manga.url}", commonHeaders)
     }
 
     override fun chapterListParse(response: Response): List<SChapter> {
-        val dto = response.parseAs<ChapterListDto>()
-        val slug = response.request.url.pathSegments[1]
-        return dto.chapter.map { chapter ->
+        val manga = response.extractNextJs<MangaDetailsDto>()
+            ?: throw Exception("Could not find manga chapter data")
+        val slug = response.request.url.pathSegments.lastOrNull()
+            ?: throw Exception("Could not find manga slug")
+        val pageChapters = listOf(
+            manga.chapter,
+            manga.chapters,
+            manga.chapterList,
+            manga.chapter_list,
+            manga.list_chapter,
+        ).firstOrNull { it.isNotEmpty() }.orEmpty()
+
+        val chapters = if (pageChapters.isNotEmpty()) {
+            pageChapters
+        } else {
+            val url = "$apiUrl/komik/$slug/chapter?limit=1000"
+            client.newCall(GET(url, commonHeaders)).execute().use { apiResponse ->
+                if (!apiResponse.isSuccessful) {
+                    emptyList()
+                } else {
+                    apiResponse.parseAs<ChapterListDto>().chapter
+                }
+            }
+        }
+
+        if (chapters.isEmpty()) {
+            throw Exception("No chapters found")
+        }
+
+        return chapters.map { chapter ->
             val chapterNumStr = chapter.chapter
             val chapterNum = chapterNumStr.substringBefore(".").toFloatOrNull() ?: -1f
             val displayNum = formatChapterDisplay(chapterNumStr)

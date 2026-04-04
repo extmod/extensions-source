@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.extension.id.softkomik
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerialName
 
 @Serializable
 data class LibDataDto(
@@ -24,6 +25,11 @@ data class MangaDetailsDto(
     val title: String,
     val author: String? = null,
     val Genre: List<String>? = emptyList(),
+    val chapter: List<ChapterDto> = emptyList(),
+    val chapters: List<ChapterDto> = emptyList(),
+    @SerialName("chapterList") val chapterList: List<ChapterDto> = emptyList(),
+    @SerialName("chapter_list") val chapter_list: List<ChapterDto> = emptyList(),
+    @SerialName("list_chapter") val list_chapter: List<ChapterDto> = emptyList(),
     val sinopsis: String? = null,
     val status: String? = null,
     val type: String? = null,
