@@ -31,13 +31,13 @@ class Shinigami : HttpSource(), ConfigurableSource {
     }
 
     override val baseUrl: String
-        get() = preferences.getString("overrideBaseUrl", "https://app.shinigami.asia")!!
+        get() = preferences.getString("overrideBaseUrl", "https://c..shinigami.asia")!!
 
     override val id = 3411809758861089969
     override val name = "Shinigami"
 
     private val apiUrl = "https://api.shngm.io"
-    private val cdnUrl = "https://delivery.shngm.id"
+    private val cdnUrl = "https://assets.shngm.id"
 
     override val lang = "id"
     override val supportsLatest = true
@@ -175,26 +175,29 @@ class Shinigami : HttpSource(), ConfigurableSource {
     override fun pageListParse(response: Response): List<Page> {
         val result = response.parseAs<ShinigamiPageListDto>()
         val resizeServiceBase = preferences.getString("resize_service_url", null)
+        val wideResizeServiceUrl = preferences.getString("wide_resize_service_url", null)
 
         val wideList = preferences.getString("wide_manga_list", "")
             ?.split(",")?.map { it.trim().lowercase() } ?: emptyList()
 
         val isWide = wideList.any { it.isNotBlank() && currentMangaTitle.lowercase().contains(it) }
 
-        val resizeServiceUrl = if (!resizeServiceBase.isNullOrBlank()) {
-            if (isWide) resizeServiceBase.replace(Regex("w=\\d+"), "w=400") else resizeServiceBase
-        } else null
-
-        return result.pageList.chapterPage.pages.mapIndexed { index, imageName ->
-            val originalImageUrl = "$cdnUrl${result.pageList.chapterPage.path}$imageName"
-            val finalImageUrl = if (!resizeServiceUrl.isNullOrEmpty()) {
-                "$resizeServiceUrl$originalImageUrl"
-            } else {
-                originalImageUrl
-            }
-            Page(index = index, imageUrl = finalImageUrl)
+        val resizeServiceUrl = when {
+            isWide && !wideResizeServiceUrl.isNullOrBlank() -> wideResizeServiceUrl
+            !resizeServiceBase.isNullOrBlank() -> resizeServiceBase
+            else -> null
         }
+
+    return result.pageList.chapterPage.pages.mapIndexed { index, imageName ->
+        val originalImageUrl = "$cdnUrl${result.pageList.chapterPage.path}$imageName"
+        val finalImageUrl = if (!resizeServiceUrl.isNullOrEmpty()) {
+            "$resizeServiceUrl$originalImageUrl"
+        } else {
+            originalImageUrl
+        }
+        Page(index = index, imageUrl = finalImageUrl)
     }
+}
 
     override fun imageUrlParse(response: Response): String = ""
 
@@ -212,18 +215,28 @@ class Shinigami : HttpSource(), ConfigurableSource {
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
         val wideMangaPref = EditTextPreference(screen.context).apply {
             key = "wide_manga_list"
-            title = "Daftar Komik Wide Image (w=400)"
+            title = "Komik pakai parameter w=400"
             summary = "Komik yang butuh lebar 400px. Pisahkan dengan koma. Contoh: One Piece, Lookism"
             setDefaultValue("")
             dialogTitle = "Wide Image Manga List"
             dialogMessage = "Masukkan judul komik yang ingin menggunakan w=400, dipisah koma."
         }
         screen.addPreference(wideMangaPref)
+        
+        val wideResizeServicePref = EditTextPreference(screen.context).apply {
+            key = "wide_resize_service_url"
+            title = "Resize Service URL (Wide)"
+            summary = "URL resize khusus komik di whitelist. Contoh: https://imgtachi.vercel.app/img?w=400&q=80&url="
+            setDefaultValue(null)
+            dialogTitle = "Wide Resize Service URL"
+            dialogMessage = "URL ini dipakai untuk komik yang ada di daftar wide image."
+        }
+        screen.addPreference(wideResizeServicePref)
 
         val resizeServicePref = EditTextPreference(screen.context).apply {
             key = "resize_service_url"
             title = "Resize Service URL (Pages)"
-            summary = "Masukkan URL layanan resize gambar. Contoh: https://img.vercel.app/img?w=300&q=80&url="
+            summary = "Masukkan URL layanan resize gambar."
             setDefaultValue(null)
             dialogTitle = "Resize Service URL"
             dialogMessage = "URL akan digabungkan dengan URL gambar asli. Pastikan format URL benar."
@@ -236,7 +249,7 @@ class Shinigami : HttpSource(), ConfigurableSource {
             summary = "Update domain untuk ekstensi ini"
             setDefaultValue(baseUrl)
             dialogTitle = "Update domain untuk ekstensi ini"
-            dialogMessage = "Original: https://app.shinigami.asia"
+            dialogMessage = "Original: $baseUrl"
             setOnPreferenceChangeListener { _, newValue ->
                 val newUrl = newValue as String
                 preferences.edit().putString("overrideBaseUrl", newUrl).apply()
