@@ -177,6 +177,8 @@ class Softkomik : HttpSource() {
         }
 
         return chapters.map { chapter ->
+
+        return manga.chapter.map { chapter ->
             val chapterNumStr = chapter.chapter
             val chapterNum = chapterNumStr.substringBefore(".").toFloatOrNull() ?: -1f
             val displayNum = formatChapterDisplay(chapterNumStr)
