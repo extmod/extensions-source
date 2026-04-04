@@ -31,7 +31,7 @@ class Shinigami : HttpSource(), ConfigurableSource {
     }
 
     override val baseUrl: String
-        get() = preferences.getString("overrideBaseUrl", "https://c..shinigami.asia")!!
+        get() = preferences.getString("overrideBaseUrl", "https://c.shinigami.asia")!!
 
     override val id = 3411809758861089969
     override val name = "Shinigami"
