@@ -21,9 +21,10 @@ data class AggregatorManga(
     val cover: String = "",
     val status: String = "",
     val updatedAt: String = "",
+    val url: String = "",
 ) {
     fun toSManga(): SManga = SManga.create().apply {
-        url           = "$source:$slug:$id"  // ✅ simpan id untuk chapter request
+        url           = "${this@AggregatorManga.source}:${this@AggregatorManga.slug}:${this@AggregatorManga.id}:${this@AggregatorManga.url}"
         title         = this@AggregatorManga.title
         thumbnail_url = this@AggregatorManga.cover
         status        = when (this@AggregatorManga.status.lowercase()) {
@@ -122,7 +123,7 @@ data class KomikcastChapter(
 
 @Serializable
 data class KomikcastChapterData(
-    val index: Int? = null,      // ✅ Int bukan String
+    val index: Int? = null,
     val title: String? = null,
     val slug: String? = null,
 )
@@ -159,7 +160,7 @@ data class KiryuuContent(val rendered: String? = null)
 @Serializable
 data class KiryuuEmbedded(
     @SerialName("wp:featuredmedia") val featuredMedia: List<KiryuuMedia>? = null,
-    @SerialName("wp:term")          val wpTerm: List<List<KiryuuTerm>>? = null,  // ✅ tambah
+    @SerialName("wp:term")          val wpTerm: List<List<KiryuuTerm>>? = null,
 )
 
 @Serializable
