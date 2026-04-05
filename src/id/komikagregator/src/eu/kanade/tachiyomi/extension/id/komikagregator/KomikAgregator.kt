@@ -17,14 +17,13 @@ import okhttp3.Response
 
 class KomikAgregator : HttpSource() {
 
-    override val id   = 1234567890123456789L // ganti dengan ID unik
+    override val id   = 1234567890123456789L
     override val name = "Komik Agregator"
     override val lang = "id"
     override val supportsLatest = true
 
     override val baseUrl = "https://komik-mauve.vercel.app"
 
-    // URL sumber asli per source — untuk getMangaUrl dan reader
     private val shinigamiUrl = "https://c.shinigami.asia"
     private val komikcastUrl = "https://v1.komikcast.fit"
     private val kiryuuUrl    = "https://v2.kiryuu.to"
@@ -87,25 +86,24 @@ class KomikAgregator : HttpSource() {
     // ─── DETAIL ──────────────────────────────────────────────────────────────
 
     override fun mangaDetailsRequest(manga: SManga): Request {
-        // manga.url format: "source:slug" — contoh "shinigami:solo-leveling"
         val (source, slug) = manga.url.split(":", limit = 2)
         val path = when (source) {
             "shinigami" -> "/api/shinigami?path=${encode("/v1/manga/detail/$slug")}"
             "komikcast" -> "/api/komikcast?path=${encode("/series/$slug")}"
             "kiryuu"    -> "/api/kiryuu?path=${encode("/wp-json/wp/v2/manga?slug[]=$slug&_embed")}"
-            else -> throw Exception("Source tidak dikenal: $source")
+            else        -> throw Exception("Source tidak dikenal: $source")
         }
         return GET("$baseUrl$path", headers)
     }
 
     override fun mangaDetailsParse(response: Response): SManga {
-        val source = response.request.url.toString().let {
-            when {
-                it.contains("/api/shinigami") -> "shinigami"
-                it.contains("/api/komikcast") -> "komikcast"
-                else -> "kiryuu"
-            }
+        val url = response.request.url.toString()
+        val source = when {
+            url.contains("/api/shinigami") -> "shinigami"
+            url.contains("/api/komikcast") -> "komikcast"
+            else -> "kiryuu"
         }
+
         return when (source) {
             "shinigami" -> {
                 val r = response.parseAs<ShinigamiDetailResponse>()
@@ -114,15 +112,19 @@ class KomikAgregator : HttpSource() {
                 SManga.create().apply {
                     title         = d.title ?: ""
                     thumbnail_url = d.coverPortraitUrl ?: d.coverImageUrl
-                    status        = if (d.status == 1) SManga.ONGOING else if (d.status == 2) SManga.COMPLETED else SManga.UNKNOWN
-                    author        = tax["Author"]?.joinToString { it.name }.orEmpty()
-                    description   = d.description
-                    genre         = tax["Genre"]?.joinToString { it.name }.orEmpty()
+                    status        = when (d.status) {
+                        1    -> SManga.ONGOING
+                        2    -> SManga.COMPLETED
+                        else -> SManga.UNKNOWN
+                    }
+                    author      = tax["Author"]?.joinToString { it.name }.orEmpty()
+                    description = d.description
+                    genre       = tax["Genre"]?.joinToString { it.name }.orEmpty()
                 }
             }
             "komikcast" -> {
                 val r = response.parseAs<KomikcastDetailResponse>()
-                val d = r.data?.data ?: r.data ?: throw Exception("Data kosong")
+                val d = r.data?.data ?: throw Exception("Data komikcast kosong")
                 SManga.create().apply {
                     title         = d.title ?: ""
                     thumbnail_url = d.coverImage
@@ -131,14 +133,17 @@ class KomikAgregator : HttpSource() {
                         "completed" -> SManga.COMPLETED
                         else        -> SManga.UNKNOWN
                     }
-                    author        = d.author
-                    description   = d.synopsis ?: d.description
-                    genre         = d.genres?.mapNotNull { it.data?.name ?: it.name }?.joinToString().orEmpty()
+                    author      = d.author
+                    description = d.synopsis ?: d.description
+                    genre       = d.genres
+                        ?.mapNotNull { it.data?.name ?: it.name }
+                        ?.joinToString()
+                        .orEmpty()
                 }
             }
-            else -> { // kiryuu
+            else -> {
                 val list = response.parseAs<List<KiryuuMangaDto>>()
-                val d = list.firstOrNull() ?: throw Exception("Data kosong")
+                val d = list.firstOrNull() ?: throw Exception("Data kiryuu kosong")
                 val cls = d.classList ?: emptyList()
                 SManga.create().apply {
                     title         = d.title?.rendered ?: ""
@@ -148,8 +153,9 @@ class KomikAgregator : HttpSource() {
                         cls.contains("status-completed") -> SManga.COMPLETED
                         else                             -> SManga.UNKNOWN
                     }
-                    description   = d.content?.rendered?.replace(Regex("<[^>]+>"), "")
-                    genre         = cls.filter { it.startsWith("genre-") }
+                    description = d.content?.rendered?.replace(Regex("<[^>]+>"), "")
+                    genre       = cls
+                        .filter { it.startsWith("genre-") }
                         .joinToString { it.removePrefix("genre-").replace("-", " ") }
                 }
             }
@@ -173,50 +179,52 @@ class KomikAgregator : HttpSource() {
             "shinigami" -> "/api/shinigami?path=${encode("/v1/chapter/$slug/list?page_size=3000")}"
             "komikcast" -> "/api/komikcast?path=${encode("/series/$slug/chapters")}"
             "kiryuu"    -> "/api/kiryuu?action=chapter_list&manga_id=$slug"
-            else -> throw Exception("Source tidak dikenal: $source")
+            else        -> throw Exception("Source tidak dikenal: $source")
         }
         return GET("$baseUrl$path", headers)
     }
 
     override fun chapterListParse(response: Response): List<SChapter> {
-        val source = response.request.url.toString().let {
-            when {
-                it.contains("/api/shinigami") -> "shinigami"
-                it.contains("/api/komikcast") -> "komikcast"
-                else -> "kiryuu"
-            }
+        val url = response.request.url.toString()
+        val source = when {
+            url.contains("/api/shinigami") -> "shinigami"
+            url.contains("/api/komikcast") -> "komikcast"
+            else -> "kiryuu"
         }
+
         return when (source) {
             "shinigami" -> {
                 val r = response.parseAs<ShinigamiChapterListResponse>()
-                r.chapterList.map { ch ->
+                val list = r.chapterList.ifEmpty { r.data }
+                list.map { ch ->
                     SChapter.create().apply {
-                        name      = "Chapter ${ch.chapterNumber.toString().replace(".0", "")} ${ch.title ?: ""}".trim()
-                        url       = "shinigami:${ch.chapterId}"
+                        val num = ch.chapterNumber?.toString()?.replace(".0", "") ?: "?"
+                        name        = "Chapter $num ${ch.title ?: ""}".trim()
+                        this.url    = "shinigami:${ch.chapterId}"
                         date_upload = 0L
                     }
                 }
             }
             "komikcast" -> {
                 val r = response.parseAs<KomikcastChapterListResponse>()
-                // ambil slug manga dari URL request
-                val mangaSlug = response.request.url.toString()
-                    .substringAfter("/series/").substringBefore("/chapters")
+                val mangaSlug = url
+                    .substringAfter("/series/")
+                    .substringBefore("/chapters")
                 r.data.map { ch ->
+                    val idx = ch.data?.index ?: ch.chapterIndex ?: "?"
                     SChapter.create().apply {
-                        val idx = ch.data?.index ?: ch.chapterIndex ?: "?"
-                        name    = "Chapter $idx"
-                        url     = "komikcast:$mangaSlug:$idx"
+                        name        = "Chapter $idx"
+                        this.url    = "komikcast:$mangaSlug:$idx"
                         date_upload = 0L
                     }
                 }
             }
-            else -> { // kiryuu
+            else -> {
                 val r = response.parseAs<KiryuuChapterListResponse>()
                 r.data.map { ch ->
                     SChapter.create().apply {
-                        name    = ch.name ?: ""
-                        url     = "kiryuu:${ch.url}"
+                        name        = ch.name ?: ""
+                        this.url    = "kiryuu:${ch.url}"
                         date_upload = 0L
                     }
                 }
@@ -229,6 +237,7 @@ class KomikAgregator : HttpSource() {
     override fun pageListRequest(chapter: SChapter): Request {
         val parts  = chapter.url.split(":", limit = 3)
         val source = parts[0]
+
         val path = when (source) {
             "shinigami" -> {
                 val chapterId = parts[1]
@@ -239,7 +248,7 @@ class KomikAgregator : HttpSource() {
                 val chapterIdx = parts[2]
                 "/api/komikcast?path=${encode("/series/$mangaSlug/chapters/$chapterIdx")}"
             }
-            else -> { // kiryuu — url langsung ke halaman chapter
+            else -> {
                 val chapterUrl = parts.drop(1).joinToString(":")
                 return GET(chapterUrl, headers)
             }
@@ -254,7 +263,7 @@ class KomikAgregator : HttpSource() {
                 val r = response.parseAs<ShinigamiPageListResponse>()
                 val images = r.data?.chapterImage ?: r.data?.images ?: emptyList()
                 images.mapIndexed { i, img ->
-                    Page(i, imageUrl = img.imageUrl ?: img.url ?: img.toString())
+                    Page(i, imageUrl = img.imageUrl ?: img.url ?: "")
                 }
             }
             url.contains("/api/komikcast") -> {
@@ -262,14 +271,14 @@ class KomikAgregator : HttpSource() {
                 val images = r.data?.data?.images ?: r.data?.images ?: emptyList()
                 images.mapIndexed { i, imageUrl -> Page(i, imageUrl = imageUrl) }
             }
-            else -> { // kiryuu — parse HTML
+            else -> {
                 val html = response.body.string()
                 val regex = Regex("""src="(https?://[^"]+\.(jpg|png|webp)[^"]*)"""")
                 regex.findAll(html)
                     .map { it.groupValues[1] }
                     .filter { it.contains("yuucdn.com") || it.contains("wp-content/uploads/imgsc") }
                     .distinct()
-                    .mapIndexed { i, url -> Page(i, imageUrl = url) }
+                    .mapIndexed { i, imgUrl -> Page(i, imageUrl = imgUrl) }
                     .toList()
             }
         }
@@ -279,8 +288,6 @@ class KomikAgregator : HttpSource() {
         throw UnsupportedOperationException()
 
     override fun getFilterList(): FilterList = FilterList()
-
-    // ─── HELPER ──────────────────────────────────────────────────────────────
 
     private fun encode(s: String) = java.net.URLEncoder.encode(s, "UTF-8")
 }
