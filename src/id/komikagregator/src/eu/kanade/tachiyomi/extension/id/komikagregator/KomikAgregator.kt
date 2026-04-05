@@ -14,6 +14,10 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
+import org.jsoup.Jsoup
+import java.text.SimpleDateFormat
+import java.util.Locale
+import java.util.TimeZone
 
 class KomikAgregator : HttpSource() {
 
@@ -34,6 +38,21 @@ class KomikAgregator : HttpSource() {
 
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
         .add("Accept", "application/json")
+
+    private val dateFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US).apply {
+        timeZone = TimeZone.getTimeZone("UTC")
+    }
+
+    private fun parseDate(dateStr: String?): Long {
+        if (dateStr.isNullOrEmpty()) return 0L
+        return try {
+            dateFormat.parse(
+                dateStr.trimEnd('Z').substringBefore("+").substringBefore("."),
+            )?.time ?: 0L
+        } catch (e: Exception) {
+            0L
+        }
+    }
 
     // ─── POPULAR ─────────────────────────────────────────────────────────────
 
@@ -177,7 +196,7 @@ class KomikAgregator : HttpSource() {
         val (source, slug) = manga.url.split(":", limit = 2)
         val path = when (source) {
             "shinigami" -> "/api/shinigami?path=${encode("/v1/chapter/$slug/list?page_size=3000")}"
-            "komikcast" -> "/api/komikcast?path=${encode("/series/$slug/chapters")}"
+            "komikcast" -> "/api/komikcast?path=${encode("/series/$slug/chapters")}&slug=$slug"
             "kiryuu"    -> "/api/kiryuu?action=chapter_list&manga_id=$slug"
             else        -> throw Exception("Source tidak dikenal: $source")
         }
@@ -201,21 +220,19 @@ class KomikAgregator : HttpSource() {
                         val num = ch.chapterNumber?.toString()?.replace(".0", "") ?: "?"
                         name        = "Chapter $num ${ch.title ?: ""}".trim()
                         this.url    = "shinigami:${ch.chapterId}"
-                        date_upload = 0L
+                        date_upload = parseDate(ch.releaseDate)
                     }
                 }
             }
             "komikcast" -> {
                 val r = response.parseAs<KomikcastChapterListResponse>()
-                val mangaSlug = url
-                    .substringAfter("/series/")
-                    .substringBefore("/chapters")
+                val mangaSlug = response.request.url.queryParameter("slug") ?: ""
                 r.data.map { ch ->
                     val idx = ch.data?.index ?: ch.chapterIndex ?: "?"
                     SChapter.create().apply {
                         name        = "Chapter $idx"
                         this.url    = "komikcast:$mangaSlug:$idx"
-                        date_upload = 0L
+                        date_upload = parseDate(ch.createdAt)
                     }
                 }
             }
@@ -225,7 +242,7 @@ class KomikAgregator : HttpSource() {
                     SChapter.create().apply {
                         name        = ch.name ?: ""
                         this.url    = "kiryuu:${ch.url}"
-                        date_upload = 0L
+                        date_upload = parseDate(ch.date)
                     }
                 }
             }
@@ -265,9 +282,9 @@ class KomikAgregator : HttpSource() {
                 val path = r.data?.chapter?.path ?: ""
                 val pages = r.data?.chapter?.data ?: emptyList()
                 pages.mapIndexed { i, filename ->
-                Page(i, imageUrl = "$baseUrl$path$filename")
-        }
-    }
+                    Page(i, imageUrl = "$baseUrl$path$filename")
+                }
+            }
             url.contains("/api/komikcast") -> {
                 val r = response.parseAs<KomikcastPageListResponse>()
                 val images = r.data?.data?.images ?: r.data?.images ?: emptyList()
@@ -275,13 +292,11 @@ class KomikAgregator : HttpSource() {
             }
             else -> {
                 val html = response.body.string()
-                val regex = Regex("""src="(https?://[^"]+\.(jpg|png|webp)[^"]*)"""")
-                regex.findAll(html)
-                    .map { it.groupValues[1] }
-                    .filter { it.contains("yuucdn.com") || it.contains("wp-content/uploads/imgsc") }
-                    .distinct()
-                    .mapIndexed { i, imgUrl -> Page(i, imageUrl = imgUrl) }
-                    .toList()
+                val document = Jsoup.parseBodyFragment(html, kiryuuUrl)
+                document.select("main .relative section > img")
+                    .mapIndexed { i, img ->
+                        Page(i, imageUrl = img.absUrl("src"))
+                    }
             }
         }
     }
