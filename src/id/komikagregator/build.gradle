@@ -1,0 +1,5 @@
+ext {
+    extName = 'Komik Agregator'
+    extClass = '.KomikAgregator'
+    extVersionCode = 1
+}
