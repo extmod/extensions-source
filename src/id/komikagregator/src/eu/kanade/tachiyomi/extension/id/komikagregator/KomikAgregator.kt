@@ -261,11 +261,13 @@ class KomikAgregator : HttpSource() {
         return when {
             url.contains("/api/shinigami") -> {
                 val r = response.parseAs<ShinigamiPageListResponse>()
-                val images = r.data?.chapterImage ?: r.data?.images ?: emptyList()
-                images.mapIndexed { i, img ->
-                    Page(i, imageUrl = img.imageUrl ?: img.url ?: "")
-                }
-            }
+                val baseUrl = r.data?.baseUrl ?: ""
+                val path = r.data?.chapter?.path ?: ""
+                val pages = r.data?.chapter?.data ?: emptyList()
+                pages.mapIndexed { i, filename ->
+                Page(i, imageUrl = "$baseUrl$path$filename")
+        }
+    }
             url.contains("/api/komikcast") -> {
                 val r = response.parseAs<KomikcastPageListResponse>()
                 val images = r.data?.data?.images ?: r.data?.images ?: emptyList()
