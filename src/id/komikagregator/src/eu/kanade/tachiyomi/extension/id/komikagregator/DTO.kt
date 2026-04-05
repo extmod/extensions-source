@@ -23,7 +23,6 @@ data class AggregatorManga(
     val updatedAt: String = "",
 ) {
     fun toSManga(): SManga = SManga.create().apply {
-        // url format: "source:slug" — dipakai untuk routing di detail/chapter/page
         url           = "$source:$slug"
         title         = this@AggregatorManga.title
         thumbnail_url = this@AggregatorManga.cover
@@ -64,7 +63,7 @@ data class ShinigamiChapter(
     @SerialName("chapter_id")     val chapterId: String? = null,
     @SerialName("chapter_number") val chapterNumber: Double? = null,
     val title: String? = null,
-    @SerialName("created_at")     val createdAt: String? = null,
+    @SerialName("release_date")   val releaseDate: String? = null,
 )
 
 @Serializable
@@ -72,14 +71,14 @@ data class ShinigamiPageListResponse(val data: ShinigamiPageData? = null)
 
 @Serializable
 data class ShinigamiPageData(
-    @SerialName("chapter_image") val chapterImage: List<ShinigamiImage>? = null,
-    val images: List<ShinigamiImage>? = null,
+    @SerialName("base_url") val baseUrl: String? = null,
+    val chapter: ShinigamiChapterPages? = null,
 )
 
 @Serializable
-data class ShinigamiImage(
-    @SerialName("image_url") val imageUrl: String? = null,
-    val url: String? = null,
+data class ShinigamiChapterPages(
+    val path: String? = null,
+    val data: List<String> = emptyList(),
 )
 
 // ─── KOMIKCAST ───────────────────────────────────────────────────────────────
@@ -90,7 +89,6 @@ data class KomikcastDetailResponse(val data: KomikcastDetailWrapper? = null)
 @Serializable
 data class KomikcastDetailWrapper(
     val data: KomikcastMangaDetail? = null,
-    // fallback kalau struktur flat
     val title: String? = null,
     val coverImage: String? = null,
     val status: String? = null,
