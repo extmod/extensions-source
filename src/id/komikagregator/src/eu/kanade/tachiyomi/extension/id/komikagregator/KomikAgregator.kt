@@ -103,7 +103,7 @@ class KomikAgregator : HttpSource() {
     // ─── DETAIL ──────────────────────────────────────────────────────────────
 
     override fun mangaDetailsRequest(manga: SManga): Request {
-        val parts  = manga.url.split(":", limit = 4)
+        val parts  = manga.url.split(":", limit = 3)
         val source = parts[0]
         val slug   = parts[1]
         val path = when (source) {
@@ -188,20 +188,19 @@ class KomikAgregator : HttpSource() {
     }
 
     override fun getMangaUrl(manga: SManga): String {
-        val parts = manga.url.split(":", limit = 4)
-        return parts.getOrNull(3) ?: ""
+        val parts = manga.url.split(":", limit = 3)
+        return parts.getOrNull(2) ?: ""
     }
 
     // ─── CHAPTER LIST ────────────────────────────────────────────────────────
 
     override fun chapterListRequest(manga: SManga): Request {
-        val parts  = manga.url.split(":", limit = 4)
+        val parts  = manga.url.split(":", limit = 3)
         val source = parts[0]
         val slug   = parts[1]
-        val id     = parts.getOrNull(2) ?: ""
         val path = when (source) {
             "shinigami" -> "/api/shinigami?path=${encode("/v1/chapter/$slug/list?page_size=3000")}"
-            "komikcast" -> "/api/komikcast?path=${encode("/series/$id/chapters")}&slug=$slug"
+            "komikcast" -> "/api/komikcast?path=${encode("/series/$slug/chapters")}&slug=$slug"
             "kiryuu"    -> "/api/kiryuu?action=chapter_list&manga_id=$slug"
             else        -> throw Exception("Source tidak dikenal: $source")
         }
