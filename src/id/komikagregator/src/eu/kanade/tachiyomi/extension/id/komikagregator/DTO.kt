@@ -23,7 +23,7 @@ data class AggregatorManga(
     val updatedAt: String = "",
 ) {
     fun toSManga(): SManga = SManga.create().apply {
-        url           = "$source:$slug"
+        url           = "$source:$slug:$id"  // ✅ simpan id untuk chapter request
         title         = this@AggregatorManga.title
         thumbnail_url = this@AggregatorManga.cover
         status        = when (this@AggregatorManga.status.lowercase()) {
@@ -42,15 +42,13 @@ data class ShinigamiDetailResponse(val data: ShinigamiMangaDetail)
 @Serializable
 data class ShinigamiMangaDetail(
     val title: String? = null,
-    @SerialName("cover_portrait_url") val coverPortraitUrl: String? = null,
-    @SerialName("cover_image_url")    val coverImageUrl: String? = null,
     val status: Int? = null,
     val description: String? = null,
     val taxonomy: Map<String, List<ShinigamiTaxonomy>>? = null,
 )
 
 @Serializable
-data class ShinigamiTaxonomy(val name: String)
+data class ShinigamiTaxonomy(val name: String = "")
 
 @Serializable
 data class ShinigamiChapterListResponse(
@@ -89,13 +87,6 @@ data class KomikcastDetailResponse(val data: KomikcastDetailWrapper? = null)
 @Serializable
 data class KomikcastDetailWrapper(
     val data: KomikcastMangaDetail? = null,
-    val title: String? = null,
-    val coverImage: String? = null,
-    val status: String? = null,
-    val author: String? = null,
-    val synopsis: String? = null,
-    val description: String? = null,
-    val genres: List<KomikcastGenre>? = null,
 )
 
 @Serializable
@@ -104,6 +95,7 @@ data class KomikcastMangaDetail(
     val coverImage: String? = null,
     val status: String? = null,
     val author: String? = null,
+    val format: String? = null,
     val synopsis: String? = null,
     val description: String? = null,
     val genres: List<KomikcastGenre>? = null,
@@ -123,13 +115,17 @@ data class KomikcastChapterListResponse(val data: List<KomikcastChapter> = empty
 
 @Serializable
 data class KomikcastChapter(
+    val id: Int? = null,
     val data: KomikcastChapterData? = null,
-    val chapterIndex: String? = null,
     val createdAt: String? = null,
 )
 
 @Serializable
-data class KomikcastChapterData(val index: String? = null)
+data class KomikcastChapterData(
+    val index: Int? = null,      // ✅ Int bukan String
+    val title: String? = null,
+    val slug: String? = null,
+)
 
 @Serializable
 data class KomikcastPageListResponse(val data: KomikcastPageWrapper? = null)
@@ -150,8 +146,8 @@ data class KiryuuMangaDto(
     val slug: String? = null,
     val title: KiryuuTitle? = null,
     val content: KiryuuContent? = null,
-    @SerialName("class_list")  val classList: List<String>? = null,
-    @SerialName("_embedded")   val embedded: KiryuuEmbedded? = null,
+    @SerialName("class_list") val classList: List<String>? = null,
+    @SerialName("_embedded")  val embedded: KiryuuEmbedded? = null,
 )
 
 @Serializable
@@ -163,10 +159,17 @@ data class KiryuuContent(val rendered: String? = null)
 @Serializable
 data class KiryuuEmbedded(
     @SerialName("wp:featuredmedia") val featuredMedia: List<KiryuuMedia>? = null,
+    @SerialName("wp:term")          val wpTerm: List<List<KiryuuTerm>>? = null,  // ✅ tambah
 )
 
 @Serializable
 data class KiryuuMedia(@SerialName("source_url") val sourceUrl: String? = null)
+
+@Serializable
+data class KiryuuTerm(
+    val name: String? = null,
+    val taxonomy: String? = null,
+)
 
 @Serializable
 data class KiryuuChapterListResponse(val data: List<KiryuuChapter> = emptyList())
