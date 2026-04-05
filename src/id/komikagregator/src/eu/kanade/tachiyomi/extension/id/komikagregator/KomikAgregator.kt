@@ -28,10 +28,6 @@ class KomikAgregator : HttpSource() {
 
     override val baseUrl = "https://komik-mauve.vercel.app"
 
-    private val shinigamiUrl = "https://c.shinigami.asia"
-    private val komikcastUrl = "https://v1.komikcast.fit"
-    private val kiryuuUrl    = "https://v2.kiryuu.to"
-
     override val client: OkHttpClient = network.cloudflareClient.newBuilder()
         .rateLimit(3)
         .build()
@@ -107,7 +103,7 @@ class KomikAgregator : HttpSource() {
     // ─── DETAIL ──────────────────────────────────────────────────────────────
 
     override fun mangaDetailsRequest(manga: SManga): Request {
-        val parts  = manga.url.split(":", limit = 3)
+        val parts  = manga.url.split(":", limit = 4)
         val source = parts[0]
         val slug   = parts[1]
         val path = when (source) {
@@ -192,20 +188,14 @@ class KomikAgregator : HttpSource() {
     }
 
     override fun getMangaUrl(manga: SManga): String {
-        val parts  = manga.url.split(":", limit = 3)
-        val source = parts[0]
-        val slug   = parts[1]
-        return when (source) {
-            "shinigami" -> "$shinigamiUrl/series/$slug"
-            "komikcast" -> "$komikcastUrl/series/$slug"
-            else        -> "$kiryuuUrl/manga/$slug"
-        }
+        val parts = manga.url.split(":", limit = 4)
+        return parts.getOrNull(3) ?: ""
     }
 
     // ─── CHAPTER LIST ────────────────────────────────────────────────────────
 
     override fun chapterListRequest(manga: SManga): Request {
-        val parts  = manga.url.split(":", limit = 3)
+        val parts  = manga.url.split(":", limit = 4)
         val source = parts[0]
         val slug   = parts[1]
         val id     = parts.getOrNull(2) ?: ""
@@ -307,7 +297,7 @@ class KomikAgregator : HttpSource() {
             }
             else -> {
                 val html = response.body.string()
-                val document = Jsoup.parseBodyFragment(html, kiryuuUrl)
+                val document = Jsoup.parseBodyFragment(html, "https://v2.kiryuu.to")
                 document.select("main .relative section > img")
                     .mapIndexed { i, img ->
                         Page(i, imageUrl = img.absUrl("src"))
