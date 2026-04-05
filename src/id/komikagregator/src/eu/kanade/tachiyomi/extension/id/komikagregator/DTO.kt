@@ -24,7 +24,7 @@ data class AggregatorManga(
     val url: String = "",
 ) {
     fun toSManga(): SManga = SManga.create().apply {
-        url           = "${this@AggregatorManga.source}:${this@AggregatorManga.slug}:${this@AggregatorManga.id}:${this@AggregatorManga.url}"
+        url           = "${this@AggregatorManga.source}:${this@AggregatorManga.slug}:${this@AggregatorManga.url}"
         title         = this@AggregatorManga.title
         thumbnail_url = this@AggregatorManga.cover
         status        = when (this@AggregatorManga.status.lowercase()) {
