@@ -229,26 +229,22 @@ class KomikAgregator : HttpSource() {
                 }
             }
             "komikcast" -> {
-    val r = response.parseAs<KomikcastChapterListResponse>()
-    val mangaSlug = response.request.url.queryParameter("slug") ?: ""
-    r.data.map { ch ->
-        val idxNumber = ch.data?.index
-        val idx = if (idxNumber != null) {
-            // Format: 112.0 -> "112", 4.2 -> "4.2"
-            if (idxNumber == idxNumber.toInt().toDouble()) {
-                idxNumber.toInt().toString()
-            } else {
-                idxNumber.toString()
+                val r = response.parseAs<KomikcastChapterListResponse>()
+                val mangaSlug = response.request.url.queryParameter("slug") ?: ""
+                r.data.map { ch ->
+                    val idxNumber = ch.data?.index
+                    val idx = if (idxNumber != null) {
+                        if (idxNumber == idxNumber.toInt().toDouble()) idxNumber.toInt().toString()
+                        else idxNumber.toString()
+                } else "?"
+                val title = ch.data?.title ?: ""
+                SChapter.create().apply {
+                    this.name = if (title.isNotBlank()) "Chapter $idx - $title" else "Chapter $idx"
+                    this.url = "komikcast:$mangaSlug:$idx"
+                    this.date_upload = parseDate(ch.createdAt)
+                }
             }
-        } else "?"
-        val title = ch.data?.title ?: ""
-        SChapter.create().apply {
-            name = if (title.isNotBlank()) "Chapter $idx - $title" else "Chapter $idx"
-            url = "komikcast:$mangaSlug:$idx"
-            date_upload = parseDate(ch.createdAt)
         }
-    }
-}
             else -> {
                 val r = response.parseAs<KiryuuChapterListResponse>()
                 r.data.map { ch ->
