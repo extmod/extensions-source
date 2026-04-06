@@ -123,7 +123,7 @@ data class KomikcastChapter(
 
 @Serializable
 data class KomikcastChapterData(
-    val index: String? = null,
+    val index: Double? = null,
     val title: String? = null,
     val slug: String? = null,
 )
