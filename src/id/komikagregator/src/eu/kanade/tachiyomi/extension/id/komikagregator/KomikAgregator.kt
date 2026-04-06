@@ -26,7 +26,7 @@ class KomikAgregator : HttpSource() {
     override val lang = "id"
     override val supportsLatest = true
 
-    override val baseUrl = "https://komik-mauve.vercel.app"
+    override val baseUrl = "https://komikmix.up.railway.app"
 
     override val client: OkHttpClient = network.cloudflareClient.newBuilder()
         .rateLimit(3)
