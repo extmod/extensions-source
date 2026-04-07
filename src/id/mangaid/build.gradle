@@ -1,9 +1,7 @@
 ext {
     extName = 'MangaID'
-    pkgNameSuffix = 'id.mangaid'
     extClass = '.MangaId'
     extVersionCode = 1
-    libVersion = '1.4'
 }
 
 apply from: "$rootDir/common.gradle"
