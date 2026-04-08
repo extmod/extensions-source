@@ -25,7 +25,8 @@ class KomikAgregator : HttpSource() {
     override val lang = "id"
     override val supportsLatest = true
 
-    override val baseUrl = "https://123.komikmix.workers.dev"
+    // Ganti dengan URL worker kamu (tanpa /api)
+    override val baseUrl = "https://123.workers.dev"
 
     override val client: OkHttpClient = network.cloudflareClient.newBuilder()
         .rateLimit(3)
@@ -52,7 +53,7 @@ class KomikAgregator : HttpSource() {
     // ─── POPULAR ───────────────────────────────────────────────────────────
 
     override fun popularMangaRequest(page: Int): Request =
-        GET("$baseUrl/api/popular?page=$page&page_size=24", headers)
+        GET("$baseUrl/popular?page=$page&page_size=24", headers)
 
     override fun popularMangaParse(response: Response): MangasPage =
         parseListResponse(response)
@@ -60,7 +61,7 @@ class KomikAgregator : HttpSource() {
     // ─── LATEST ────────────────────────────────────────────────────────────
 
     override fun latestUpdatesRequest(page: Int): Request =
-        GET("$baseUrl/api/latest?page=$page&page_size=24", headers)
+        GET("$baseUrl/latest?page=$page&page_size=24", headers)
 
     override fun latestUpdatesParse(response: Response): MangasPage =
         parseListResponse(response)
@@ -68,7 +69,7 @@ class KomikAgregator : HttpSource() {
     // ─── SEARCH ────────────────────────────────────────────────────────────
 
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request =
-        GET("$baseUrl/api/search?page=$page&page_size=24&query=${encode(query)}", headers)
+        GET("$baseUrl/search?page=$page&page_size=24&query=${encode(query)}", headers)
 
     override fun searchMangaParse(response: Response): MangasPage =
         parseListResponse(response)
@@ -81,10 +82,14 @@ class KomikAgregator : HttpSource() {
     // ─── DETAIL ────────────────────────────────────────────────────────────
 
     override fun mangaDetailsRequest(manga: SManga): Request =
-        GET("$baseUrl/api/detail?url=${encode(manga.url)}", headers)
+        GET("$baseUrl/detail?url=${encode(manga.url)}", headers)
 
     override fun mangaDetailsParse(response: Response): SManga {
         val d = response.parseAs<NormalizedDetail>()
+        // Gabungkan altTitles ke description
+        val altText = if (d.altTitles.isNotEmpty()) {
+            "\n\nJudul Alternatif: ${d.altTitles.joinToString(", ")}"
+        } else ""
         return SManga.create().apply {
             title         = d.title
             thumbnail_url = d.cover
@@ -92,7 +97,7 @@ class KomikAgregator : HttpSource() {
             author        = d.author.orEmpty()
             artist        = d.artist.orEmpty()
             genre         = d.genres.orEmpty()
-            description   = d.description.orEmpty()
+            description   = (d.description.orEmpty()) + altText
         }
     }
 
@@ -103,7 +108,7 @@ class KomikAgregator : HttpSource() {
     // ─── CHAPTER LIST ──────────────────────────────────────────────────────
 
     override fun chapterListRequest(manga: SManga): Request =
-        GET("$baseUrl/api/chapters?url=${encode(manga.url)}", headers)
+        GET("$baseUrl/chapters?url=${encode(manga.url)}", headers)
 
     override fun chapterListParse(response: Response): List<SChapter> {
         val r = response.parseAs<NormalizedChapterListResponse>()
@@ -119,7 +124,7 @@ class KomikAgregator : HttpSource() {
     // ─── PAGE LIST ─────────────────────────────────────────────────────────
 
     override fun pageListRequest(chapter: SChapter): Request =
-        GET("$baseUrl/api/pages?url=${encode(chapter.url)}", headers)
+        GET("$baseUrl/pages?url=${encode(chapter.url)}", headers)
 
     override fun pageListParse(response: Response): List<Page> {
         val r = response.parseAs<NormalizedPageListResponse>()
