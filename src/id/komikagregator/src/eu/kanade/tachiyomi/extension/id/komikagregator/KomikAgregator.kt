@@ -26,7 +26,7 @@ class KomikAgregator : HttpSource() {
     override val supportsLatest = true
 
     // Ganti dengan URL worker kamu (tanpa /api)
-    override val baseUrl = "https://123.workers.dev"
+    override val baseUrl = "https://123.komikmix.workers.dev"
 
     override val client: OkHttpClient = network.cloudflareClient.newBuilder()
         .rateLimit(3)
