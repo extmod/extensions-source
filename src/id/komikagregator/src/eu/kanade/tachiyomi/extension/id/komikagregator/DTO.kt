@@ -49,7 +49,7 @@ data class NormalizedChapter(
     val name: String,
     // format: "source:slug:chapterId"  — opaque, dikirim balik ke /pages
     val url: String,
-    val date: String? = null,
+    val date: Long? = null,
 )
 
 @Serializable
