@@ -10,11 +10,10 @@ import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.HttpSource
 import keiyoushi.utils.parseAs
 import okhttp3.Headers
-import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
-import org.jsoup.Jsoup
+import java.net.URLEncoder
 import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.TimeZone
@@ -39,275 +38,92 @@ class KomikAgregator : HttpSource() {
         timeZone = TimeZone.getTimeZone("UTC")
     }
 
-    private fun parseDate(dateStr: String?): Long {
-        if (dateStr.isNullOrEmpty()) return 0L
+    private fun parseDate(str: String?): Long {
+        if (str.isNullOrEmpty()) return 0L
         return try {
             dateFormat.parse(
-                dateStr.trimEnd('Z').substringBefore("+").substringBefore("."),
+                str.trimEnd('Z').substringBefore("+").substringBefore("."),
             )?.time ?: 0L
-        } catch (e: Exception) {
-            0L
-        }
+        } catch (e: Exception) { 0L }
     }
 
-    private fun encode(s: String) = java.net.URLEncoder.encode(s, "UTF-8")
+    private fun encode(s: String) = URLEncoder.encode(s, "UTF-8")
 
-    // ─── POPULAR ─────────────────────────────────────────────────────────────
+    // ─── POPULAR ───────────────────────────────────────────────────────────
 
-    override fun popularMangaRequest(page: Int): Request {
-        val url = "$baseUrl/api/popular".toHttpUrl().newBuilder()
-            .addQueryParameter("page", page.toString())
-            .addQueryParameter("page_size", "24")
-            .build()
-        return GET(url, headers)
-    }
+    override fun popularMangaRequest(page: Int): Request =
+        GET("$baseUrl/api/popular?page=$page&page_size=24", headers)
 
     override fun popularMangaParse(response: Response): MangasPage =
-        parseAggregatorResponse(response)
+        parseListResponse(response)
 
-    // ─── LATEST ──────────────────────────────────────────────────────────────
+    // ─── LATEST ────────────────────────────────────────────────────────────
 
-    override fun latestUpdatesRequest(page: Int): Request {
-        val url = "$baseUrl/api/latest".toHttpUrl().newBuilder()
-            .addQueryParameter("page", page.toString())
-            .addQueryParameter("page_size", "24")
-            .build()
-        return GET(url, headers)
-    }
+    override fun latestUpdatesRequest(page: Int): Request =
+        GET("$baseUrl/api/latest?page=$page&page_size=24", headers)
 
     override fun latestUpdatesParse(response: Response): MangasPage =
-        parseAggregatorResponse(response)
+        parseListResponse(response)
 
-    // ─── SEARCH ──────────────────────────────────────────────────────────────
+    // ─── SEARCH ────────────────────────────────────────────────────────────
 
-    override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
-        val url = "$baseUrl/api/search".toHttpUrl().newBuilder()
-            .addQueryParameter("page", page.toString())
-            .addQueryParameter("page_size", "24")
-            .addQueryParameter("query", query)
-            .build()
-        return GET(url, headers)
-    }
+    override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request =
+        GET("$baseUrl/api/search?page=$page&page_size=24&query=${encode(query)}", headers)
 
     override fun searchMangaParse(response: Response): MangasPage =
-        parseAggregatorResponse(response)
+        parseListResponse(response)
 
-    // ─── PARSE LIST ──────────────────────────────────────────────────────────
-
-    private fun parseAggregatorResponse(response: Response): MangasPage {
-        val result = response.parseAs<AggregatorListResponse>()
-        val mangas = result.data.map { it.toSManga() }
-        return MangasPage(mangas, result.hasNextPage)
+    private fun parseListResponse(response: Response): MangasPage {
+        val result = response.parseAs<NormalizedListResponse>()
+        return MangasPage(result.data.map { it.toSManga() }, result.hasNextPage)
     }
 
-    // ─── DETAIL ──────────────────────────────────────────────────────────────
+    // ─── DETAIL ────────────────────────────────────────────────────────────
 
-    override fun mangaDetailsRequest(manga: SManga): Request {
-        val parts  = manga.url.split(":", limit = 3)
-        val source = parts[0]
-        val slug   = parts[1]
-        val path = when (source) {
-            "shinigami" -> "/api/shinigami?path=${encode("/v1/manga/detail/$slug")}"
-            "komikcast" -> "/api/komikcast?path=${encode("/series/$slug")}"
-            "kiryuu"    -> "/api/kiryuu?path=${encode("/wp-json/wp/v2/manga?slug[]=$slug&_embed")}"
-            else        -> throw Exception("Source tidak dikenal: $source")
-        }
-        return GET("$baseUrl$path", headers)
-    }
+    override fun mangaDetailsRequest(manga: SManga): Request =
+        GET("$baseUrl/api/detail?url=${encode(manga.url)}", headers)
 
     override fun mangaDetailsParse(response: Response): SManga {
-        val url = response.request.url.toString()
-        val source = when {
-            url.contains("/api/shinigami") -> "shinigami"
-            url.contains("/api/komikcast") -> "komikcast"
-            else -> "kiryuu"
-        }
-
-        return when (source) {
-            "shinigami" -> {
-                val r = response.parseAs<ShinigamiDetailResponse>()
-                val d = r.data
-                val tax = d.taxonomy ?: emptyMap()
-                SManga.create().apply {
-                    title       = d.title ?: ""
-                    status      = when (d.status) {
-                        1    -> SManga.ONGOING
-                        2    -> SManga.COMPLETED
-                        else -> SManga.UNKNOWN
-                    }
-                    author      = tax["Author"]?.joinToString { it.name }.orEmpty()
-                    artist      = tax["Artist"]?.joinToString { it.name }.orEmpty()
-                    description = d.description
-                    genre       = listOf(
-                        tax["Genre"]?.joinToString { it.name }.orEmpty(),
-                        tax["Format"]?.joinToString { it.name }.orEmpty(),
-                    ).filter { it.isNotBlank() }.joinToString()
-                }
-            }
-            "komikcast" -> {
-                val r = response.parseAs<KomikcastDetailResponse>()
-                val d = r.data?.data ?: throw Exception("Data komikcast kosong")
-                SManga.create().apply {
-                    title         = d.title ?: ""
-                    thumbnail_url = d.coverImage
-                    status        = when (d.status?.lowercase()) {
-                        "ongoing"   -> SManga.ONGOING
-                        "completed" -> SManga.COMPLETED
-                        else        -> SManga.UNKNOWN
-                    }
-                    author      = d.author
-                    description = d.synopsis ?: d.description
-                    genre       = listOf(
-                        d.genres?.mapNotNull { it.data?.name ?: it.name }?.joinToString().orEmpty(),
-                        d.format ?: "",
-                    ).filter { it.isNotBlank() }.joinToString()
-                }
-            }
-            else -> {
-                val list = response.parseAs<List<KiryuuMangaDto>>()
-                val d = list.firstOrNull() ?: throw Exception("Data kiryuu kosong")
-                val wpTerm = d.embedded?.wpTerm ?: emptyList()
-                SManga.create().apply {
-                    title         = d.title?.rendered ?: ""
-                    thumbnail_url = d.embedded?.featuredMedia?.firstOrNull()?.sourceUrl
-                    status        = when {
-                        d.classList?.contains("status-ongoing") == true   -> SManga.ONGOING
-                        d.classList?.contains("status-completed") == true -> SManga.COMPLETED
-                        else                                               -> SManga.UNKNOWN
-                    }
-                    author      = wpTerm.getOrNull(3)?.firstOrNull()?.name
-                    artist      = wpTerm.getOrNull(4)?.firstOrNull()?.name
-                    description = d.content?.rendered?.replace(Regex("<[^>]+>"), "")
-                    genre       = listOf(
-                        wpTerm.getOrNull(2)?.joinToString { it.name ?: "" }.orEmpty(),
-                        wpTerm.getOrNull(1)?.firstOrNull()?.name ?: "",
-                    ).filter { it.isNotBlank() }.joinToString()
-                }
-            }
+        val d = response.parseAs<NormalizedDetail>()
+        return SManga.create().apply {
+            title         = d.title
+            thumbnail_url = d.cover
+            status        = d.status
+            author        = d.author.orEmpty()
+            artist        = d.artist.orEmpty()
+            genre         = d.genres.orEmpty()
+            description   = d.description.orEmpty()
         }
     }
 
-    override fun getMangaUrl(manga: SManga): String {
-        val parts = manga.url.split(":", limit = 3)
-        return parts.getOrNull(2) ?: ""
-    }
+    // Buka di browser: ambil bagian ke-3 dari "source:slug:originalUrl"
+    override fun getMangaUrl(manga: SManga): String =
+        manga.url.split(":", limit = 3).getOrNull(2) ?: ""
 
-    // ─── CHAPTER LIST ────────────────────────────────────────────────────────
+    // ─── CHAPTER LIST ──────────────────────────────────────────────────────
 
-    override fun chapterListRequest(manga: SManga): Request {
-        val parts  = manga.url.split(":", limit = 3)
-        val source = parts[0]
-        val slug   = parts[1]
-        val path = when (source) {
-            "shinigami" -> "/api/shinigami?path=${encode("/v1/chapter/$slug/list?page_size=3000")}"
-            "komikcast" -> "/api/komikcast?path=${encode("/series/$slug/chapters")}&slug=$slug"
-            "kiryuu"    -> "/api/kiryuu?action=chapter_list&manga_id=$slug"
-            else        -> throw Exception("Source tidak dikenal: $source")
-        }
-        return GET("$baseUrl$path", headers)
-    }
+    override fun chapterListRequest(manga: SManga): Request =
+        GET("$baseUrl/api/chapters?url=${encode(manga.url)}", headers)
 
     override fun chapterListParse(response: Response): List<SChapter> {
-        val url = response.request.url.toString()
-        val source = when {
-            url.contains("/api/shinigami") -> "shinigami"
-            url.contains("/api/komikcast") -> "komikcast"
-            else -> "kiryuu"
-        }
-
-        return when (source) {
-            "shinigami" -> {
-                val r = response.parseAs<ShinigamiChapterListResponse>()
-                val list = r.chapterList.ifEmpty { r.data }
-                list.map { ch ->
-                    val num = ch.chapterNumber?.toString()?.replace(".0", "") ?: "?"
-                    SChapter.create().apply {
-                        name        = "Chapter $num ${ch.title ?: ""}".trim()
-                        this.url    = "shinigami:${ch.chapterId}"
-                        date_upload = parseDate(ch.releaseDate)
-                    }
-                }
-            }
-            "komikcast" -> {
-                val r = response.parseAs<KomikcastChapterListResponse>()
-                val mangaSlug = response.request.url.queryParameter("slug") ?: ""
-                r.data.map { ch ->
-                    val idxNumber = ch.data?.index
-                    val idx = if (idxNumber != null) {
-                        if (idxNumber == idxNumber.toInt().toDouble()) idxNumber.toInt().toString()
-                        else idxNumber.toString()
-                } else "?"
-                val title = ch.data?.title ?: ""
-                SChapter.create().apply {
-                    this.name = if (title.isNotBlank()) "Chapter $idx - $title" else "Chapter $idx"
-                    this.url = "komikcast:$mangaSlug:$idx"
-                    this.date_upload = parseDate(ch.createdAt)
-                }
-            }
-        }
-            else -> {
-                val r = response.parseAs<KiryuuChapterListResponse>()
-                r.data.map { ch ->
-                    SChapter.create().apply {
-                        name        = ch.name ?: ""
-                        this.url    = "kiryuu:${ch.url}"
-                        date_upload = parseDate(ch.date)
-                    }
-                }
+        val r = response.parseAs<NormalizedChapterListResponse>()
+        return r.chapters.map { ch ->
+            SChapter.create().apply {
+                name        = ch.name
+                url         = ch.url
+                date_upload = parseDate(ch.date)
             }
         }
     }
 
-    // ─── PAGE LIST ───────────────────────────────────────────────────────────
+    // ─── PAGE LIST ─────────────────────────────────────────────────────────
 
-    override fun pageListRequest(chapter: SChapter): Request {
-        val parts  = chapter.url.split(":", limit = 3)
-        val source = parts[0]
-
-        val path = when (source) {
-            "shinigami" -> {
-                val chapterId = parts[1]
-                "/api/shinigami?path=${encode("/v1/chapter/detail/$chapterId")}"
-            }
-            "komikcast" -> {
-                val mangaSlug  = parts[1]
-                val chapterIdx = parts[2]
-                "/api/komikcast?path=${encode("/series/$mangaSlug/chapters/$chapterIdx")}"
-            }
-            else -> {
-                val chapterUrl = parts.drop(1).joinToString(":")
-                return GET(chapterUrl, headers)
-            }
-        }
-        return GET("$baseUrl$path", headers)
-    }
+    override fun pageListRequest(chapter: SChapter): Request =
+        GET("$baseUrl/api/pages?url=${encode(chapter.url)}", headers)
 
     override fun pageListParse(response: Response): List<Page> {
-        val url = response.request.url.toString()
-        return when {
-            url.contains("/api/shinigami") -> {
-                val r = response.parseAs<ShinigamiPageListResponse>()
-                val baseUrl = r.data?.baseUrl ?: ""
-                val path    = r.data?.chapter?.path ?: ""
-                val pages   = r.data?.chapter?.data ?: emptyList()
-                pages.mapIndexed { i, filename ->
-                    Page(i, imageUrl = "$baseUrl$path$filename")
-                }
-            }
-            url.contains("/api/komikcast") -> {
-                val r = response.parseAs<KomikcastPageListResponse>()
-                val images = r.data?.data?.images ?: r.data?.images ?: emptyList()
-                images.mapIndexed { i, imageUrl -> Page(i, imageUrl = imageUrl) }
-            }
-            else -> {
-                val html = response.body.string()
-                val document = Jsoup.parseBodyFragment(html, "https://v2.kiryuu.to")
-                document.select("main .relative section > img")
-                    .mapIndexed { i, img ->
-                        Page(i, imageUrl = img.absUrl("src"))
-                    }
-            }
-        }
+        val r = response.parseAs<NormalizedPageListResponse>()
+        return r.pages.mapIndexed { i, imageUrl -> Page(i, imageUrl = imageUrl) }
     }
 
     override fun imageUrlParse(response: Response): String =
