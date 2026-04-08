@@ -116,7 +116,7 @@ class KomikAgregator : HttpSource() {
             SChapter.create().apply {
                 name        = ch.name
                 url         = ch.url
-                date_upload = parseDate(ch.date)
+                date_upload = ch.date ?: 0L
             }
         }
     }
