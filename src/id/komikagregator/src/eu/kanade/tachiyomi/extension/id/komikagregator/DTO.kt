@@ -38,6 +38,8 @@ data class NormalizedDetail(
     val artist: String? = null,
     val genres: String? = null,
     val description: String? = null,
+    // Tambahan field untuk judul alternatif
+    val altTitles: List<String> = emptyList(),
 )
 
 // ─── CHAPTER LIST ─────────────────────────────────────────────────────────────
@@ -45,7 +47,7 @@ data class NormalizedDetail(
 @Serializable
 data class NormalizedChapter(
     val name: String,
-    // format: "source:slug:chapterId"  — opaque, dikirim balik ke /api/pages
+    // format: "source:slug:chapterId"  — opaque, dikirim balik ke /pages
     val url: String,
     val date: String? = null,
 )
