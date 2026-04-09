@@ -31,7 +31,8 @@ class KomikAgregator : HttpSource() {
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
         .add("Accept", "application/json")
 
-    private val cursorCache = mutableMapOf<String, MutableMap<Int, String?>>()
+    // Cache cursor per route dan query
+    private val cursorCache = mutableMapOf<String, String?>()
 
     private fun encode(s: String): String = URLEncoder.encode(s, "UTF-8")
 
@@ -39,30 +40,41 @@ class KomikAgregator : HttpSource() {
         return if (query.isNullOrBlank()) route else "$route|$query"
     }
 
-    private fun getCursor(route: String, page: Int, query: String? = null): String? {
-        if (page <= 1) return null
-        return cursorCache[cacheKey(route, query)]?.get(page)
+    private fun getCursor(route: String, query: String? = null): String? {
+        return cursorCache[cacheKey(route, query)]
     }
 
-    private fun setCursor(route: String, page: Int, cursor: String?, query: String? = null) {
-        if (cursor.isNullOrBlank()) return
-        val key = cacheKey(route, query)
-        val map = cursorCache.getOrPut(key) { mutableMapOf() }
-        map[page + 1] = cursor
+    private fun setCursor(route: String, cursor: String?, query: String? = null) {
+        if (!cursor.isNullOrBlank()) {
+            cursorCache[cacheKey(route, query)] = cursor
+        }
     }
 
     private fun buildListRequest(route: String, page: Int, query: String? = null): Request {
+        val cursor = if (page > 1) getCursor(route, query) else null
         val url = buildString {
-            append("$baseUrl/$route?limit=24&page=$page")
+            append("$baseUrl/$route?limit=24")
             if (!query.isNullOrBlank()) {
                 append("&query=${encode(query)}")
             }
+            if (cursor != null) {
+                append("&before=${encode(cursor)}")
+            }
+            // Tambahkan _page untuk referensi di parse (opsional)
+            append("&_page=$page")
         }
         return GET(url, headers)
     }
-    
+
     private fun parseListResponse(response: Response): MangasPage {
         val result = response.parseAs<NormalizedListResponse>()
+        val url = response.request.url
+        val route = url.pathSegments.lastOrNull() ?: ""
+        val query = url.queryParameter("query")
+        
+        // Simpan cursor untuk halaman berikutnya
+        setCursor(route, result.nextCursor, query)
+        
         return MangasPage(
             result.data.map { it.toSManga() },
             !result.nextCursor.isNullOrBlank()
