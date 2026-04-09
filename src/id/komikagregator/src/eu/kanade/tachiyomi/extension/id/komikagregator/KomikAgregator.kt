@@ -22,7 +22,6 @@ class KomikAgregator : HttpSource() {
     override val lang = "id"
     override val supportsLatest = true
 
-    // Ganti dengan URL worker kamu
     override val baseUrl = "https://123.komikmix.workers.dev"
 
     override val client: OkHttpClient = network.cloudflareClient.newBuilder()
@@ -69,23 +68,17 @@ class KomikAgregator : HttpSource() {
         return GET(url, headers)
     }
 
-    // ─── POPULAR ───────────────────────────────────────────────────────────
-
     override fun popularMangaRequest(page: Int): Request =
         buildListRequest("popular", page)
 
     override fun popularMangaParse(response: Response): MangasPage =
         parseListResponse(response)
 
-    // ─── LATEST ────────────────────────────────────────────────────────────
-
     override fun latestUpdatesRequest(page: Int): Request =
         buildListRequest("latest", page)
 
     override fun latestUpdatesParse(response: Response): MangasPage =
         parseListResponse(response)
-
-    // ─── SEARCH ────────────────────────────────────────────────────────────
 
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request =
         buildListRequest("search", page, query)
@@ -109,8 +102,6 @@ class KomikAgregator : HttpSource() {
         )
     }
 
-    // ─── DETAIL ────────────────────────────────────────────────────────────
-
     override fun mangaDetailsRequest(manga: SManga): Request =
         GET("$baseUrl/detail?url=${encode(manga.url)}", headers)
 
@@ -131,15 +122,11 @@ class KomikAgregator : HttpSource() {
             artist = d.artist.orEmpty()
             genre = d.genres.orEmpty()
             description = d.description.orEmpty() + altText
-            url = d.url.orEmpty()
         }
     }
 
-    // Buka di browser: ambil bagian ke-3 dari "source:slug:originalUrl"
     override fun getMangaUrl(manga: SManga): String =
         manga.url.split(":", limit = 3).getOrNull(2) ?: ""
-
-    // ─── CHAPTER LIST ──────────────────────────────────────────────────────
 
     override fun chapterListRequest(manga: SManga): Request =
         GET("$baseUrl/chapters?url=${encode(manga.url)}", headers)
@@ -154,8 +141,6 @@ class KomikAgregator : HttpSource() {
             }
         }
     }
-
-    // ─── PAGE LIST ─────────────────────────────────────────────────────────
 
     override fun pageListRequest(chapter: SChapter): Request =
         GET("$baseUrl/pages?url=${encode(chapter.url)}", headers)
@@ -172,48 +157,3 @@ class KomikAgregator : HttpSource() {
 
     override fun getFilterList(): FilterList = FilterList()
 }
-
-data class NormalizedListResponse(
-    val data: List<NormalizedManga> = emptyList(),
-    val nextCursor: String? = null
-)
-
-data class NormalizedManga(
-    val url: String = "",
-    val title: String = "",
-    val cover: String? = null,
-    val source: String = "",
-    val time: String? = null
-) {
-    fun toSManga(): SManga = SManga.create().apply {
-        this.url = url
-        this.title = title
-        thumbnail_url = cover
-    }
-}
-
-data class NormalizedDetail(
-    val title: String = "",
-    val cover: String? = null,
-    val status: Int = 0,
-    val author: String? = null,
-    val artist: String? = null,
-    val genres: String? = null,
-    val description: String? = null,
-    val altTitles: List<String> = emptyList(),
-    val url: String? = null
-)
-
-data class NormalizedChapterListResponse(
-    val chapters: List<NormalizedChapter> = emptyList()
-)
-
-data class NormalizedChapter(
-    val name: String = "",
-    val url: String = "",
-    val date: Long? = null
-)
-
-data class NormalizedPageListResponse(
-    val pages: List<String> = emptyList()
-)
