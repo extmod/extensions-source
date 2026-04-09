@@ -87,22 +87,6 @@ class KomikAgregator : HttpSource() {
     override fun searchMangaParse(response: Response): MangasPage =
         parseListResponse(response)
 
-    private fun parseListResponse(response: Response): MangasPage {
-        val result = response.parseAs<NormalizedListResponse>()
-
-        val url = response.request.url
-        val route = url.encodedPath.substringAfterLast('/')
-        val page = url.queryParameter("page")?.toIntOrNull() ?: 1
-        val query = url.queryParameter("query")
-
-        setCursor(route, page, result.nextCursor, query)
-
-        return MangasPage(
-            result.data.map { it.toSManga() },
-            !result.nextCursor.isNullOrBlank()
-        )
-    }
-
     override fun mangaDetailsRequest(manga: SManga): Request =
         GET("$baseUrl/detail?url=${encode(manga.url)}", headers)
 
