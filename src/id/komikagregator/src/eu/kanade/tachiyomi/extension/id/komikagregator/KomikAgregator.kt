@@ -52,20 +52,21 @@ class KomikAgregator : HttpSource() {
     }
 
     private fun buildListRequest(route: String, page: Int, query: String? = null): Request {
-        val before = getCursor(route, page, query)
-
         val url = buildString {
-            append("$baseUrl/$route?limit=24")
-            append("&page=$page")
+            append("$baseUrl/$route?limit=24&page=$page")
             if (!query.isNullOrBlank()) {
                 append("&query=${encode(query)}")
             }
-            if (!before.isNullOrBlank()) {
-                append("&before=${encode(before)}")
-            }
         }
-
         return GET(url, headers)
+    }
+    
+    private fun parseListResponse(response: Response): MangasPage {
+        val result = response.parseAs<NormalizedListResponse>()
+        return MangasPage(
+            result.data.map { it.toSManga() },
+            !result.nextCursor.isNullOrBlank()
+        )
     }
 
     override fun popularMangaRequest(page: Int): Request =
