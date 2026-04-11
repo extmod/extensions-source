@@ -17,7 +17,7 @@ import java.util.concurrent.TimeUnit
 
 class KomikCastCC : ParsedHttpSource() {
 
-    override val name = "KomikCast"
+    override val name = "KomikCastcc"
     override val baseUrl = "https://komik-cast.cc"
     override val lang = "id"
     override val supportsLatest = true
