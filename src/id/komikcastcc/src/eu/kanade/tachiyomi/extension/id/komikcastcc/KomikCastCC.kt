@@ -3,7 +3,6 @@ package eu.kanade.tachiyomi.extension.id.komikcastcc
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.source.model.Filter
 import eu.kanade.tachiyomi.source.model.FilterList
-import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
@@ -11,7 +10,6 @@ import eu.kanade.tachiyomi.source.online.ParsedHttpSource
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import java.util.concurrent.TimeUnit
@@ -31,6 +29,8 @@ class KomikCastCC : ParsedHttpSource() {
     override fun headersBuilder() = super.headersBuilder()
         .add("Referer", "$baseUrl/")
 
+    // ─── Popular ───────────────────────────────────────────────────────────────
+
     override fun popularMangaRequest(page: Int): Request =
         GET("$baseUrl/komik-list/?order=popular&page=$page", headers)
 
@@ -44,12 +44,16 @@ class KomikCastCC : ParsedHttpSource() {
 
     override fun popularMangaNextPageSelector(): String? = null
 
+    // ─── Latest ────────────────────────────────────────────────────────────────
+
     override fun latestUpdatesRequest(page: Int): Request =
         GET("$baseUrl/komik-list/?order=update&page=$page", headers)
 
     override fun latestUpdatesSelector() = popularMangaSelector()
     override fun latestUpdatesFromElement(element: Element) = popularMangaFromElement(element)
     override fun latestUpdatesNextPageSelector(): String? = null
+
+    // ─── Search ────────────────────────────────────────────────────────────────
 
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
         val url = "$baseUrl/komik-list/".toHttpUrl().newBuilder()
@@ -70,7 +74,7 @@ class KomikCastCC : ParsedHttpSource() {
                 is GenreFilter -> filter.state.filter { it.state }.forEach {
                     url.addQueryParameter("genre[]", it.value)
                 }
-                else -> {} // Menangani semua tipe filter lainnya
+                else -> {}
             }
         }
 
@@ -82,11 +86,12 @@ class KomikCastCC : ParsedHttpSource() {
     override fun searchMangaFromElement(element: Element) = popularMangaFromElement(element)
     override fun searchMangaNextPageSelector(): String? = null
 
+    // ─── Detail ────────────────────────────────────────────────────────────────
+
     override fun mangaDetailsParse(document: Document): SManga = SManga.create().apply {
         title = document.selectFirst("h1")?.text() ?: ""
 
-        thumbnail_url = document.selectFirst("img[src*=\"cdn.komik-cast.cc/uploads\"]")
-            ?.attr("src")
+        thumbnail_url = document.selectFirst("img[src*=\"uploads\"]")?.attr("src")
 
         val spans = document.select("div.text-sm span.font-medium")
         val typeText = spans.getOrNull(0)?.text() ?: ""
@@ -103,17 +108,21 @@ class KomikCastCC : ParsedHttpSource() {
         if (typeText.isNotBlank()) genreList.add(0, typeText)
         genre = genreList.joinToString()
 
-        description = document.selectFirst("div.my-2")?.text()
+        description = document.selectFirst("p.my-2")?.text()
     }
 
+    // ─── Chapter ───────────────────────────────────────────────────────────────
+
     override fun chapterListSelector() =
-        "div.gap-2.my-4 a[href*=\"-chapter-\"]"
+        "div.flex.flex-col a[href*=\"-chapter-\"]"
 
     override fun chapterFromElement(element: Element): SChapter = SChapter.create().apply {
         val href = element.attr("href")
         setUrlWithoutDomain(href)
 
-        name = element.selectFirst("p.mb-0\\.5")?.text()?.trim()
+        // Tidak pakai p.mb-0.5 karena Jsoup gagal parse titik di class Tailwind
+        // Pakai :not untuk hindari ambil p.text-xs (tanggal)
+        name = element.select("p").firstOrNull { !it.hasClass("text-xs") }?.text()?.trim()
             ?: Regex("chapter-([\\d.]+(?:-\\w+)?)/?$")
                 .find(href)?.groupValues?.get(1)
                 ?.let { "Chapter $it" }
@@ -145,6 +154,8 @@ class KomikCastCC : ParsedHttpSource() {
         }
     }
 
+    // ─── Pages ─────────────────────────────────────────────────────────────────
+
     override fun pageListParse(document: Document): List<Page> =
         document.select("img[src*=\"cdn.komik-cast.cc/images\"]")
             .mapIndexed { i, img -> Page(i, imageUrl = img.attr("src")) }
@@ -158,6 +169,8 @@ class KomikCastCC : ParsedHttpSource() {
                 .add("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
                 .build(),
         )
+
+    // ─── Filters ───────────────────────────────────────────────────────────────
 
     override fun getFilterList() = FilterList(
         OrderFilter(),
