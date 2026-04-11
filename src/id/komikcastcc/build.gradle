@@ -1,5 +1,5 @@
 ext {
-    extName = 'KomikCast'
+    extName = 'KomikCastcc'
     extClass = '.KomikCastCC'
     extVersionCode = 1
     isNsfw = true
