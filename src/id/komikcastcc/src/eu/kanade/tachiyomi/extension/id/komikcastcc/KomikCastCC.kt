@@ -114,7 +114,12 @@ class KomikCastCC : ParsedHttpSource() {
     // ─── Chapter ───────────────────────────────────────────────────────────────
 
     override fun chapterListSelector() =
-        "div.flex.flex-col a[href*=\"-chapter-\"]"
+    "div.flex.flex-col.max-h-96 a[href*=\"-chapter-\"]"
+
+override fun chapterListParse(response: Response): List<SChapter> {
+    return super.chapterListParse(response)
+        .sortedByDescending { it.chapter_number }
+}
 
     override fun chapterFromElement(element: Element): SChapter = SChapter.create().apply {
         val href = element.attr("href")
