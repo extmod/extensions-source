@@ -8,6 +8,7 @@ import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.ParsedHttpSource
+import eu.kanade.tachiyomi.util.asJsoup
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -36,7 +37,6 @@ class KomikCastCC : ParsedHttpSource() {
     override fun popularMangaRequest(page: Int): Request =
         GET("$baseUrl/komik-list/?order=popular&page=$page", headers)
 
-    // Setiap item adalah <a class="group" href="/komik/{slug}/">
     override fun popularMangaSelector() = "a.group[href*=\"/komik/\"]"
 
     override fun popularMangaFromElement(element: Element): SManga = SManga.create().apply {
@@ -45,9 +45,8 @@ class KomikCastCC : ParsedHttpSource() {
         title = element.selectFirst("img")?.attr("alt") ?: ""
     }
 
-    // Override parse untuk kontrol hasNextPage via jumlah item (24/halaman)
     override fun popularMangaParse(response: Response): MangasPage {
-        val doc = response.asJsoupDocument()
+        val doc = response.asJsoup()
         val mangas = doc.select(popularMangaSelector()).map { popularMangaFromElement(it) }
         return MangasPage(mangas, mangas.size >= PAGE_SIZE)
     }
@@ -63,7 +62,7 @@ class KomikCastCC : ParsedHttpSource() {
     override fun latestUpdatesFromElement(element: Element) = popularMangaFromElement(element)
 
     override fun latestUpdatesParse(response: Response): MangasPage {
-        val doc = response.asJsoupDocument()
+        val doc = response.asJsoup()
         val mangas = doc.select(latestUpdatesSelector()).map { latestUpdatesFromElement(it) }
         return MangasPage(mangas, mangas.size >= PAGE_SIZE)
     }
@@ -74,21 +73,26 @@ class KomikCastCC : ParsedHttpSource() {
 
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
         val url = "$baseUrl/komik-list/".toHttpUrl().newBuilder()
+
         if (query.isNotBlank()) url.addQueryParameter("s", query)
+
         filters.forEach { filter ->
             when (filter) {
-                is StatusFilter -> if (filter.state != 0)
-                    url.addQueryParameter("status", filter.values[filter.state].second)
-                is TypeFilter -> if (filter.state != 0)
-                    url.addQueryParameter("type", filter.values[filter.state].second)
-                is OrderFilter ->
-                    url.addQueryParameter("order", filter.values[filter.state].second)
+                is StatusFilter -> if (filter.state != 0) {
+                    url.addQueryParameter("status", filter.pairs[filter.state].second)
+                }
+                is TypeFilter -> if (filter.state != 0) {
+                    url.addQueryParameter("type", filter.pairs[filter.state].second)
+                }
+                is OrderFilter -> {
+                    url.addQueryParameter("order", filter.pairs[filter.state].second)
+                }
                 is GenreFilter -> filter.state.filter { it.state }.forEach {
                     url.addQueryParameter("genre[]", it.value)
                 }
-                else -> {}
             }
         }
+
         url.addQueryParameter("page", page.toString())
         return GET(url.build(), headers)
     }
@@ -97,7 +101,7 @@ class KomikCastCC : ParsedHttpSource() {
     override fun searchMangaFromElement(element: Element) = popularMangaFromElement(element)
 
     override fun searchMangaParse(response: Response): MangasPage {
-        val doc = response.asJsoupDocument()
+        val doc = response.asJsoup()
         val mangas = doc.select(searchMangaSelector()).map { searchMangaFromElement(it) }
         return MangasPage(mangas, mangas.size >= PAGE_SIZE)
     }
@@ -112,7 +116,6 @@ class KomikCastCC : ParsedHttpSource() {
         thumbnail_url = document.selectFirst("img[src*=\"cdn.komik-cast.cc/uploads\"]")
             ?.attr("src")
 
-        // 3 span.font-medium berurutan dalam div.text-sm: Type | Status | Rating
         val spans = document.select("div.text-sm span.font-medium")
         val typeText = spans.getOrNull(0)?.text() ?: ""
         val statusText = spans.getOrNull(1)?.text()?.lowercase() ?: ""
@@ -124,18 +127,15 @@ class KomikCastCC : ParsedHttpSource() {
             else -> SManga.UNKNOWN
         }
 
-        // Genre dari link genre[], prepend type (Manga/Manhwa/Manhua)
         val genreList = document.select("a[href*=\"genre\"]").map { it.text() }.toMutableList()
         if (typeText.isNotBlank()) genreList.add(0, typeText)
         genre = genreList.joinToString()
 
-        // Deskripsi: div.my-2 (class="my-2 text-sm font-normal leading-6")
         description = document.selectFirst("div.my-2")?.text()
     }
 
     // ===================== Chapter List =====================
 
-    // Container chapter: div.gap-2.my-4 (lebih spesifik dari overflow-y-auto yg juga match nav)
     override fun chapterListSelector() =
         "div.gap-2.my-4 a[href*=\"-chapter-\"]"
 
@@ -143,7 +143,6 @@ class KomikCastCC : ParsedHttpSource() {
         val href = element.attr("href")
         setUrlWithoutDomain(href)
 
-        // Nama chapter ada di <p class="mb-0.5"> dalam <a>
         name = element.selectFirst("p.mb-0\\.5")?.text()?.trim()
             ?: Regex("chapter-([\\d.]+(?:-\\w+)?)/?$")
                 .find(href)?.groupValues?.get(1)
@@ -155,7 +154,6 @@ class KomikCastCC : ParsedHttpSource() {
             ?.replace(",", ".")
             ?.toFloatOrNull() ?: -1f
 
-        // Tanggal relatif: "8 jam yang lalu", "3 bulan yang lalu", "2 tahun yang lalu"
         date_upload = element.selectFirst("p.text-xs")?.text()
             ?.let { parseRelativeDate(it) } ?: 0L
     }
@@ -164,6 +162,7 @@ class KomikCastCC : ParsedHttpSource() {
         val now = System.currentTimeMillis()
         val clean = text.lowercase().trim()
         val num = Regex("(\\d+)").find(clean)?.groupValues?.get(1)?.toLongOrNull() ?: 1L
+
         return when {
             "detik" in clean -> now - num * 1_000L
             "menit" in clean -> now - num * 60_000L
@@ -201,8 +200,8 @@ class KomikCastCC : ParsedHttpSource() {
         GenreFilter(),
     )
 
-    open class SelectFilter(name: String, val values: List<Pair<String, String>>) :
-        Filter.Select<String>(name, values.map { it.first }.toTypedArray())
+    open class SelectFilter(name: String, val pairs: List<Pair<String, String>>) :
+        Filter.Select<String>(name, pairs.map { it.first }.toTypedArray())
 
     class OrderFilter : SelectFilter(
         "Urutkan",
