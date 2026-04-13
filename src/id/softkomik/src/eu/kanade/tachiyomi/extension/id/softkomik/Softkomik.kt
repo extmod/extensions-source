@@ -414,64 +414,90 @@ class Softkomik : HttpSource() {
     // if the request fails, we can try to get session from WebView by loading the manga detail page,
     // which will automatically trigger the chapter list API that carries the session token in the header, and we can intercept that request to get the session token.
     @SuppressLint("SetJavaScriptEnabled")
-    private fun getSessionViaWebView(route: SessionRoute): SessionDto {
-        val webViewUrl = route.webViewUrl
-        synchronized(this) {
-            val latch = CountDownLatch(1)
-            var capturedToken: String? = null
-            var capturedSign: String? = null
+private fun getSessionViaWebView(route: SessionRoute): SessionDto {
+    synchronized(this) {
+        val latch = CountDownLatch(1)
+        var capturedToken: String? = null
+        var capturedSign: String? = null
 
-            val handler = Handler(Looper.getMainLooper())
-            var webView: WebView? = null
+        val handler = Handler(Looper.getMainLooper())
+        var webView: WebView? = null
 
-            handler.post {
-                val wv = WebView(Injekt.get<Application>())
-                webView = wv
+        handler.post {
+            val wv = WebView(Injekt.get<Application>())
+            webView = wv
+            wv.settings.javaScriptEnabled = true
+            wv.settings.domStorageEnabled = true
+            wv.settings.loadsImagesAutomatically = false
+            wv.settings.blockNetworkImage = true
+            wv.settings.userAgentString = headers["User-Agent"]
 
-                wv.settings.javaScriptEnabled = true
-                wv.settings.domStorageEnabled = true
-                wv.settings.loadsImagesAutomatically = false
-                wv.settings.blockNetworkImage = true
-                wv.settings.userAgentString = headers["User-Agent"]
-
-                wv.webViewClient = object : WebViewClient() {
-                    override fun shouldInterceptRequest(
-                        view: WebView,
-                        request: WebResourceRequest,
-                    ): WebResourceResponse? {
-                        val url = request.url.toString()
-
-                        // Intercept the chapter list API call — it always carries X-Token & X-Sign
-                        if (url.contains(apiUrl)) {
-                            val token = request.requestHeaders["X-Token"]
-                            val sign = request.requestHeaders["X-Sign"]
-
-                            if (!token.isNullOrEmpty() && !sign.isNullOrEmpty()) {
-                                capturedToken = token
-                                capturedSign = sign
-                                latch.countDown()
-                            }
-                        }
-                        return super.shouldInterceptRequest(view, request)
+            // JavascriptInterface untuk terima token dari JS
+            wv.addJavascriptInterface(object : Any() {
+                @android.webkit.JavascriptInterface
+                fun onToken(token: String, sign: String) {
+                    if (token.isNotEmpty() && sign.isNotEmpty()) {
+                        capturedToken = token
+                        capturedSign = sign
+                        latch.countDown()
                     }
                 }
+            }, "Android")
 
-                // Load manga detail page, JS will automatically fire the chapter list API
-                wv.loadUrl(webViewUrl)
+            wv.webViewClient = object : WebViewClient() {
+                override fun onPageFinished(view: WebView, url: String) {
+                    super.onPageFinished(view, url)
+                    // Inject JS untuk ambil token dari XHR yang akan di-fire
+                    view.evaluateJavascript(
+                        """
+                        (function() {
+                            const origOpen = XMLHttpRequest.prototype.open;
+                            XMLHttpRequest.prototype.open = function(m, url) {
+                                this._url = url;
+                                const origSend = this.send;
+                                const self = this;
+                                this.send = function() {
+                                    if (self._url && self._url.includes('softdevices')) {
+                                        const token = self.getResponseHeader ? '' : '';
+                                    }
+                                    return origSend.apply(this, arguments);
+                                };
+                                return origOpen.apply(this, arguments);
+                            };
+                            
+                            const origSetHeader = XMLHttpRequest.prototype.setRequestHeader;
+                            XMLHttpRequest.prototype.setRequestHeader = function(key, value) {
+                                if (key === 'X-Token') window._xtoken = value;
+                                if (key === 'X-Sign') window._xsign = value;
+                                if (window._xtoken && window._xsign) {
+                                    Android.onToken(window._xtoken, window._xsign);
+                                }
+                                return origSetHeader.apply(this, arguments);
+                            };
+                        })();
+                        """.trimIndent(),
+                        null,
+                    )
+                }
             }
-
-            latch.await(15, TimeUnit.SECONDS)
-            handler.post { webView?.destroy() }
-
-            val token = capturedToken ?: throw Exception("Gagal mendapatkan session. Coba lagi.")
-            val sign = capturedSign ?: throw Exception("Gagal mendapatkan session. Coba lagi.")
-
-            // Based on response session API, expire the session in 2 hours.
-            val newSession = SessionDto(token = token, sign = sign, ex = System.currentTimeMillis() + TimeUnit.HOURS.toMillis(2))
-            sessionsByUrlKey[route.key] = newSession
-            return newSession
+            wv.loadUrl(route.webViewUrl)
         }
+
+        latch.await(30, TimeUnit.SECONDS)
+        handler.post { webView?.destroy() }
+
+        val token = capturedToken ?: throw Exception("Gagal mendapatkan session. Coba lagi.")
+        val sign = capturedSign ?: throw Exception("Gagal mendapadkan session. Coba lagi.")
+
+        val newSession = SessionDto(
+            token = token,
+            sign = sign,
+            ex = System.currentTimeMillis() + TimeUnit.HOURS.toMillis(2),
+        )
+        sessionsByUrlKey[route.key] = newSession
+        return newSession
     }
+}
 
     // Normalizes the User-Agent by removing "Mobile Safari" because it can cause 401 errors.
     private fun normalizeUserAgent(userAgent: String?): String? {
