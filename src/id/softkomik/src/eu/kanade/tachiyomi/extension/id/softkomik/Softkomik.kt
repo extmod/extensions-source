@@ -424,64 +424,55 @@ private fun getSessionViaWebView(route: SessionRoute): SessionDto {
         var webView: WebView? = null
 
         handler.post {
-            val wv = WebView(Injekt.get<Application>())
-            webView = wv
-            wv.settings.javaScriptEnabled = true
-            wv.settings.domStorageEnabled = true
-            wv.settings.loadsImagesAutomatically = false
-            wv.settings.blockNetworkImage = true
-            wv.settings.userAgentString = headers["User-Agent"]
+    android.widget.Toast.makeText(
+        Injekt.get<Application>(),
+        "WebView loading: ${route.webViewUrl}",
+        android.widget.Toast.LENGTH_LONG,
+    ).show()
+    val wv = WebView(Injekt.get<Application>())
+    webView = wv
+    wv.settings.javaScriptEnabled = true
+    wv.settings.domStorageEnabled = true
+    wv.settings.loadsImagesAutomatically = false
+    wv.settings.blockNetworkImage = true
+    wv.settings.userAgentString = headers["User-Agent"]
 
-            // JavascriptInterface untuk terima token dari JS
-            wv.addJavascriptInterface(object : Any() {
-                @android.webkit.JavascriptInterface
-                fun onToken(token: String, sign: String) {
-                    if (token.isNotEmpty() && sign.isNotEmpty()) {
-                        capturedToken = token
-                        capturedSign = sign
-                        latch.countDown()
-                    }
-                }
-            }, "Android")
-
-            wv.webViewClient = object : WebViewClient() {
-                override fun onPageFinished(view: WebView, url: String) {
-                    super.onPageFinished(view, url)
-                    // Inject JS untuk ambil token dari XHR yang akan di-fire
-                    view.evaluateJavascript(
-                        """
-                        (function() {
-                            const origOpen = XMLHttpRequest.prototype.open;
-                            XMLHttpRequest.prototype.open = function(m, url) {
-                                this._url = url;
-                                const origSend = this.send;
-                                const self = this;
-                                this.send = function() {
-                                    if (self._url && self._url.includes('softdevices')) {
-                                        const token = self.getResponseHeader ? '' : '';
-                                    }
-                                    return origSend.apply(this, arguments);
-                                };
-                                return origOpen.apply(this, arguments);
-                            };
-                            
-                            const origSetHeader = XMLHttpRequest.prototype.setRequestHeader;
-                            XMLHttpRequest.prototype.setRequestHeader = function(key, value) {
-                                if (key === 'X-Token') window._xtoken = value;
-                                if (key === 'X-Sign') window._xsign = value;
-                                if (window._xtoken && window._xsign) {
-                                    Android.onToken(window._xtoken, window._xsign);
-                                }
-                                return origSetHeader.apply(this, arguments);
-                            };
-                        })();
-                        """.trimIndent(),
-                        null,
-                    )
-                }
+    wv.addJavascriptInterface(object : Any() {
+        @android.webkit.JavascriptInterface
+        fun onToken(token: String, sign: String) {
+            if (token.isNotEmpty() && sign.isNotEmpty()) {
+                capturedToken = token
+                capturedSign = sign
+                latch.countDown()
             }
-            wv.loadUrl(route.webViewUrl)
         }
+    }, "Android")
+
+    wv.webViewClient = object : WebViewClient() {
+        override fun onPageFinished(view: WebView, url: String) {
+            super.onPageFinished(view, url)
+            view.postDelayed({
+                view.evaluateJavascript(
+                    """
+                    (function() {
+                        const origSetHeader = XMLHttpRequest.prototype.setRequestHeader;
+                        XMLHttpRequest.prototype.setRequestHeader = function(key, value) {
+                            if (key === 'X-Token') window._xtoken = value;
+                            if (key === 'X-Sign') window._xsign = value;
+                            if (window._xtoken && window._xsign) {
+                                Android.onToken(window._xtoken, window._xsign);
+                            }
+                            return origSetHeader.apply(this, arguments);
+                        };
+                    })();
+                    """.trimIndent(),
+                    null,
+                )
+            }, 2000)
+        }
+    }
+    wv.loadUrl(route.webViewUrl)
+}
 
         latch.await(30, TimeUnit.SECONDS)
         handler.post { webView?.destroy() }
