@@ -424,11 +424,6 @@ private fun getSessionViaWebView(route: SessionRoute): SessionDto {
         var webView: WebView? = null
 
         handler.post {
-    android.widget.Toast.makeText(
-        Injekt.get<Application>(),
-        "WebView loading: ${route.webViewUrl}",
-        android.widget.Toast.LENGTH_LONG,
-    ).show()
     val wv = WebView(Injekt.get<Application>())
     webView = wv
     wv.settings.javaScriptEnabled = true
@@ -437,6 +432,7 @@ private fun getSessionViaWebView(route: SessionRoute): SessionDto {
     wv.settings.blockNetworkImage = true
     wv.settings.userAgentString = headers["User-Agent"]
 
+    // addJavascriptInterface HARUS sebelum loadUrl
     wv.addJavascriptInterface(object : Any() {
         @android.webkit.JavascriptInterface
         fun onToken(token: String, sign: String) {
@@ -471,6 +467,8 @@ private fun getSessionViaWebView(route: SessionRoute): SessionDto {
             }, 2000)
         }
     }
+
+    // loadUrl TERAKHIR
     wv.loadUrl(route.webViewUrl)
 }
 
