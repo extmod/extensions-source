@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.extension.id.softkomik
 
 import eu.kanade.tachiyomi.network.GET
+import eu.kanade.tachiyomi.source.model.Filter
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.model.Page
@@ -166,6 +167,7 @@ class Softkomik : HttpSource() {
                         url.addQueryParameter("min", min.toString())
                     }
                 }
+                else -> {} // ← perbaikan error 1
             }
         }
 
@@ -299,8 +301,8 @@ class Softkomik : HttpSource() {
         TypeFilter(),
         GenreFilter(),
         SortFilter(),
-        Filter.Separator(),
-        Filter.Header("Filter tidak dapat digabung dengan pencarian teks"),
+        Filter.Separator(),  // ← perbaikan error 2
+        Filter.Header("Filter tidak dapat digabung dengan pencarian teks"),  // ← perbaikan error 2
         MinChapterFilter(),
     )
 
