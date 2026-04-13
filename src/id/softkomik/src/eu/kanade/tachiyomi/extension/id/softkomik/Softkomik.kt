@@ -445,28 +445,26 @@ private fun getSessionViaWebView(route: SessionRoute): SessionDto {
     }, "Android")
 
     wv.webViewClient = object : WebViewClient() {
-        override fun onPageFinished(view: WebView, url: String) {
-            super.onPageFinished(view, url)
-            view.postDelayed({
-                view.evaluateJavascript(
-                    """
-                    (function() {
-                        const origSetHeader = XMLHttpRequest.prototype.setRequestHeader;
-                        XMLHttpRequest.prototype.setRequestHeader = function(key, value) {
-                            if (key === 'X-Token') window._xtoken = value;
-                            if (key === 'X-Sign') window._xsign = value;
-                            if (window._xtoken && window._xsign) {
-                                Android.onToken(window._xtoken, window._xsign);
-                            }
-                            return origSetHeader.apply(this, arguments);
-                        };
-                    })();
-                    """.trimIndent(),
-                    null,
-                )
-            }, 2000)
-        }
+    override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
+        super.onPageStarted(view, url, favicon)
+        view.evaluateJavascript(
+            """
+            (function() {
+                const origSetHeader = XMLHttpRequest.prototype.setRequestHeader;
+                XMLHttpRequest.prototype.setRequestHeader = function(key, value) {
+                    if (key === 'X-Token') window._xtoken = value;
+                    if (key === 'X-Sign') window._xsign = value;
+                    if (window._xtoken && window._xsign) {
+                        Android.onToken(window._xtoken, window._xsign);
+                    }
+                    return origSetHeader.apply(this, arguments);
+                };
+            })();
+            """.trimIndent(),
+            null,
+        )
     }
+}
 
     // loadUrl TERAKHIR
     wv.loadUrl(route.webViewUrl)
