@@ -1,7 +1,6 @@
 package eu.kanade.tachiyomi.extension.id.softkomik
 
 import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.source.model.Filter
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.model.Page
@@ -25,7 +24,6 @@ class Softkomik : HttpSource() {
     // ============ VERCEL CONFIG ============
     private val vercelUrl = "https://project-qvmcp.vercel.app/api/token"
 
-    // Token cache
     private var cachedSession: SessionDto? = null
     private val cacheLock = Any()
 
@@ -42,7 +40,7 @@ class Softkomik : HttpSource() {
         .add("Referer", "$baseUrl/")
         .add("Origin", baseUrl)
 
-    // ============ TOKEN DARI VERCEL ============
+    // ============ TOKEN ============
     private fun getSession(): SessionDto {
         synchronized(cacheLock) {
             cachedSession?.let {
@@ -65,7 +63,7 @@ class Softkomik : HttpSource() {
         }
     }
 
-    // ============ API AUTH INTERCEPTOR ============
+    // ============ AUTH INTERCEPTOR ============
     private fun apiAuthInterceptor(chain: Interceptor.Chain): Response {
         val request = chain.request()
 
@@ -82,7 +80,7 @@ class Softkomik : HttpSource() {
         return chain.proceed(newRequest)
     }
 
-    // ============ IMAGE INTERCEPTOR (CDN FALLBACK) ============
+    // ============ IMAGE CDN FALLBACK ============
     private fun imageInterceptor(chain: Interceptor.Chain): Response {
         val originalRequest = chain.request()
 
@@ -113,7 +111,7 @@ class Softkomik : HttpSource() {
                 if (newResponse.isSuccessful) return newResponse
                 newResponse.close()
             } catch (e: Exception) {
-                // Try next CDN
+                // Lanjutkan CDN berikutnya
             }
         }
 
@@ -162,7 +160,12 @@ class Softkomik : HttpSource() {
                 is TypeFilter -> url.addQueryParameter("type", filter.selected)
                 is GenreFilter -> url.addQueryParameter("genre", filter.selected)
                 is SortFilter -> url.addQueryParameter("sortBy", filter.selected)
-                else -> {}
+                is MinChapterFilter -> {
+                    val min = filter.state.toIntOrNull()
+                    if (min != null && min > 0) {
+                        url.addQueryParameter("min", min.toString())
+                    }
+                }
             }
         }
 
@@ -292,12 +295,13 @@ class Softkomik : HttpSource() {
 
     // ============ FILTERS ============
     override fun getFilterList() = FilterList(
-        Filter.Header("Filter tidak bisa digabungkan dengan pencarian teks."),
-        Filter.Separator(),
-        SortFilter(),
         StatusFilter(),
         TypeFilter(),
         GenreFilter(),
+        SortFilter(),
+        Filter.Separator(),
+        Filter.Header("Filter tidak dapat digabung dengan pencarian teks"),
+        MinChapterFilter(),
     )
 
     // ============ CONSTANTS ============
@@ -313,41 +317,4 @@ class Softkomik : HttpSource() {
         "https://img.softdevices.my.id/softkomik-image",
         "https://image.softkomik.com/softkomik",
     )
-
-    companion object {
-        const val PREFIX = "id.softkomik"
-    }
 }
-
-// ============ FILTER CLASSES ============
-class SortFilter : Filter.Select<String>(
-    "Urutkan",
-    arrayOf("Terbaru", "Populer", "A-Z"),
-    arrayOf("newKomik", "popular", "az")
-)
-
-class StatusFilter : Filter.Select<String>(
-    "Status",
-    arrayOf("Semua", "Ongoing", "Tamat"),
-    arrayOf("", "ongoing", "tamat")
-)
-
-class TypeFilter : Filter.Select<String>(
-    "Tipe",
-    arrayOf("Semua", "Manga", "Manhwa", "Manhua"),
-    arrayOf("", "manga", "manhwa", "manhua")
-)
-
-class GenreFilter : Filter.Select<String>(
-    "Genre",
-    arrayOf(
-        "Semua", "Action", "Adventure", "Comedy", "Drama", "Fantasy",
-        "Horror", "Mystery", "Romance", "Sci-Fi", "Slice of Life",
-        "Sports", "Supernatural", "Thriller"
-    ),
-    arrayOf(
-        "", "action", "adventure", "comedy", "drama", "fantasy",
-        "horror", "mystery", "romance", "sci-fi", "slice-of-life",
-        "sports", "supernatural", "thriller"
-    )
-)
