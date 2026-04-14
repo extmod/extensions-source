@@ -1,5 +1,13 @@
 package eu.kanade.tachiyomi.extension.id.softkomik
 
+import android.annotation.SuppressLint
+import android.app.Application
+import android.os.Handler
+import android.os.Looper
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.source.model.Filter
 import eu.kanade.tachiyomi.source.model.FilterList
@@ -11,11 +19,16 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import keiyoushi.utils.extractNextJs
 import keiyoushi.utils.parseAs
 import okhttp3.Headers
+import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Interceptor
 import okhttp3.Request
 import okhttp3.Response
-import java.io.IOException
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
+import java.net.URLDecoder
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 class Softkomik : HttpSource() {
@@ -24,11 +37,8 @@ class Softkomik : HttpSource() {
     override val lang = "id"
     override val supportsLatest = true
 
-    // ============ VERCEL CONFIG ============
-    private val vercelUrl = "https://project-qvmcp.vercel.app/api/token"
-
-    private var cachedSession: SessionDto? = null
-    private val cacheLock = Any()
+    private val sessionsByUrlKey = ConcurrentHashMap<String, SessionDto>()
+    private var bearerToken: BearerTokenDto? = null
 
     private val rscHeaders = headersBuilder()
         .add("rsc", "1")
@@ -37,100 +47,13 @@ class Softkomik : HttpSource() {
     override val client = network.cloudflareClient.newBuilder()
         .addInterceptor(::imageInterceptor)
         .addInterceptor(::apiAuthInterceptor)
-        .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
         .build()
 
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
         .add("Referer", "$baseUrl/")
         .add("Origin", baseUrl)
 
-    // ============ TOKEN DARI VERCEL ============
-    private fun getSession(): SessionDto {
-        synchronized(cacheLock) {
-            cachedSession?.let {
-                if (it.ex > System.currentTimeMillis()) {
-                    return it
-                }
-            }
-
-            val request = GET(vercelUrl, headers)
-            val response = client.newCall(request).execute()
-
-            if (!response.isSuccessful) {
-                response.close()
-                throw IOException("Gagal fetch token dari Vercel (HTTP ${response.code})")
-            }
-
-            val session = response.use { it.parseAs<SessionDto>() }
-            cachedSession = session
-            return session
-        }
-    }
-
-    // ============ AUTH INTERCEPTOR (tambah X-Token dan X-Sign ke API) ============
-    private fun apiAuthInterceptor(chain: Interceptor.Chain): Response {
-        val originalRequest = chain.request()
-
-        // Hanya tambahkan header untuk request ke API v2.softdevices.my.id
-        if (!originalRequest.url.toString().startsWith(apiUrl)) {
-            return chain.proceed(originalRequest)
-        }
-
-        val session = getSession()
-        val newRequest = originalRequest.newBuilder()
-            .header("X-Token", session.token)
-            .header("X-Sign", session.sign)
-            .build()
-
-        return chain.proceed(newRequest)
-    }
-
-    // ============ IMAGE INTERCEPTOR (CDN fallback, hanya untuk gambar) ============
-    private fun imageInterceptor(chain: Interceptor.Chain): Response {
-        val originalRequest = chain.request()
-        val url = originalRequest.url.toString()
-
-        // Hanya proses jika URL adalah CDN gambar
-        if (cdnUrls.none { url.startsWith(it) }) {
-            return chain.proceed(originalRequest)
-        }
-
-        val response = try {
-            chain.proceed(originalRequest)
-        } catch (e: Exception) {
-            null
-        }
-
-        if (response?.isSuccessful == true) return response
-
-        val currentHost = cdnUrls.firstOrNull { url.startsWith(it) }
-        if (currentHost == null) {
-            return response ?: throw IOException("Failed to load image: $url")
-        }
-
-        response?.close()
-
-        val imagePath = url.removePrefix(currentHost).removePrefix("/")
-        val otherHosts = cdnUrls.filter { it != currentHost }
-
-        for (newHost in otherHosts) {
-            val newUrl = "$newHost/$imagePath".toHttpUrl()
-            try {
-                val newResponse = chain.proceed(
-                    originalRequest.newBuilder().url(newUrl).build()
-                )
-                if (newResponse.isSuccessful) return newResponse
-                newResponse.close()
-            } catch (e: Exception) {
-                // Lanjutkan CDN berikutnya
-            }
-        }
-
-        throw IOException("All CDN hosts failed for: $imagePath")
-    }
-
-    // ============ POPULAR ============
+    // ======================== Popular ========================
     override fun popularMangaRequest(page: Int): Request {
         val url = "$baseUrl/komik/library".toHttpUrl().newBuilder()
             .addQueryParameter("sortBy", "popular")
@@ -141,7 +64,7 @@ class Softkomik : HttpSource() {
 
     override fun popularMangaParse(response: Response) = searchMangaParse(response)
 
-    // ============ LATEST ============
+    // ======================== Latest ========================
     override fun latestUpdatesRequest(page: Int): Request {
         val url = "$baseUrl/komik/library".toHttpUrl().newBuilder()
             .addQueryParameter("sortBy", "newKomik")
@@ -152,7 +75,7 @@ class Softkomik : HttpSource() {
 
     override fun latestUpdatesParse(response: Response) = searchMangaParse(response)
 
-    // ============ SEARCH ============
+    // ======================== Search ========================
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
         if (query.isNotEmpty()) {
             val url = "$apiUrl/komik".toHttpUrl().newBuilder()
@@ -173,9 +96,9 @@ class Softkomik : HttpSource() {
                 is GenreFilter -> url.addQueryParameter("genre", filter.selected)
                 is SortFilter -> url.addQueryParameter("sortBy", filter.selected)
                 is MinChapterFilter -> {
-                    val min = filter.state.toIntOrNull()
-                    if (min != null && min > 0) {
-                        url.addQueryParameter("min", min.toString())
+                    val minValue = filter.state.toIntOrNull()
+                    if (minValue != null && minValue > 0) {
+                        url.addQueryParameter("min", minValue.toString())
                     }
                 }
                 else -> {}
@@ -190,7 +113,7 @@ class Softkomik : HttpSource() {
             response.parseAs<LibDataDto>()
         } else {
             response.extractNextJs<LibDataDto>()
-        } ?: throw IOException("Could not find library data")
+        } ?: throw Exception("Could not find library data")
 
         val mangas = libData.data.map { manga ->
             SManga.create().apply {
@@ -202,13 +125,12 @@ class Softkomik : HttpSource() {
         return MangasPage(mangas, libData.page < libData.maxPage)
     }
 
-    // ============ MANGA DETAILS ============
-    override fun mangaDetailsRequest(manga: SManga): Request =
-        GET("$baseUrl/${manga.url}", rscHeaders)
+    // ======================== Details ========================
+    override fun mangaDetailsRequest(manga: SManga): Request = GET("$baseUrl/${manga.url}", rscHeaders)
 
     override fun mangaDetailsParse(response: Response): SManga {
         val manga = response.extractNextJs<MangaDetailsDto>()
-            ?: throw IOException("Could not find manga details")
+            ?: throw Exception("Could not find manga details")
 
         val slug = response.request.url.pathSegments.lastOrNull()!!
         return SManga.create().apply {
@@ -228,27 +150,28 @@ class Softkomik : HttpSource() {
 
     override fun getMangaUrl(manga: SManga): String = "$baseUrl/${manga.url}"
 
-    // ============ CHAPTER LIST (PAKAI TOKEN VERCEL) ============
+    // ======================== Chapters ========================
     override fun chapterListRequest(manga: SManga): Request {
-        val url = "$apiUrl/komik/${manga.url}/chapter?limit=9999999"
+        val isRequiredLogin = requiredLoginGenres.any { keyword ->
+            manga.genre.orEmpty().contains(keyword, ignoreCase = true)
+        }
+        var url = "$apiUrl/komik/${manga.url}/chapter?limit=9999999"
+        if (isRequiredLogin) url += requiredLoginFragment
         return GET(url, headers)
     }
 
     override fun chapterListParse(response: Response): List<SChapter> {
-        if (!response.isSuccessful) {
-            throw IOException("Chapter list request failed: ${response.code}")
-        }
-
         val dto = response.parseAs<ChapterListDto>()
         val slug = response.request.url.pathSegments[1]
-
+        val isRequiredLogin = response.request.url.fragment?.contains(requiredLoginSuffix) == true
         return dto.chapter.map { chapter ->
             val chapterNumStr = chapter.chapter
             val chapterNum = chapterNumStr.substringBefore(".").toFloatOrNull() ?: -1f
             val displayNum = formatChapterDisplay(chapterNumStr)
-
+            var chapterUrl = "/$slug/chapter/$chapterNumStr"
+            if (isRequiredLogin) chapterUrl += requiredLoginFragment
             SChapter.create().apply {
-                url = "/$slug/chapter/$chapterNumStr"
+                url = chapterUrl
                 name = "Chapter $displayNum"
                 chapter_number = chapterNum
             }
@@ -259,40 +182,49 @@ class Softkomik : HttpSource() {
         val parts = chapterStr.split(".")
         val numPart = parts[0]
         val suffix = parts.drop(1).joinToString(".")
-
         val floatVal = numPart.toFloatOrNull() ?: return chapterStr
         val formatted = if (floatVal == floatVal.toLong().toFloat()) {
             floatVal.toLong().toString()
         } else {
             floatVal.toString().trimEnd('0').trimEnd('.')
         }
-
         return if (suffix.isNotEmpty()) "$formatted.$suffix" else formatted
     }
 
-    // ============ PAGES ============
-    override fun pageListRequest(chapter: SChapter): Request =
-        GET("$baseUrl${chapter.url}", rscHeaders)
+    // ======================== Pages ========================
+    override fun pageListRequest(chapter: SChapter): Request = GET("$baseUrl${chapter.url}", rscHeaders)
 
     override fun pageListParse(response: Response): List<Page> {
+        val isRequiredLogin = response.request.url.fragment?.contains(requiredLoginSuffix) == true
         val data = response.extractNextJs<ChapterPageDataDto>()
-            ?: throw IOException("Could not find chapter data")
+            ?: throw Exception("Could not find chapter data")
 
         val imageSrc = data.imageSrc.ifEmpty {
             val slug = response.request.url.pathSegments[0]
             val chapter = response.request.url.pathSegments[2]
-            val urlApi = "$apiUrl/komik/$slug/chapter/$chapter/img/${data._id}"
+            // fix: pakai /imgs/ bukan /img/
+            val urlApi = "$apiUrl/komik/$slug/chapter/$chapter/imgs/${data._id}"
 
-            client.newCall(GET(urlApi, headers)).execute().use {
-                if (!it.isSuccessful) {
-                    throw IOException("Failed to fetch image list: ${it.code}")
-                }
+            val token = getBearerTokenFromCookie()
+            if (token == null && isRequiredLogin) {
+                throw Exception("Chapter memerlukan login di WebView")
+            }
+            val authHeaders = if (token != null) {
+                headersBuilder()
+                    .addAll(headers)
+                    .set("Authorization", token.token)
+                    .build()
+            } else {
+                headers
+            }
+
+            client.newCall(GET(urlApi, authHeaders)).execute().use {
                 it.parseAs<ChapterPageImagesDto>().imageSrc
             }
         }
 
         if (imageSrc.isEmpty()) {
-            throw IOException("Chapter kosong atau memerlukan login")
+            throw Exception("Chapter kosong atau memerlukan login di WebView")
         }
 
         val imageBaseUrl = if (data.storageInter2 == true) cdnUrls[2] else cdnUrls[0]
@@ -313,21 +245,237 @@ class Softkomik : HttpSource() {
         return GET(page.imageUrl!!, newHeaders)
     }
 
-    // ============ FILTERS ============
+    // ======================== Interceptors ========================
+
+    private fun imageInterceptor(chain: Interceptor.Chain): Response {
+        val originalRequest = chain.request()
+        val userAgent = originalRequest.header("User-Agent")
+        val normalizedUserAgent = normalizeUserAgent(userAgent)
+
+        val request = if (normalizedUserAgent != userAgent) {
+            originalRequest.newBuilder()
+                .header("User-Agent", normalizedUserAgent.orEmpty())
+                .build()
+        } else {
+            originalRequest
+        }
+
+        val response = try {
+            chain.proceed(request)
+        } catch (e: java.net.UnknownHostException) {
+            null
+        }
+
+        if (response?.isSuccessful == true) return response
+
+        val currentHost = cdnUrls.firstOrNull { request.url.toString().startsWith(it) }
+
+        if (currentHost == null) {
+            return response ?: throw java.net.UnknownHostException(request.url.host)
+        }
+
+        response?.close()
+
+        val imagePath = request.url.toString().removePrefix(currentHost).removePrefix("/")
+        val otherHosts = cdnUrls.filter { it != currentHost }
+
+        var latestResponse: Response? = null
+        for (newHost in otherHosts) {
+            latestResponse?.close()
+            val newUrl = "$newHost/$imagePath".toHttpUrl()
+            latestResponse = try {
+                chain.proceed(request.newBuilder().url(newUrl).build())
+            } catch (e: java.net.UnknownHostException) {
+                null
+            }
+            if (latestResponse?.isSuccessful == true) return latestResponse
+        }
+
+        return latestResponse ?: throw java.net.UnknownHostException("All CDN hosts failed for: $imagePath")
+    }
+
+    private fun apiAuthInterceptor(chain: Interceptor.Chain): Response {
+        val request = chain.request()
+        if (!request.url.toString().startsWith(apiUrl)) {
+            return chain.proceed(request)
+        }
+        val route = resolveSessionRoute(request.url)
+        val session = getSession(route)
+        var response = chain.proceed(
+            request.newBuilder()
+                .header("X-Token", session.token)
+                .header("X-Sign", session.sign)
+                .build()
+        )
+        if (!response.isSuccessful) {
+            response.close()
+            sessionsByUrlKey.remove(route.key)
+            val freshSession = getSessionViaWebView(route)
+            response = chain.proceed(
+                request.newBuilder()
+                    .header("X-Token", freshSession.token)
+                    .header("X-Sign", freshSession.sign)
+                    .build()
+            )
+        }
+        return response
+    }
+
+    // ======================== Session ========================
+
+    private fun getBearerTokenFromCookie(): BearerTokenDto? {
+        synchronized(this) {
+            val currentToken = bearerToken
+            if (currentToken != null && currentToken.ex > System.currentTimeMillis()) {
+                return currentToken
+            }
+            val cookies = client.cookieJar.loadForRequest(baseUrl.toHttpUrl())
+            val cookieToken = cookies.firstOrNull { it.name == "tokkey" } ?: return null
+            val rawValue = cookieToken.value
+            val token = runCatching { URLDecoder.decode(rawValue, Charsets.UTF_8.name()) }
+                .getOrDefault(rawValue)
+            bearerToken = BearerTokenDto(token = token, ex = cookieToken.expiresAt)
+            return bearerToken
+        }
+    }
+
+    private data class SessionRoute(
+        val key: String,
+        val webViewUrl: String,
+        val slug: String?,
+        val isChapterListRequest: Boolean,
+        val isChapterImageRequest: Boolean,
+    )
+
+    private fun resolveSessionRoute(url: HttpUrl): SessionRoute {
+        val segments = url.pathSegments
+        val komikIndex = segments.indexOf("komik")
+        val slug = if (komikIndex != -1) segments.getOrNull(komikIndex + 1) else null
+        val isChapterListRequest = komikIndex != -1 && segments.getOrNull(komikIndex + 2) == "chapter"
+        val isChapterImageRequest = isChapterListRequest && segments.contains("imgs")
+        val sessionKey = if (isChapterImageRequest) sessionKeyChapterImage else sessionKeyChapterList
+
+        val webViewUrl = if (isChapterImageRequest) {
+            val chapterSegment = resolveWebViewChapterSegment(url)
+            if (chapterSegment != null) "$baseUrl/$slug/chapter/$chapterSegment"
+            else "$baseUrl/$slug/chapter/001"
+        } else if (isChapterListRequest) {
+            "$baseUrl/$slug"
+        } else {
+            "$baseUrl/komik/list"
+        }
+
+        return SessionRoute(
+            key = sessionKey,
+            webViewUrl = webViewUrl,
+            slug = slug,
+            isChapterListRequest = isChapterListRequest,
+            isChapterImageRequest = isChapterImageRequest,
+        )
+    }
+
+    private fun getSession(route: SessionRoute): SessionDto {
+        sessionsByUrlKey[route.key]?.takeIf { it.ex > System.currentTimeMillis() }?.let { return it }
+        synchronized(this) {
+            sessionsByUrlKey[route.key]?.takeIf { it.ex > System.currentTimeMillis() }?.let { return it }
+            return getSessionViaWebView(route)
+        }
+    }
+
+    private fun resolveWebViewChapterSegment(url: HttpUrl): String? {
+        val segments = url.pathSegments
+        val chapterIndex = segments.indexOf("chapter")
+        val rawChapter = if (chapterIndex != -1) segments.getOrNull(chapterIndex + 1) else return null
+        val chapterNumber = rawChapter?.toIntOrNull()
+        return if (chapterNumber != null && chapterNumber < 100) {
+            chapterNumber.toString().padStart(3, '0')
+        } else {
+            rawChapter
+        }
+    }
+
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun getSessionViaWebView(route: SessionRoute): SessionDto {
+        synchronized(this) {
+            val latch = CountDownLatch(1)
+            var capturedToken: String? = null
+            var capturedSign: String? = null
+
+            val handler = Handler(Looper.getMainLooper())
+            var webView: WebView? = null
+
+            handler.post {
+                val wv = WebView(Injekt.get<Application>())
+                webView = wv
+                wv.settings.javaScriptEnabled = true
+                wv.settings.domStorageEnabled = true
+                wv.settings.loadsImagesAutomatically = false
+                wv.settings.blockNetworkImage = true
+                wv.settings.userAgentString = headers["User-Agent"]
+
+                wv.webViewClient = object : WebViewClient() {
+                    override fun shouldInterceptRequest(
+                        view: WebView,
+                        request: WebResourceRequest,
+                    ): WebResourceResponse? {
+                        val url = request.url.toString()
+                        if (url.contains(apiUrl)) {
+                            val token = request.requestHeaders["X-Token"]
+                            val sign = request.requestHeaders["X-Sign"]
+                            if (!token.isNullOrEmpty() && !sign.isNullOrEmpty()) {
+                                capturedToken = token
+                                capturedSign = sign
+                                latch.countDown()
+                            }
+                        }
+                        return super.shouldInterceptRequest(view, request)
+                    }
+                }
+                wv.loadUrl(route.webViewUrl)
+            }
+
+            latch.await(15, TimeUnit.SECONDS)
+            handler.post { webView?.destroy() }
+
+            val token = capturedToken ?: throw Exception("Gagal mendapatkan session. Coba lagi.")
+            val sign = capturedSign ?: throw Exception("Gagal mendapatkan session. Coba lagi.")
+
+            val newSession = SessionDto(
+                token = token,
+                sign = sign,
+                ex = System.currentTimeMillis() + TimeUnit.HOURS.toMillis(2),
+            )
+            sessionsByUrlKey[route.key] = newSession
+            return newSession
+        }
+    }
+
+    private fun normalizeUserAgent(userAgent: String?): String? {
+        if (userAgent.isNullOrBlank()) return null
+        return userAgent
+            .replace(userAgentMobileSafariRegex, "")
+            .trim()
+            .ifEmpty { null }
+    }
+
     override fun getFilterList() = FilterList(
+        Filter.Header("Filter tidak bisa digabungkan dengan pencarian teks."),
+        Filter.Separator(),
+        SortFilter(),
         StatusFilter(),
         TypeFilter(),
         GenreFilter(),
-        SortFilter(),
-        Filter.Separator(),
-        Filter.Header("Filter tidak dapat digabung dengan pencarian teks"),
         MinChapterFilter(),
     )
 
-    // ============ CONSTANTS ============
+    private val requiredLoginSuffix = "login-required"
+    private val requiredLoginFragment = "#$requiredLoginSuffix"
+    private val requiredLoginGenres = listOf("ecchi", "mature")
+    private val sessionKeyChapterList = "chapter-list"
+    private val sessionKeyChapterImage = "chapter-image"
     private val apiUrl = "https://v2.softdevices.my.id"
     private val coverUrl = "https://cover.softdevices.my.id/softkomik-cover"
-
+    private val userAgentMobileSafariRegex = Regex("""\s*Mobile Safari/\d+(?:\.\d+)*""", RegexOption.IGNORE_CASE)
     private val cdnUrls = listOf(
         "https://psy1.komik.im",
         "https://image.komik.im/softkomik",
