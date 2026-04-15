@@ -414,23 +414,54 @@ class Softkomik : HttpSource() {
                 wv.settings.userAgentString = headers["User-Agent"]
 
                 wv.webViewClient = object : WebViewClient() {
-                    override fun shouldInterceptRequest(
-                        view: WebView,
-                        request: WebResourceRequest,
-                    ): WebResourceResponse? {
-                        val url = request.url.toString()
-                        if (url.contains(apiUrl)) {
-                            val token = request.requestHeaders["X-Token"]
-                            val sign = request.requestHeaders["X-Sign"]
-                            if (!token.isNullOrEmpty() && !sign.isNullOrEmpty()) {
-                                capturedToken = token
-                                capturedSign = sign
-                                latch.countDown()
-                            }
+    override fun onPageFinished(view: WebView, url: String) {
+        view.evaluateJavascript("""
+            (function() {
+                const orig = window.fetch;
+                window.fetch = function(input, init) {
+                    const url = typeof input === 'string' ? input : input.url;
+                    if (url && url.includes('v2.softdevices')) {
+                        const h = (init && init.headers) || {};
+                        const token = h['X-Token'] || h['x-token'] || '';
+                        const sign = h['X-Sign'] || h['x-sign'] || '';
+                        if (token && sign) {
+                            AndroidBridge.onToken(token, sign);
                         }
-                        return super.shouldInterceptRequest(view, request)
                     }
-                }
+                    return orig.apply(this, arguments);
+                };
+            })();
+        """.trimIndent(), null)
+    }
+
+    override fun shouldInterceptRequest(
+        view: WebView,
+        request: WebResourceRequest,
+    ): WebResourceResponse? {
+        val url = request.url.toString()
+        if (url.contains(apiUrl)) {
+            val token = request.requestHeaders["X-Token"]
+            val sign = request.requestHeaders["X-Sign"]
+            if (!token.isNullOrEmpty() && !sign.isNullOrEmpty()) {
+                capturedToken = token
+                capturedSign = sign
+                latch.countDown()
+            }
+        }
+        return super.shouldInterceptRequest(view, request)
+    }
+}
+
+wv.addJavascriptInterface(object : Any() {
+    @android.webkit.JavascriptInterface
+    fun onToken(token: String, sign: String) {
+        if (capturedToken == null) {
+            capturedToken = token
+            capturedSign = sign
+            latch.countDown()
+        }
+    }
+}, "AndroidBridge")
                 wv.loadUrl(route.webViewUrl)
             }
 
