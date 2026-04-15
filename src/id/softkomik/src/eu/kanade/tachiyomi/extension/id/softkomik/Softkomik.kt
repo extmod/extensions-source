@@ -1,13 +1,5 @@
 package eu.kanade.tachiyomi.extension.id.softkomik
 
-import android.annotation.SuppressLint
-import android.app.Application
-import android.os.Handler
-import android.os.Looper
-import android.webkit.WebResourceRequest
-import android.webkit.WebResourceResponse
-import android.webkit.WebView
-import android.webkit.WebViewClient
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.source.model.Filter
 import eu.kanade.tachiyomi.source.model.FilterList
@@ -24,12 +16,8 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Interceptor
 import okhttp3.Request
 import okhttp3.Response
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 import java.net.URLDecoder
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
 
 class Softkomik : HttpSource() {
     override val name = "Softkomik"
@@ -202,7 +190,6 @@ class Softkomik : HttpSource() {
         val imageSrc = data.imageSrc.ifEmpty {
             val slug = response.request.url.pathSegments[0]
             val chapter = response.request.url.pathSegments[2]
-            // fix: pakai /imgs/ bukan /img/
             val urlApi = "$apiUrl/komik/$slug/chapter/$chapter/imgs/${data._id}"
 
             val token = getBearerTokenFromCookie()
@@ -299,8 +286,8 @@ class Softkomik : HttpSource() {
         if (!request.url.toString().startsWith(apiUrl)) {
             return chain.proceed(request)
         }
-        val route = resolveSessionRoute(request.url)
-        val session = getSession(route)
+        val sessionKey = resolveSessionKey(request.url)
+        val session = getSession(sessionKey)
         var response = chain.proceed(
             request.newBuilder()
                 .header("X-Token", session.token)
@@ -309,8 +296,8 @@ class Softkomik : HttpSource() {
         )
         if (!response.isSuccessful) {
             response.close()
-            sessionsByUrlKey.remove(route.key)
-            val freshSession = getSessionViaWebView(route)
+            sessionsByUrlKey.remove(sessionKey)
+            val freshSession = fetchSessionFromVercel(sessionKey)
             response = chain.proceed(
                 request.newBuilder()
                     .header("X-Token", freshSession.token)
@@ -339,146 +326,35 @@ class Softkomik : HttpSource() {
         }
     }
 
-    private data class SessionRoute(
-        val key: String,
-        val webViewUrl: String,
-        val slug: String?,
-        val isChapterListRequest: Boolean,
-        val isChapterImageRequest: Boolean,
-    )
-
-    private fun resolveSessionRoute(url: HttpUrl): SessionRoute {
+    private fun resolveSessionKey(url: HttpUrl): String {
         val segments = url.pathSegments
         val komikIndex = segments.indexOf("komik")
-        val slug = if (komikIndex != -1) segments.getOrNull(komikIndex + 1) else null
-        val isChapterListRequest = komikIndex != -1 && segments.getOrNull(komikIndex + 2) == "chapter"
-        val isChapterImageRequest = isChapterListRequest && segments.contains("imgs")
-        val sessionKey = if (isChapterImageRequest) sessionKeyChapterImage else sessionKeyChapterList
+        val isChapterRequest = komikIndex != -1 && segments.getOrNull(komikIndex + 2) == "chapter"
+        val isImageRequest = isChapterRequest && segments.contains("imgs")
+        return if (isImageRequest) sessionKeyChapterImage else sessionKeyChapterList
+    }
 
-        val webViewUrl = if (isChapterImageRequest) {
-            val chapterSegment = resolveWebViewChapterSegment(url)
-            if (chapterSegment != null) "$baseUrl/$slug/chapter/$chapterSegment"
-            else "$baseUrl/$slug/chapter/001"
-        } else if (isChapterListRequest) {
-            "$baseUrl/$slug"
-        } else {
-            "$baseUrl/komik/list"
+    private fun getSession(sessionKey: String): SessionDto {
+        sessionsByUrlKey[sessionKey]?.takeIf { it.ex > System.currentTimeMillis() }?.let { return it }
+        synchronized(this) {
+            sessionsByUrlKey[sessionKey]?.takeIf { it.ex > System.currentTimeMillis() }?.let { return it }
+            return fetchSessionFromVercel(sessionKey)
         }
+    }
 
-        return SessionRoute(
-            key = sessionKey,
-            webViewUrl = webViewUrl,
-            slug = slug,
-            isChapterListRequest = isChapterListRequest,
-            isChapterImageRequest = isChapterImageRequest,
+    private fun fetchSessionFromVercel(sessionKey: String): SessionDto {
+        val response = client.newCall(GET(vercelTokenUrl, headers)).execute()
+        if (!response.isSuccessful) {
+            throw Exception("Gagal mendapatkan session dari server (${response.code})")
+        }
+        val dto = response.parseAs<VercelTokenDto>()
+        val session = SessionDto(
+            token = dto.token,
+            sign = dto.sign,
+            ex = dto.exp,
         )
-    }
-
-    private fun getSession(route: SessionRoute): SessionDto {
-        sessionsByUrlKey[route.key]?.takeIf { it.ex > System.currentTimeMillis() }?.let { return it }
-        synchronized(this) {
-            sessionsByUrlKey[route.key]?.takeIf { it.ex > System.currentTimeMillis() }?.let { return it }
-            return getSessionViaWebView(route)
-        }
-    }
-
-    private fun resolveWebViewChapterSegment(url: HttpUrl): String? {
-        val segments = url.pathSegments
-        val chapterIndex = segments.indexOf("chapter")
-        val rawChapter = if (chapterIndex != -1) segments.getOrNull(chapterIndex + 1) else return null
-        val chapterNumber = rawChapter?.toIntOrNull()
-        return if (chapterNumber != null && chapterNumber < 100) {
-            chapterNumber.toString().padStart(3, '0')
-        } else {
-            rawChapter
-        }
-    }
-
-    @SuppressLint("SetJavaScriptEnabled")
-    private fun getSessionViaWebView(route: SessionRoute): SessionDto {
-        synchronized(this) {
-            val latch = CountDownLatch(1)
-            var capturedToken: String? = null
-            var capturedSign: String? = null
-
-            val handler = Handler(Looper.getMainLooper())
-            var webView: WebView? = null
-
-            handler.post {
-                val wv = WebView(Injekt.get<Application>())
-                webView = wv
-                wv.settings.javaScriptEnabled = true
-                wv.settings.domStorageEnabled = true
-                wv.settings.loadsImagesAutomatically = false
-                wv.settings.blockNetworkImage = true
-                wv.settings.userAgentString = headers["User-Agent"]
-
-                wv.webViewClient = object : WebViewClient() {
-    override fun onPageFinished(view: WebView, url: String) {
-        view.evaluateJavascript("""
-            (function() {
-                const orig = window.fetch;
-                window.fetch = function(input, init) {
-                    const url = typeof input === 'string' ? input : input.url;
-                    if (url && url.includes('v2.softdevices')) {
-                        const h = (init && init.headers) || {};
-                        const token = h['X-Token'] || h['x-token'] || '';
-                        const sign = h['X-Sign'] || h['x-sign'] || '';
-                        if (token && sign) {
-                            AndroidBridge.onToken(token, sign);
-                        }
-                    }
-                    return orig.apply(this, arguments);
-                };
-            })();
-        """.trimIndent(), null)
-    }
-
-    override fun shouldInterceptRequest(
-        view: WebView,
-        request: WebResourceRequest,
-    ): WebResourceResponse? {
-        val url = request.url.toString()
-        if (url.contains(apiUrl)) {
-            val token = request.requestHeaders["X-Token"]
-            val sign = request.requestHeaders["X-Sign"]
-            if (!token.isNullOrEmpty() && !sign.isNullOrEmpty()) {
-                capturedToken = token
-                capturedSign = sign
-                latch.countDown()
-            }
-        }
-        return super.shouldInterceptRequest(view, request)
-    }
-}
-
-wv.addJavascriptInterface(object : Any() {
-    @android.webkit.JavascriptInterface
-    fun onToken(token: String, sign: String) {
-        if (capturedToken == null) {
-            capturedToken = token
-            capturedSign = sign
-            latch.countDown()
-        }
-    }
-}, "AndroidBridge")
-                wv.loadUrl(route.webViewUrl)
-            }
-
-            latch.await(15, TimeUnit.SECONDS)
-            handler.post { webView?.destroy() }
-
-            val token = capturedToken ?: throw Exception("Gagal mendapatkan session. Coba lagi.")
-            val sign = capturedSign ?: throw Exception("Gagal mendapatkan session. Coba lagi.")
-
-            val newSession = SessionDto(
-                token = token,
-                sign = sign,
-                ex = System.currentTimeMillis() + TimeUnit.HOURS.toMillis(2),
-            )
-            sessionsByUrlKey[route.key] = newSession
-            return newSession
-        }
+        sessionsByUrlKey[sessionKey] = session
+        return session
     }
 
     private fun normalizeUserAgent(userAgent: String?): String? {
@@ -506,6 +382,7 @@ wv.addJavascriptInterface(object : Any() {
     private val sessionKeyChapterImage = "chapter-image"
     private val apiUrl = "https://v2.softdevices.my.id"
     private val coverUrl = "https://cover.softdevices.my.id/softkomik-cover"
+    private val vercelTokenUrl = "https://project-qvmcp.vercel.app/api/token"
     private val userAgentMobileSafariRegex = Regex("""\s*Mobile Safari/\d+(?:\.\d+)*""", RegexOption.IGNORE_CASE)
     private val cdnUrls = listOf(
         "https://psy1.komik.im",
