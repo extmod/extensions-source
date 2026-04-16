@@ -190,12 +190,16 @@ class Softkomik : HttpSource() {
 
     // ======================== Pages ========================
     override fun pageListRequest(chapter: SChapter): Request {
-        val url = "$vercelImagesUrl".toHttpUrl().newBuilder()
-            .addQueryParameter("slug", chapter.url.split("/")[1])
-            .addQueryParameter("chapter", chapter.url.split("/")[3])
-            .build()
-        return GET(url, headers)
-    }
+    val parts = chapter.url.split("/")
+    // url format: /slug/chapter/old/1179 atau /slug/chapter/1
+    val slug = parts[1]
+    val chapterParam = parts.drop(3).joinToString("/")
+    val url = "$vercelImagesUrl".toHttpUrl().newBuilder()
+        .addQueryParameter("slug", slug)
+        .addQueryParameter("chapter", chapterParam)
+        .build()
+    return GET(url, headers)
+}
 
     override fun pageListParse(response: Response): List<Page> {
         val dto = response.parseAs<VercelImagesDto>()
@@ -376,8 +380,8 @@ class Softkomik : HttpSource() {
     private val sessionKeyChapterImage = "chapter-image"
     private val apiUrl = "https://v2.softdevices.my.id"
     private val coverUrl = "https://cover.softdevices.my.id/softkomik-cover"
-    private val vercelTokenUrl = "https://project-qvmcp.vercel.app/api/token"
-    private val vercelImagesUrl = "https://project-qvmcp.vercel.app/api/images"
+    private val vercelTokenUrl = "https://softkomik-token.komikmix.workers.dev"
+    private val vercelImagesUrl = "https://softkomik-images.komikmix.workers.dev"
     private val userAgentMobileSafariRegex = Regex("""\s*Mobile Safari/\d+(?:\.\d+)*""", RegexOption.IGNORE_CASE)
     private val cdnUrls = listOf(
         "https://psy1.komik.im",
