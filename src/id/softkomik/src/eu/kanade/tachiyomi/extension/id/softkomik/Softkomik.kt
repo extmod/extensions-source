@@ -180,72 +180,21 @@ class Softkomik : HttpSource() {
     }
 
     // ======================== Pages ========================
-    override fun pageListRequest(chapter: SChapter): Request = GET("$baseUrl${chapter.url}", rscHeaders)
+
+    // pageListRequest: tetap hit softkomik.co untuk RSC data
+    override fun pageListRequest(chapter: SChapter): Request {
+        val url = "$vercelImagesUrl".toHttpUrl().newBuilder()
+            .addQueryParameter("slug", chapter.url.split("/")[1])
+            .addQueryParameter("chapter", chapter.url.split("/")[3])
+            .build()
+        return GET(url, headers)
+    }
 
     override fun pageListParse(response: Response): List<Page> {
-    val data = response.extractNextJs<ChapterPageDataDto>()
-        ?: throw Exception("Tidak bisa ambil data chapter")
-
-    val slug = response.request.url.pathSegments[0]
-    val chapter = response.request.url.pathSegments[2]
-
-    // ========================
-    // 1. Ambil dari API jika ada
-    // ========================
-    var imageSrc = data.imageSrc
-
-    // ========================
-    // 2. Fallback ke API (optional, jangan diandalkan)
-    // ========================
-    if (imageSrc.isEmpty()) {
-        try {
-            val urlApi = "$apiUrl/komik/$slug/chapter/$chapter/imgs/${data._id}"
-
-            val token = getBearerTokenFromCookie()
-            val authHeaders = headersBuilder()
-                .addAll(headers)
-                .apply {
-                    if (token != null) set("Authorization", token.token)
-                }
-                .build()
-
-            client.newCall(GET(urlApi, authHeaders)).execute().use {
-                if (it.isSuccessful) {
-                    val result = it.parseAs<ChapterPageImagesDto>().imageSrc
-                    if (result.isNotEmpty()) {
-                        imageSrc = result
-                    }
-                }
-            }
-        } catch (_: Exception) {
-        }
+        val dto = response.parseAs<VercelImagesDto>()
+        if (dto.images.isEmpty()) throw Exception("Tidak ada gambar ditemukan dari server")
+        return dto.images.mapIndexed { i, url -> Page(i, imageUrl = url) }
     }
-
-    // ========================
-    // 3. Fallback CDN (utama)
-    // ========================
-    val finalImageSrc = if (imageSrc.isEmpty()) {
-        val basePath = "contabo/scrap-upload/$slug/chapter-$chapter"
-
-        val maxPages = 80 // aman & realistis
-
-        (1..maxPages).map {
-            val num = it.toString().padStart(3, '0')
-            "$basePath/softkomik-$num.webp"
-        }
-    } else {
-        imageSrc
-    }
-
-    // ========================
-    // 4. Gunakan CDN utama
-    // ========================
-    val imageBaseUrl = cdnUrls[0]
-
-    return finalImageSrc.mapIndexed { i, img ->
-        Page(i, imageUrl = "$imageBaseUrl/${img.removePrefix("/")}")
-    }
-}
 
     override fun imageUrlParse(response: Response) = throw UnsupportedOperationException()
 
@@ -309,6 +258,7 @@ class Softkomik : HttpSource() {
 
     private fun apiAuthInterceptor(chain: Interceptor.Chain): Response {
         val request = chain.request()
+        // Hanya inject token untuk v2.softdevices.my.id, bukan vercel
         if (!request.url.toString().startsWith(apiUrl)) {
             return chain.proceed(request)
         }
@@ -318,7 +268,7 @@ class Softkomik : HttpSource() {
             request.newBuilder()
                 .header("X-Token", session.token)
                 .header("X-Sign", session.sign)
-                .build()
+                .build(),
         )
         if (!response.isSuccessful) {
             response.close()
@@ -328,7 +278,7 @@ class Softkomik : HttpSource() {
                 request.newBuilder()
                     .header("X-Token", freshSession.token)
                     .header("X-Sign", freshSession.sign)
-                    .build()
+                    .build(),
             )
         }
         return response
@@ -409,6 +359,7 @@ class Softkomik : HttpSource() {
     private val apiUrl = "https://v2.softdevices.my.id"
     private val coverUrl = "https://cover.softdevices.my.id/softkomik-cover"
     private val vercelTokenUrl = "https://project-qvmcp.vercel.app/api/token"
+    private val vercelImagesUrl = "https://project-qvmcp.vercel.app/api/images"
     private val userAgentMobileSafariRegex = Regex("""\s*Mobile Safari/\d+(?:\.\d+)*""", RegexOption.IGNORE_CASE)
     private val cdnUrls = listOf(
         "https://psy1.komik.im",
