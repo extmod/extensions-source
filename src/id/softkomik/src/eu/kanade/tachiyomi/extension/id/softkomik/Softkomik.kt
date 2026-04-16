@@ -183,43 +183,69 @@ class Softkomik : HttpSource() {
     override fun pageListRequest(chapter: SChapter): Request = GET("$baseUrl${chapter.url}", rscHeaders)
 
     override fun pageListParse(response: Response): List<Page> {
-        val isRequiredLogin = response.request.url.fragment?.contains(requiredLoginSuffix) == true
-        val data = response.extractNextJs<ChapterPageDataDto>()
-            ?: throw Exception("Could not find chapter data")
+    val data = response.extractNextJs<ChapterPageDataDto>()
+        ?: throw Exception("Tidak bisa ambil data chapter")
 
-        val imageSrc = data.imageSrc.ifEmpty {
-            val slug = response.request.url.pathSegments[0]
-            val chapter = response.request.url.pathSegments[2]
+    val slug = response.request.url.pathSegments[0]
+    val chapter = response.request.url.pathSegments[2]
+
+    // ========================
+    // 1. Ambil dari API jika ada
+    // ========================
+    var imageSrc = data.imageSrc
+
+    // ========================
+    // 2. Fallback ke API (optional, jangan diandalkan)
+    // ========================
+    if (imageSrc.isEmpty()) {
+        try {
             val urlApi = "$apiUrl/komik/$slug/chapter/$chapter/imgs/${data._id}"
 
             val token = getBearerTokenFromCookie()
-            if (token == null && isRequiredLogin) {
-                throw Exception("Chapter memerlukan login di WebView")
-            }
-            val authHeaders = if (token != null) {
-                headersBuilder()
-                    .addAll(headers)
-                    .set("Authorization", token.token)
-                    .build()
-            } else {
-                headers
-            }
+            val authHeaders = headersBuilder()
+                .addAll(headers)
+                .apply {
+                    if (token != null) set("Authorization", token.token)
+                }
+                .build()
 
             client.newCall(GET(urlApi, authHeaders)).execute().use {
-                it.parseAs<ChapterPageImagesDto>().imageSrc
+                if (it.isSuccessful) {
+                    val result = it.parseAs<ChapterPageImagesDto>().imageSrc
+                    if (result.isNotEmpty()) {
+                        imageSrc = result
+                    }
+                }
             }
-        }
-
-        if (imageSrc.isEmpty()) {
-            throw Exception("Chapter kosong atau memerlukan login di WebView")
-        }
-
-        val imageBaseUrl = if (data.storageInter2 == true) cdnUrls[2] else cdnUrls[0]
-
-        return imageSrc.mapIndexed { i, img ->
-            Page(i, imageUrl = "$imageBaseUrl/${img.removePrefix("/")}")
+        } catch (_: Exception) {
         }
     }
+
+    // ========================
+    // 3. Fallback CDN (utama)
+    // ========================
+    val finalImageSrc = if (imageSrc.isEmpty()) {
+        val basePath = "contabo/scrap-upload/$slug/chapter-$chapter"
+
+        val maxPages = 80 // aman & realistis
+
+        (1..maxPages).map {
+            val num = it.toString().padStart(3, '0')
+            "$basePath/softkomik-$num.webp"
+        }
+    } else {
+        imageSrc
+    }
+
+    // ========================
+    // 4. Gunakan CDN utama
+    // ========================
+    val imageBaseUrl = cdnUrls[0]
+
+    return finalImageSrc.mapIndexed { i, img ->
+        Page(i, imageUrl = "$imageBaseUrl/${img.removePrefix("/")}")
+    }
+}
 
     override fun imageUrlParse(response: Response) = throw UnsupportedOperationException()
 
