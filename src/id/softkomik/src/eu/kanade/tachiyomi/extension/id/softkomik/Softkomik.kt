@@ -32,10 +32,19 @@ class Softkomik : HttpSource() {
         .add("rsc", "1")
         .build()
 
+    // Client utama: punya imageInterceptor + apiAuthInterceptor
     override val client = network.cloudflareClient.newBuilder()
         .addInterceptor(::imageInterceptor)
         .addInterceptor(::apiAuthInterceptor)
         .build()
+
+    // Client khusus session: HANYA imageInterceptor, tidak ada apiAuthInterceptor
+    // Ini mencegah deadlock saat fetchSessionFromVercel dipanggil dari dalam apiAuthInterceptor
+    private val sessionClient by lazy {
+        network.cloudflareClient.newBuilder()
+            .addInterceptor(::imageInterceptor)
+            .build()
+    }
 
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
         .add("Referer", "$baseUrl/")
@@ -180,8 +189,6 @@ class Softkomik : HttpSource() {
     }
 
     // ======================== Pages ========================
-
-    // pageListRequest: tetap hit softkomik.co untuk RSC data
     override fun pageListRequest(chapter: SChapter): Request {
         val url = "$vercelImagesUrl".toHttpUrl().newBuilder()
             .addQueryParameter("slug", chapter.url.split("/")[1])
@@ -273,6 +280,7 @@ class Softkomik : HttpSource() {
         if (!response.isSuccessful) {
             response.close()
             sessionsByUrlKey.remove(sessionKey)
+            // Fetch session segar — gunakan sessionClient agar tidak deadlock
             val freshSession = fetchSessionFromVercel(sessionKey)
             response = chain.proceed(
                 request.newBuilder()
@@ -311,26 +319,36 @@ class Softkomik : HttpSource() {
     }
 
     private fun getSession(sessionKey: String): SessionDto {
+        // Cek cache dulu tanpa lock
         sessionsByUrlKey[sessionKey]?.takeIf { it.ex > System.currentTimeMillis() }?.let { return it }
+
+        // Fetch DULU di luar synchronized, baru simpan ke cache
+        // Ini mencegah network call terjadi di dalam lock → deadlock
+        val freshSession = fetchSessionFromVercel(sessionKey)
+
         synchronized(this) {
+            // Double-check: mungkin thread lain sudah fetch duluan
             sessionsByUrlKey[sessionKey]?.takeIf { it.ex > System.currentTimeMillis() }?.let { return it }
-            return fetchSessionFromVercel(sessionKey)
+            sessionsByUrlKey[sessionKey] = freshSession
         }
+
+        return freshSession
     }
 
     private fun fetchSessionFromVercel(sessionKey: String): SessionDto {
-        val response = client.newCall(GET(vercelTokenUrl, headers)).execute()
+        // Gunakan sessionClient (tanpa apiAuthInterceptor) untuk menghindari:
+        // 1. Recursive interceptor call
+        // 2. Thread pool exhaustion → timeout di percobaan kedua+
+        val response = sessionClient.newCall(GET(vercelTokenUrl, headers)).execute()
         if (!response.isSuccessful) {
             throw Exception("Gagal mendapatkan session dari server (${response.code})")
         }
         val dto = response.parseAs<VercelTokenDto>()
-        val session = SessionDto(
+        return SessionDto(
             token = dto.token,
             sign = dto.sign,
             ex = dto.exp,
         )
-        sessionsByUrlKey[sessionKey] = session
-        return session
     }
 
     private fun normalizeUserAgent(userAgent: String?): String? {
