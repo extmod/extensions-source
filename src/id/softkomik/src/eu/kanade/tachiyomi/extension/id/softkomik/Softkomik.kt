@@ -11,13 +11,10 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import keiyoushi.utils.extractNextJs
 import keiyoushi.utils.parseAs
 import okhttp3.Headers
-import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Interceptor
 import okhttp3.Request
 import okhttp3.Response
-import java.net.URLDecoder
-import java.util.concurrent.ConcurrentHashMap
 
 class Softkomik : HttpSource() {
     override val name = "Softkomik"
@@ -25,30 +22,23 @@ class Softkomik : HttpSource() {
     override val lang = "id"
     override val supportsLatest = true
 
-    private val sessionsByUrlKey = ConcurrentHashMap<String, SessionDto>()
-    private var bearerToken: BearerTokenDto? = null
+    private var sessionCache: VercelTokenDto? = null
 
-    private val rscHeaders = headersBuilder()
-        .add("rsc", "1")
-        .build()
+    private val sessionClient by lazy {
+        network.cloudflareClient.newBuilder().build()
+    }
 
-    // Client utama: punya imageInterceptor + apiAuthInterceptor
     override val client = network.cloudflareClient.newBuilder()
-        .addInterceptor(::imageInterceptor)
         .addInterceptor(::apiAuthInterceptor)
         .build()
-
-    // Client khusus session: HANYA imageInterceptor, tidak ada apiAuthInterceptor
-    // Ini mencegah deadlock saat fetchSessionFromVercel dipanggil dari dalam apiAuthInterceptor
-    private val sessionClient by lazy {
-        network.cloudflareClient.newBuilder()
-            .addInterceptor(::imageInterceptor)
-            .build()
-    }
 
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
         .add("Referer", "$baseUrl/")
         .add("Origin", baseUrl)
+
+    private val rscHeaders = headersBuilder()
+        .add("rsc", "1")
+        .build()
 
     // ======================== Popular ========================
     override fun popularMangaRequest(page: Int): Request {
@@ -123,12 +113,12 @@ class Softkomik : HttpSource() {
     }
 
     // ======================== Details ========================
-    override fun mangaDetailsRequest(manga: SManga): Request = GET("$baseUrl/${manga.url}", rscHeaders)
+    override fun mangaDetailsRequest(manga: SManga): Request =
+        GET("$baseUrl/${manga.url}", rscHeaders)
 
     override fun mangaDetailsParse(response: Response): SManga {
         val manga = response.extractNextJs<MangaDetailsDto>()
             ?: throw Exception("Could not find manga details")
-
         val slug = response.request.url.pathSegments.lastOrNull()!!
         return SManga.create().apply {
             setUrlWithoutDomain(slug)
@@ -148,31 +138,97 @@ class Softkomik : HttpSource() {
     override fun getMangaUrl(manga: SManga): String = "$baseUrl/${manga.url}"
 
     // ======================== Chapters ========================
-    override fun chapterListRequest(manga: SManga): Request {
-        val isRequiredLogin = requiredLoginGenres.any { keyword ->
-            manga.genre.orEmpty().contains(keyword, ignoreCase = true)
-        }
-        var url = "$apiUrl/komik/${manga.url}/chapter?limit=9999999"
-        if (isRequiredLogin) url += requiredLoginFragment
-        return GET(url, headers)
-    }
+    override fun chapterListRequest(manga: SManga): Request =
+        GET("$vercelUrl/api/token?slug=${manga.url}", headers)
 
     override fun chapterListParse(response: Response): List<SChapter> {
-        val dto = response.parseAs<ChapterListDto>()
-        val slug = response.request.url.pathSegments[1]
-        val isRequiredLogin = response.request.url.fragment?.contains(requiredLoginSuffix) == true
+        val tokenDto = response.parseAs<VercelTokenDto>()
+        val slug = response.request.url.queryParameter("slug")!!
+
+        val chHeaders = headersBuilder()
+            .set("X-Token", tokenDto.token)
+            .set("X-Sign", tokenDto.sign)
+            .build()
+
+        val chResponse = sessionClient.newCall(
+            GET("$apiUrl/komik/$slug/chapter?limit=9999999", chHeaders),
+        ).execute()
+
+        val dto = chResponse.parseAs<ChapterListDto>()
         return dto.chapter.map { chapter ->
             val chapterNumStr = chapter.chapter
             val chapterNum = chapterNumStr.substringBefore(".").toFloatOrNull() ?: -1f
-            val displayNum = formatChapterDisplay(chapterNumStr)
-            var chapterUrl = "/$slug/chapter/$chapterNumStr"
-            if (isRequiredLogin) chapterUrl += requiredLoginFragment
             SChapter.create().apply {
-                url = chapterUrl
-                name = "Chapter $displayNum"
+                url = "/$slug/chapter/$chapterNumStr"
+                name = "Chapter ${formatChapterDisplay(chapterNumStr)}"
                 chapter_number = chapterNum
             }
         }.sortedByDescending { it.chapter_number }
+    }
+
+    // ======================== Pages ========================
+    override fun pageListRequest(chapter: SChapter): Request {
+        val parts = chapter.url.split("/")
+        val slug = parts[1]
+        val chapterParam = parts.drop(3).joinToString("/")
+        val url = "$vercelUrl/api/token".toHttpUrl().newBuilder()
+            .addQueryParameter("slug", slug)
+            .addQueryParameter("chapter", chapterParam)
+            .build()
+        return GET(url, headers)
+    }
+
+    override fun pageListParse(response: Response): List<Page> {
+        val dto = response.parseAs<VercelTokenDto>()
+        if (dto.images.isEmpty()) throw Exception("Tidak ada gambar ditemukan")
+        return dto.images.mapIndexed { i, url -> Page(i, imageUrl = url) }
+    }
+
+    override fun imageUrlParse(response: Response) = throw UnsupportedOperationException()
+
+    override fun imageRequest(page: Page): Request {
+        val newHeaders = headersBuilder()
+            .set("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
+            .set("Referer", "$baseUrl/")
+            .build()
+        return GET(page.imageUrl!!, newHeaders)
+    }
+
+    // ======================== Interceptor ========================
+    private fun apiAuthInterceptor(chain: Interceptor.Chain): Response {
+        val request = chain.request()
+        if (!request.url.host.contains("softdevices.my.id")) return chain.proceed(request)
+
+        val session = getSession()
+        var response = chain.proceed(
+            request.newBuilder()
+                .header("X-Token", session.token)
+                .header("X-Sign", session.sign)
+                .build(),
+        )
+        if (!response.isSuccessful) {
+            response.close()
+            sessionCache = null
+            val fresh = fetchSession()
+            response = chain.proceed(
+                request.newBuilder()
+                    .header("X-Token", fresh.token)
+                    .header("X-Sign", fresh.sign)
+                    .build(),
+            )
+        }
+        return response
+    }
+
+    private fun getSession(): VercelTokenDto {
+        sessionCache?.takeIf { it.exp > System.currentTimeMillis() }?.let { return it }
+        return fetchSession()
+    }
+
+    private fun fetchSession(): VercelTokenDto {
+        val response = sessionClient.newCall(GET("$vercelUrl/api/token", headers)).execute()
+        if (!response.isSuccessful) throw Exception("Gagal mendapatkan session (${response.code})")
+        return response.parseAs<VercelTokenDto>().also { sessionCache = it }
     }
 
     private fun formatChapterDisplay(chapterStr: String): String {
@@ -188,181 +244,6 @@ class Softkomik : HttpSource() {
         return if (suffix.isNotEmpty()) "$formatted.$suffix" else formatted
     }
 
-    // ======================== Pages ========================
-    override fun pageListRequest(chapter: SChapter): Request {
-    val parts = chapter.url.split("/")
-    // url format: /slug/chapter/old/1179 atau /slug/chapter/1
-    val slug = parts[1]
-    val chapterParam = parts.drop(3).joinToString("/")
-    val url = "$vercelImagesUrl".toHttpUrl().newBuilder()
-        .addQueryParameter("slug", slug)
-        .addQueryParameter("chapter", chapterParam)
-        .build()
-    return GET(url, headers)
-}
-
-    override fun pageListParse(response: Response): List<Page> {
-        val dto = response.parseAs<VercelImagesDto>()
-        if (dto.images.isEmpty()) throw Exception("Tidak ada gambar ditemukan dari server")
-        return dto.images.mapIndexed { i, url -> Page(i, imageUrl = url) }
-    }
-
-    override fun imageUrlParse(response: Response) = throw UnsupportedOperationException()
-
-    override fun imageRequest(page: Page): Request {
-        val newHeaders = headersBuilder()
-            .set("Accept", "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8")
-            .set("Referer", "$baseUrl/")
-            .set("Origin", baseUrl)
-            .build()
-        return GET(page.imageUrl!!, newHeaders)
-    }
-
-    // ======================== Interceptors ========================
-
-    private fun imageInterceptor(chain: Interceptor.Chain): Response {
-        val originalRequest = chain.request()
-        val userAgent = originalRequest.header("User-Agent")
-        val normalizedUserAgent = normalizeUserAgent(userAgent)
-
-        val request = if (normalizedUserAgent != userAgent) {
-            originalRequest.newBuilder()
-                .header("User-Agent", normalizedUserAgent.orEmpty())
-                .build()
-        } else {
-            originalRequest
-        }
-
-        val response = try {
-            chain.proceed(request)
-        } catch (e: java.net.UnknownHostException) {
-            null
-        }
-
-        if (response?.isSuccessful == true) return response
-
-        val currentHost = cdnUrls.firstOrNull { request.url.toString().startsWith(it) }
-
-        if (currentHost == null) {
-            return response ?: throw java.net.UnknownHostException(request.url.host)
-        }
-
-        response?.close()
-
-        val imagePath = request.url.toString().removePrefix(currentHost).removePrefix("/")
-        val otherHosts = cdnUrls.filter { it != currentHost }
-
-        var latestResponse: Response? = null
-        for (newHost in otherHosts) {
-            latestResponse?.close()
-            val newUrl = "$newHost/$imagePath".toHttpUrl()
-            latestResponse = try {
-                chain.proceed(request.newBuilder().url(newUrl).build())
-            } catch (e: java.net.UnknownHostException) {
-                null
-            }
-            if (latestResponse?.isSuccessful == true) return latestResponse
-        }
-
-        return latestResponse ?: throw java.net.UnknownHostException("All CDN hosts failed for: $imagePath")
-    }
-
-    private fun apiAuthInterceptor(chain: Interceptor.Chain): Response {
-        val request = chain.request()
-        // Hanya inject token untuk v2.softdevices.my.id, bukan vercel
-        if (!request.url.toString().startsWith(apiUrl)) {
-            return chain.proceed(request)
-        }
-        val sessionKey = resolveSessionKey(request.url)
-        val session = getSession(sessionKey)
-        var response = chain.proceed(
-            request.newBuilder()
-                .header("X-Token", session.token)
-                .header("X-Sign", session.sign)
-                .build(),
-        )
-        if (!response.isSuccessful) {
-            response.close()
-            sessionsByUrlKey.remove(sessionKey)
-            // Fetch session segar — gunakan sessionClient agar tidak deadlock
-            val freshSession = fetchSessionFromVercel(sessionKey)
-            response = chain.proceed(
-                request.newBuilder()
-                    .header("X-Token", freshSession.token)
-                    .header("X-Sign", freshSession.sign)
-                    .build(),
-            )
-        }
-        return response
-    }
-
-    // ======================== Session ========================
-
-    private fun getBearerTokenFromCookie(): BearerTokenDto? {
-        synchronized(this) {
-            val currentToken = bearerToken
-            if (currentToken != null && currentToken.ex > System.currentTimeMillis()) {
-                return currentToken
-            }
-            val cookies = client.cookieJar.loadForRequest(baseUrl.toHttpUrl())
-            val cookieToken = cookies.firstOrNull { it.name == "tokkey" } ?: return null
-            val rawValue = cookieToken.value
-            val token = runCatching { URLDecoder.decode(rawValue, Charsets.UTF_8.name()) }
-                .getOrDefault(rawValue)
-            bearerToken = BearerTokenDto(token = token, ex = cookieToken.expiresAt)
-            return bearerToken
-        }
-    }
-
-    private fun resolveSessionKey(url: HttpUrl): String {
-        val segments = url.pathSegments
-        val komikIndex = segments.indexOf("komik")
-        val isChapterRequest = komikIndex != -1 && segments.getOrNull(komikIndex + 2) == "chapter"
-        val isImageRequest = isChapterRequest && segments.contains("imgs")
-        return if (isImageRequest) sessionKeyChapterImage else sessionKeyChapterList
-    }
-
-    private fun getSession(sessionKey: String): SessionDto {
-        // Cek cache dulu tanpa lock
-        sessionsByUrlKey[sessionKey]?.takeIf { it.ex > System.currentTimeMillis() }?.let { return it }
-
-        // Fetch DULU di luar synchronized, baru simpan ke cache
-        // Ini mencegah network call terjadi di dalam lock → deadlock
-        val freshSession = fetchSessionFromVercel(sessionKey)
-
-        synchronized(this) {
-            // Double-check: mungkin thread lain sudah fetch duluan
-            sessionsByUrlKey[sessionKey]?.takeIf { it.ex > System.currentTimeMillis() }?.let { return it }
-            sessionsByUrlKey[sessionKey] = freshSession
-        }
-
-        return freshSession
-    }
-
-    private fun fetchSessionFromVercel(sessionKey: String): SessionDto {
-        // Gunakan sessionClient (tanpa apiAuthInterceptor) untuk menghindari:
-        // 1. Recursive interceptor call
-        // 2. Thread pool exhaustion → timeout di percobaan kedua+
-        val response = sessionClient.newCall(GET(vercelTokenUrl, headers)).execute()
-        if (!response.isSuccessful) {
-            throw Exception("Gagal mendapatkan session dari server (${response.code})")
-        }
-        val dto = response.parseAs<VercelTokenDto>()
-        return SessionDto(
-            token = dto.token,
-            sign = dto.sign,
-            ex = dto.exp,
-        )
-    }
-
-    private fun normalizeUserAgent(userAgent: String?): String? {
-        if (userAgent.isNullOrBlank()) return null
-        return userAgent
-            .replace(userAgentMobileSafariRegex, "")
-            .trim()
-            .ifEmpty { null }
-    }
-
     override fun getFilterList() = FilterList(
         Filter.Header("Filter tidak bisa digabungkan dengan pencarian teks."),
         Filter.Separator(),
@@ -373,23 +254,7 @@ class Softkomik : HttpSource() {
         MinChapterFilter(),
     )
 
-    private val requiredLoginSuffix = "login-required"
-    private val requiredLoginFragment = "#$requiredLoginSuffix"
-    private val requiredLoginGenres = listOf("ecchi", "mature")
-    private val sessionKeyChapterList = "chapter-list"
-    private val sessionKeyChapterImage = "chapter-image"
     private val apiUrl = "https://v2.softdevices.my.id"
     private val coverUrl = "https://cover.softdevices.my.id/softkomik-cover"
-    private val vercelTokenUrl = "https://softkomik-token.komikmix.workers.dev"
-    private val vercelImagesUrl = "https://softkomik-images.komikmix.workers.dev"
-    private val userAgentMobileSafariRegex = Regex("""\s*Mobile Safari/\d+(?:\.\d+)*""", RegexOption.IGNORE_CASE)
-    private val cdnUrls = listOf(
-        "https://psy1.komik.im",
-        "https://image.komik.im/softkomik",
-        "https://cdn1.softkomik.online/softkomik",
-        "https://cd1.softkomik.online/softkomik",
-        "https://f1.softkomik.com/file/softkomik-image",
-        "https://img.softdevices.my.id/softkomik-image",
-        "https://image.softkomik.com/softkomik",
-    )
+    private val vercelUrl = "https://project-qvmcp.vercel.app"
 }
