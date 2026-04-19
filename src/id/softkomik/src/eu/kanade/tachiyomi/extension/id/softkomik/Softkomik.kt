@@ -29,6 +29,7 @@ class Softkomik : HttpSource() {
     }
 
     override val client = network.cloudflareClient.newBuilder()
+        .addInterceptor(::retryInterceptor)
         .addInterceptor(::apiAuthInterceptor)
         .build()
 
@@ -216,6 +217,18 @@ class Softkomik : HttpSource() {
                     .header("X-Sign", fresh.sign)
                     .build(),
             )
+        }
+        return response
+    }
+    
+    private fun retryInterceptor(chain: Interceptor.Chain): Response {
+        val request = chain.request()
+        if (!request.url.host.contains("project-qvmcp")) return chain.proceed(request)
+
+        var response = chain.proceed(request)
+        if (!response.isSuccessful) {
+            response.close()
+            response = chain.proceed(request)
         }
         return response
     }
