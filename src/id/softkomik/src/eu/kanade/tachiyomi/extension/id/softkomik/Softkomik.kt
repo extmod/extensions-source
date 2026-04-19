@@ -66,7 +66,7 @@ class Softkomik :
             summary = "URL prefix untuk resize/proxy gambar. Kosongkan untuk matikan.\nSaat ini: ${resizePref.ifBlank { "(tidak aktif)" }}"
             setDefaultValue("")
             dialogTitle = "URL Layanan Resize Gambar"
-            dialogMessage = "Contoh: https://proxygambar.vercel.app/api/image?url=\nURL gambar asli akan ditempelkan di belakangnya."
+            dialogMessage = "URL Resize"
             setOnPreferenceChangeListener { _, newValue ->
                 val v = (newValue as String).trimEnd('/')
                 preferences.edit().putString(PREF_RESIZE, v).apply()
@@ -84,7 +84,7 @@ class Softkomik :
     /** Wrap URL gambar dengan resize service jika diset */
     private fun wrapImageUrl(originalUrl: String): String {
         val prefix = resizePref
-        return if (prefix.isBlank()) originalUrl else "$prefix=$originalUrl"
+        return if (prefix.isBlank()) originalUrl else "$prefix$originalUrl"
     }
 
     // ======================== Session ========================
