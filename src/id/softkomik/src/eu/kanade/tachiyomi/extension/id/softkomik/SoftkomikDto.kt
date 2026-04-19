@@ -40,36 +40,9 @@ data class ChapterListDto(
 )
 
 @Serializable
-data class ChapterPageDataDto(
-    val _id: String = "",
-    val imageSrc: List<String> = emptyList(),
-    val storageInter2: Boolean? = false,
-)
-
-@Serializable
-data class ChapterPageImagesDto(
-    val imageSrc: List<String>,
-)
-
-@Serializable
-data class VercelImagesDto(
-    val images: List<String>,
-)
-
-@Serializable
 data class VercelTokenDto(
     val token: String,
     val sign: String,
     val exp: Long,
-)
-
-data class SessionDto(
-    val token: String,
-    val sign: String,
-    val ex: Long,
-)
-
-data class BearerTokenDto(
-    val token: String,
-    val ex: Long,
+    val images: List<String> = emptyList(),
 )
