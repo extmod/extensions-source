@@ -54,12 +54,13 @@ class Softkomik : HttpSource() {
 
     // ======================== Latest ========================
     override fun latestUpdatesRequest(page: Int): Request {
-        val url = "$baseUrl/komik/library".toHttpUrl().newBuilder()
-            .addQueryParameter("sortBy", "newKomik")
-            .addQueryParameter("page", page.toString())
-            .build()
-        return GET(url, rscHeaders)
-    }
+    val url = "$apiUrl/komik".toHttpUrl().newBuilder()
+        .addQueryParameter("sortBy", "new")
+        .addQueryParameter("limit", "24")
+        .addQueryParameter("page", page.toString())
+        .build()
+    return GET(url, headers)
+}
 
     override fun latestUpdatesParse(response: Response) = searchMangaParse(response)
 
