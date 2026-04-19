@@ -1,6 +1,11 @@
 package eu.kanade.tachiyomi.extension.id.softkomik
 
+import android.app.Application
+import android.content.SharedPreferences
+import androidx.preference.EditTextPreference
+import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.network.GET
+import eu.kanade.tachiyomi.source.ConfigurableSource
 import eu.kanade.tachiyomi.source.model.Filter
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
@@ -9,18 +14,80 @@ import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.HttpSource
 import keiyoushi.utils.extractNextJs
+import keiyoushi.utils.getPreferencesLazy
 import keiyoushi.utils.parseAs
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Interceptor
 import okhttp3.Request
 import okhttp3.Response
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 
-class Softkomik : HttpSource() {
+class Softkomik :
+    HttpSource(),
+    ConfigurableSource {
+
     override val name = "Softkomik"
     override val baseUrl = "https://softkomik.co"
     override val lang = "id"
     override val supportsLatest = true
+
+    // ======================== Preferences ========================
+
+    private val preferences: SharedPreferences by getPreferencesLazy()
+
+    private val domainPref: String
+        get() = preferences.getString(PREF_DOMAIN, DEFAULT_DOMAIN)!!
+            .trimEnd('/').ifBlank { DEFAULT_DOMAIN }
+
+    private val resizePref: String
+        get() = preferences.getString(PREF_RESIZE, "")!!.trimEnd('/')
+
+    override fun setupPreferenceScreen(screen: PreferenceScreen) {
+        EditTextPreference(screen.context).apply {
+            key = PREF_DOMAIN
+            title = "Domain Softkomik"
+            summary = "URL domain sumber komik. Kosongkan untuk pakai default.\nDefault: $DEFAULT_DOMAIN\nSaat ini: ${domainPref}"
+            setDefaultValue(DEFAULT_DOMAIN)
+            dialogTitle = "Domain Softkomik"
+            dialogMessage = "Contoh: https://softkomik.co"
+            setOnPreferenceChangeListener { _, newValue ->
+                val v = (newValue as String).trimEnd('/')
+                preferences.edit().putString(PREF_DOMAIN, v).apply()
+                summary = "URL domain sumber komik. Kosongkan untuk pakai default.\nDefault: $DEFAULT_DOMAIN\nSaat ini: ${v.ifBlank { DEFAULT_DOMAIN }}"
+                true
+            }
+        }.also { screen.addPreference(it) }
+
+        EditTextPreference(screen.context).apply {
+            key = PREF_RESIZE
+            title = "URL Layanan Resize Gambar"
+            summary = "URL prefix untuk resize/proxy gambar. Kosongkan untuk matikan.\nSaat ini: ${resizePref.ifBlank { "(tidak aktif)" }}"
+            setDefaultValue("")
+            dialogTitle = "URL Layanan Resize Gambar"
+            dialogMessage = "Contoh: https://proxygambar.vercel.app/api/image?url=\nURL gambar asli akan ditempelkan di belakangnya."
+            setOnPreferenceChangeListener { _, newValue ->
+                val v = (newValue as String).trimEnd('/')
+                preferences.edit().putString(PREF_RESIZE, v).apply()
+                summary = "URL prefix untuk resize/proxy gambar. Kosongkan untuk matikan.\nSaat ini: ${v.ifBlank { "(tidak aktif)" }}"
+                true
+            }
+        }.also { screen.addPreference(it) }
+    }
+
+    // ======================== URL Helpers ========================
+
+    /** Domain aktif — dari preferensi atau default */
+    private val activeDomain: String get() = domainPref
+
+    /** Wrap URL gambar dengan resize service jika diset */
+    private fun wrapImageUrl(originalUrl: String): String {
+        val prefix = resizePref
+        return if (prefix.isBlank()) originalUrl else "$prefix=$originalUrl"
+    }
+
+    // ======================== Session ========================
 
     private var sessionCache: VercelTokenDto? = null
 
@@ -34,16 +101,17 @@ class Softkomik : HttpSource() {
         .build()
 
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
-        .add("Referer", "$baseUrl/")
-        .add("Origin", baseUrl)
+        .add("Referer", "$activeDomain/")
+        .add("Origin", activeDomain)
 
-    private val rscHeaders = headersBuilder()
-        .add("rsc", "1")
-        .build()
+    private val rscHeaders: Headers
+        get() = headersBuilder()
+            .add("rsc", "1")
+            .build()
 
     // ======================== Popular ========================
     override fun popularMangaRequest(page: Int): Request {
-        val url = "$baseUrl/komik/library".toHttpUrl().newBuilder()
+        val url = "$activeDomain/komik/library".toHttpUrl().newBuilder()
             .addQueryParameter("sortBy", "popular")
             .addQueryParameter("page", page.toString())
             .build()
@@ -54,13 +122,13 @@ class Softkomik : HttpSource() {
 
     // ======================== Latest ========================
     override fun latestUpdatesRequest(page: Int): Request {
-    val url = "$apiUrl/komik".toHttpUrl().newBuilder()
-        .addQueryParameter("sortBy", "new")
-        .addQueryParameter("limit", "24")
-        .addQueryParameter("page", page.toString())
-        .build()
-    return GET(url, headers)
-}
+        val url = "$apiUrl/komik".toHttpUrl().newBuilder()
+            .addQueryParameter("sortBy", "new")
+            .addQueryParameter("limit", "24")
+            .addQueryParameter("page", page.toString())
+            .build()
+        return GET(url, headers)
+    }
 
     override fun latestUpdatesParse(response: Response) = searchMangaParse(response)
 
@@ -75,7 +143,7 @@ class Softkomik : HttpSource() {
             return GET(url.build(), headers)
         }
 
-        val url = "$baseUrl/komik/library".toHttpUrl().newBuilder()
+        val url = "$activeDomain/komik/library".toHttpUrl().newBuilder()
             .addQueryParameter("page", page.toString())
 
         filters.forEach { filter ->
@@ -116,7 +184,7 @@ class Softkomik : HttpSource() {
 
     // ======================== Details ========================
     override fun mangaDetailsRequest(manga: SManga): Request =
-        GET("$baseUrl/${manga.url}", rscHeaders)
+        GET("$activeDomain/${manga.url}", rscHeaders)
 
     override fun mangaDetailsParse(response: Response): SManga {
         val manga = response.extractNextJs<MangaDetailsDto>()
@@ -137,7 +205,7 @@ class Softkomik : HttpSource() {
         }
     }
 
-    override fun getMangaUrl(manga: SManga): String = "$baseUrl/${manga.url}"
+    override fun getMangaUrl(manga: SManga): String = "$activeDomain/${manga.url}"
 
     // ======================== Chapters ========================
     override fun chapterListRequest(manga: SManga): Request =
@@ -183,7 +251,9 @@ class Softkomik : HttpSource() {
     override fun pageListParse(response: Response): List<Page> {
         val dto = response.parseAs<VercelTokenDto>()
         if (dto.images.isEmpty()) throw Exception("Tidak ada gambar ditemukan")
-        return dto.images.mapIndexed { i, url -> Page(i, imageUrl = url) }
+        return dto.images.mapIndexed { i, url ->
+            Page(i, imageUrl = wrapImageUrl(url))
+        }
     }
 
     override fun imageUrlParse(response: Response) = throw UnsupportedOperationException()
@@ -191,7 +261,7 @@ class Softkomik : HttpSource() {
     override fun imageRequest(page: Page): Request {
         val newHeaders = headersBuilder()
             .set("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
-            .set("Referer", "$baseUrl/")
+            .set("Referer", "$activeDomain/")
             .build()
         return GET(page.imageUrl!!, newHeaders)
     }
@@ -221,7 +291,7 @@ class Softkomik : HttpSource() {
         }
         return response
     }
-    
+
     private fun retryInterceptor(chain: Interceptor.Chain): Response {
         val request = chain.request()
         if (!request.url.host.contains("project-qvmcp")) return chain.proceed(request)
@@ -271,4 +341,10 @@ class Softkomik : HttpSource() {
     private val apiUrl = "https://v2.softdevices.my.id"
     private val coverUrl = "https://cover.softdevices.my.id/softkomik-cover"
     private val vercelUrl = "https://project-qvmcp.vercel.app"
+
+    companion object {
+        private const val DEFAULT_DOMAIN = "https://softkomik.co"
+        private const val PREF_DOMAIN = "pref_domain"
+        private const val PREF_RESIZE = "pref_resize_url"
+    }
 }
