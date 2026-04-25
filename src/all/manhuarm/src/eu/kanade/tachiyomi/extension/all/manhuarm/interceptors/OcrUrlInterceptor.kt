@@ -3,11 +3,16 @@ package eu.kanade.tachiyomi.extension.all.manhuarm.interceptors
 import android.app.Application
 import android.os.Handler
 import android.os.Looper
+import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import okhttp3.Headers
+import okhttp3.HttpUrl.Companion.toHttpUrl
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 import uy.kohesive.injekt.injectLazy
+import eu.kanade.tachiyomi.network.NetworkHelper
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
@@ -21,12 +26,29 @@ class OcrUrlInterceptor(private val headers: Headers) {
 
     private val bridgeName = ('a'..'z').shuffled().take(10).joinToString("")
 
+    private fun syncCookiesToWebView(url: String) {
+        try {
+            val network = Injekt.get<NetworkHelper>()
+            val httpUrl = url.toHttpUrl()
+            val cookies = network.cookieJar.loadForRequest(httpUrl)
+            if (cookies.isEmpty()) return
+            val cookieManager = CookieManager.getInstance()
+            cookieManager.setAcceptCookie(true)
+            cookies.forEach { cookie ->
+                cookieManager.setCookie(url, "${cookie.name}=${cookie.value}")
+            }
+            cookieManager.flush()
+        } catch (_: Exception) {}
+    }
+
     fun getOcrRequest(url: String): OcrRequest? {
         val latch = CountDownLatch(1)
         var ocrRequest: OcrRequest? = null
         var webView: WebView? = null
 
         handler.post {
+            syncCookiesToWebView(url)
+
             val webview = WebView(context)
             webView = webview
             with(webview.settings) {
@@ -61,8 +83,7 @@ class OcrUrlInterceptor(private val headers: Headers) {
 
             webview.webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView?, url: String?) {
-                    view?.evaluateJavascript(
-                        """
+                    val js = """
                         (function() {
                             const oldFetch = window.fetch;
                             window.fetch = function() {
@@ -81,16 +102,15 @@ class OcrUrlInterceptor(private val headers: Headers) {
                                 return oldFetch.apply(this, arguments);
                             };
                         })();
-                        """.trimIndent(),
-                        null,
-                    )
+                    """.trimIndent()
+                    view?.evaluateJavascript(js, null)
                 }
             }
 
             webview.loadUrl(url, headers.toMultimap().mapValues { it.value.first() })
         }
 
-        val completed = latch.await(10, TimeUnit.SECONDS)
+        val completed = latch.await(15, TimeUnit.SECONDS)
 
         handler.post {
             webView?.apply {
