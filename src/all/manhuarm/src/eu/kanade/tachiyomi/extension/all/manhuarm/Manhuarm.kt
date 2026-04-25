@@ -41,6 +41,7 @@ import okhttp3.Response
 import okhttp3.brotli.BrotliInterceptor
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+import java.net.URLEncoder
 import java.util.Calendar
 import java.util.Date
 import java.util.concurrent.TimeUnit
@@ -342,7 +343,7 @@ class Manhuarm(
             val firstDto = dialog.firstOrNull()
             val firstPage = firstDto?.let { pages.firstOrNull { p -> p.imageUrl?.contains(it.imageUrl, true) == true } }
             val fullUrl = firstPage?.imageUrl ?: ""
-            val infoUrl = "https://project-qvmcp.vercel.app/api/info?url=${fullUrl.encodeURLParameter()}"
+            val infoUrl = "https://project-qvmcp.vercel.app/api/info?url=" + URLEncoder.encode(fullUrl, "UTF-8")
             client.newCall(GET(infoUrl)).execute().parseAs<Map<String, Int>>()["width"] ?: 800
         } catch (_: Exception) {
             800
