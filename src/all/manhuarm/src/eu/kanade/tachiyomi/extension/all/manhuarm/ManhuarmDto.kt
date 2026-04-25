@@ -63,7 +63,6 @@ private object DialogListSerializer :
                     val coordinates = getCoordinates(jsonElement) ?: return@mapNotNull null
                     val textByLanguage = getDialogs(jsonElement)
 
-                    // Validate coordinates array has at least 4 elements
                     if (coordinates.size < 4) return@mapNotNull null
 
                     buildJsonObject {
@@ -87,14 +86,24 @@ private object DialogListSerializer :
             ?: throw IOException("Dialog box position not found")
     }
 
+    private fun stripHtml(text: String): String =
+        text.replace("<br>", "\n")
+            .replace("<br/>", "\n")
+            .replace("<br />", "\n")
+            .replace(Regex("<[^>]+>"), "")
+            .trim()
+
     private fun getDialogs(element: JsonElement): JsonObject = buildJsonObject {
         when (element) {
-            is JsonArray -> put("text", element.jsonArray[1])
+            is JsonArray -> {
+                val raw = element.jsonArray[1].jsonPrimitive.content
+                put("text", stripHtml(raw))
+            }
 
             else -> {
                 element.jsonObject.entries
                     .filter { it.value.isString }
-                    .forEach { put(it.key, it.value) }
+                    .forEach { put(it.key, stripHtml(it.value.jsonPrimitive.content)) }
             }
         }
     }

@@ -99,7 +99,14 @@ class OcrUrlInterceptor(private val headers: Headers, private val client: OkHttp
                             };
                         })();
                     """.trimIndent()
+
+                    // Inject langsung saat page selesai load
                     view?.evaluateJavascript(js, null)
+
+                    // Re-inject setelah 350ms untuk antisipasi setTimeout di site
+                    handler.postDelayed({
+                        view?.evaluateJavascript(js, null)
+                    }, 350)
                 }
             }
 
