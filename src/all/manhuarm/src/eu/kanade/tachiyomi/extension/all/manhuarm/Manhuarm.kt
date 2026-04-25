@@ -124,7 +124,7 @@ class Manhuarm(
 
     private val warmupInterceptor = CloudflareWarmupInterceptor(baseUrl, headers)
 
-    private val ocrUrlInterceptor by lazy { OcrUrlInterceptor(headers) }
+    private val ocrUrlInterceptor by lazy { OcrUrlInterceptor(headers, client) }
 
     /**
      * This ensures that the `OkHttpClient` instance is only created when required, and it is rebuilt

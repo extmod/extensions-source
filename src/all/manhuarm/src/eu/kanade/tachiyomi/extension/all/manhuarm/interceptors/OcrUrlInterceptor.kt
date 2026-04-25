@@ -9,14 +9,12 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
+import okhttp3.OkHttpClient
 import uy.kohesive.injekt.injectLazy
-import eu.kanade.tachiyomi.network.NetworkHelper
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
-class OcrUrlInterceptor(private val headers: Headers) {
+class OcrUrlInterceptor(private val headers: Headers, private val client: OkHttpClient) {
 
     private val context: Application by injectLazy()
 
@@ -28,14 +26,12 @@ class OcrUrlInterceptor(private val headers: Headers) {
 
     private fun syncCookiesToWebView(url: String) {
         try {
-            val network = Injekt.get<NetworkHelper>()
-            val httpUrl = url.toHttpUrl()
-            val cookies = network.cookieJar.loadForRequest(httpUrl)
+            val cookies = client.cookieJar.loadForRequest(url.toHttpUrl())
             if (cookies.isEmpty()) return
             val cookieManager = CookieManager.getInstance()
             cookieManager.setAcceptCookie(true)
-            cookies.forEach { cookie ->
-                cookieManager.setCookie(url, "${cookie.name}=${cookie.value}")
+            cookies.forEach {
+                cookieManager.setCookie(url, "${it.name}=${it.value}")
             }
             cookieManager.flush()
         } catch (_: Exception) {}
