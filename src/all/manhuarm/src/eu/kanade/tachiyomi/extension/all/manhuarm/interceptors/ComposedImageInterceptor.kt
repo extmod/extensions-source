@@ -62,7 +62,8 @@ class ComposedImageInterceptor(
             val textPaint = createTextPaint(selectFontFamily())
             val dialogBox = createDialogBox(scaledDialog, textPaint)
             val y = getYAxis(textPaint, scaledDialog, dialogBox)
-            canvas.draw(textPaint, dialogBox, scaledDialog, scaledDialog.x, y)
+            val padding = bitmap.width * 0.02f // 2% of bitmap width
+            canvas.draw(textPaint, dialogBox, scaledDialog, scaledDialog.x + padding, y + padding)
         }
 
         val output = ByteArrayOutputStream()
