@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.extension.all.manhuarm.interceptors
 
 import android.app.Application
+import android.graphics.Bitmap
 import android.os.Handler
 import android.os.Looper
 import android.webkit.CookieManager
@@ -77,36 +78,34 @@ class OcrUrlInterceptor(private val headers: Headers, private val client: OkHttp
                 bridgeName,
             )
 
+            val js = """
+                (function() {
+                    const oldFetch = window.fetch;
+                    window.fetch = function() {
+                        const url = arguments[0];
+                        const options = arguments[1] || {};
+                        if (url.includes('fetch-ocr.php')) {
+                            const h = options.headers || {};
+                            $bridgeName.onFetch(
+                                url,
+                                options.body || '',
+                                h['X-Gate-Token'] || '',
+                                h['X-Gate-Nonce'] || '',
+                                String(h['X-Gate-Timestamp'] || '')
+                            );
+                        }
+                        return oldFetch.apply(this, arguments);
+                    };
+                })();
+            """.trimIndent()
+
             webview.webViewClient = object : WebViewClient() {
-                override fun onPageFinished(view: WebView?, url: String?) {
-                    val js = """
-                        (function() {
-                            const oldFetch = window.fetch;
-                            window.fetch = function() {
-                                const url = arguments[0];
-                                const options = arguments[1] || {};
-                                if (url.includes('fetch-ocr.php')) {
-                                    const h = options.headers || {};
-                                    $bridgeName.onFetch(
-                                        url,
-                                        options.body || '',
-                                        h['X-Gate-Token'] || '',
-                                        h['X-Gate-Nonce'] || '',
-                                        String(h['X-Gate-Timestamp'] || '')
-                                    );
-                                }
-                                return oldFetch.apply(this, arguments);
-                            };
-                        })();
-                    """.trimIndent()
-
-                    // Inject langsung saat page selesai load
+                override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                     view?.evaluateJavascript(js, null)
+                }
 
-                    // Re-inject setelah 350ms untuk antisipasi setTimeout di site
-                    handler.postDelayed({
-                        view?.evaluateJavascript(js, null)
-                    }, 350)
+                override fun onPageFinished(view: WebView?, url: String?) {
+                    view?.evaluateJavascript(js, null)
                 }
             }
 
