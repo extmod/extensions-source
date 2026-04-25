@@ -17,7 +17,7 @@ class OcrUrlInterceptor(private val headers: Headers) {
 
     private val handler = Handler(Looper.getMainLooper())
 
-    data class OcrRequest(val url: String, val body: String)
+    data class OcrRequest(val url: String, val body: String, val extraHeaders: Map<String, String>)
 
     private val bridgeName = ('a'..'z').shuffled().take(10).joinToString("")
 
@@ -41,9 +41,17 @@ class OcrUrlInterceptor(private val headers: Headers) {
             webview.addJavascriptInterface(
                 object {
                     @JavascriptInterface
-                    fun onFetch(url: String, body: String) {
+                    fun onFetch(url: String, body: String, token: String, nonce: String, timestamp: String) {
                         if (ocrRequest == null && url.contains("fetch-ocr.php")) {
-                            ocrRequest = OcrRequest(url, body)
+                            ocrRequest = OcrRequest(
+                                url = url,
+                                body = body,
+                                extraHeaders = mapOf(
+                                    "X-Gate-Token" to token,
+                                    "X-Gate-Nonce" to nonce,
+                                    "X-Gate-Timestamp" to timestamp,
+                                ),
+                            )
                             latch.countDown()
                         }
                     }
@@ -59,9 +67,16 @@ class OcrUrlInterceptor(private val headers: Headers) {
                             const oldFetch = window.fetch;
                             window.fetch = function() {
                                 const url = arguments[0];
-                                const options = arguments[1];
-                                if (url.includes('fetch-ocr.php') && options && options.body) {
-                                    $bridgeName.onFetch(url, options.body);
+                                const options = arguments[1] || {};
+                                if (url.includes('fetch-ocr.php')) {
+                                    const h = options.headers || {};
+                                    $bridgeName.onFetch(
+                                        url,
+                                        options.body || '',
+                                        h['X-Gate-Token'] || '',
+                                        h['X-Gate-Nonce'] || '',
+                                        String(h['X-Gate-Timestamp'] || '')
+                                    );
                                 }
                                 return oldFetch.apply(this, arguments);
                             };
