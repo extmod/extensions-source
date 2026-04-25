@@ -27,8 +27,8 @@ class PageDto(
 data class Dialog(
     val x: Float,
     val y: Float,
-    val _width: Float,
-    val _height: Float,
+    private val _width: Float,
+    private val _height: Float,
     val angle: Float = 0f,
     val textByLanguage: Map<String, String> = emptyMap(),
 ) {
@@ -46,11 +46,13 @@ data class Dialog(
 
     fun scaled(bitmapWidth: Int): Dialog {
         val factor = bitmapWidth / 800f
-        return copy(
+        return Dialog(
             x = x * factor,
             y = y * factor,
-            _width = _width * factor,
-            _height = _height * factor,
+            _width = width / scale * factor,
+            _height = height / scale * factor,
+            angle = angle,
+            textByLanguage = textByLanguage,
         )
     }
 }
