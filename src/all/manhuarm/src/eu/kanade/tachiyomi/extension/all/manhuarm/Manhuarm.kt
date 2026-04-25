@@ -338,23 +338,10 @@ class Manhuarm(
             return pages
         }
 
-        // Fetch original width dari gambar pertama untuk scaling koordinat OCR
-        val originalWidth = try {
-            val firstDto = dialog.firstOrNull()
-            val firstPage = firstDto?.let { pages.firstOrNull { p -> p.imageUrl?.contains(it.imageUrl, true) == true } }
-            val fullUrl = firstPage?.imageUrl ?: ""
-            val infoUrl = "https://project-qvmcp.vercel.app/api/info?url=" + URLEncoder.encode(fullUrl, "UTF-8")
-            client.newCall(GET(infoUrl)).execute().parseAs<Map<String, Int>>()["width"] ?: 800
-        } catch (_: Exception) {
-            800
-        }
-
         return dialog.mapIndexed { index, dto ->
             val page = pages.first { it.imageUrl?.contains(dto.imageUrl, true)!! }
             val fragment = json.encodeToString<List<Dialog>>(
-                dto.dialogues
-                    .map { it.scaled(originalWidth) }
-                    .filter { it.getTextBy(language).isNotBlank() },
+                dto.dialogues.filter { it.getTextBy(language).isNotBlank() },
             )
             if (dto.dialogues.isEmpty()) {
                 return@mapIndexed page
