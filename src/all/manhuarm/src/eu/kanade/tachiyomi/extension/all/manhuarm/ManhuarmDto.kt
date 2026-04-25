@@ -27,8 +27,8 @@ class PageDto(
 data class Dialog(
     val x: Float,
     val y: Float,
-    private val _width: Float,
-    private val _height: Float,
+    val _width: Float,
+    val _height: Float,
     val angle: Float = 0f,
     val textByLanguage: Map<String, String> = emptyMap(),
 ) {
@@ -43,6 +43,16 @@ data class Dialog(
     } ?: text
     val centerY get() = height / 2 + y
     val centerX get() = width / 2 + x
+
+    fun scaled(bitmapWidth: Int): Dialog {
+        val factor = bitmapWidth / 800f
+        return copy(
+            x = x * factor,
+            y = y * factor,
+            _width = _width * factor,
+            _height = _height * factor,
+        )
+    }
 }
 
 private object DialogListSerializer :

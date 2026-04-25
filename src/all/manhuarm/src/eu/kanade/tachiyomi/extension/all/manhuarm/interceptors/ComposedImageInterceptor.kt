@@ -25,7 +25,6 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStream
 
-// The Interceptor joins the dialogues and pages of the manga.
 @RequiresApi(Build.VERSION_CODES.O)
 class ComposedImageInterceptor(
     val language: Language,
@@ -58,11 +57,12 @@ class ComposedImageInterceptor(
         val canvas = Canvas(bitmap)
 
         dialogues.forEach { dialog ->
-            dialog.scale = language.dialogBoxScale
+            val scaledDialog = dialog.scaled(bitmap.width)
+            scaledDialog.scale = language.dialogBoxScale
             val textPaint = createTextPaint(selectFontFamily())
-            val dialogBox = createDialogBox(dialog, textPaint)
-            val y = getYAxis(textPaint, dialog, dialogBox)
-            canvas.draw(textPaint, dialogBox, dialog, dialog.x, y)
+            val dialogBox = createDialogBox(scaledDialog, textPaint)
+            val y = getYAxis(textPaint, scaledDialog, dialogBox)
+            canvas.draw(textPaint, dialogBox, scaledDialog, scaledDialog.x, y)
         }
 
         val output = ByteArrayOutputStream()
@@ -104,17 +104,6 @@ class ComposedImageInterceptor(
         return loadFont("${language.fontName}.ttf")
     }
 
-    /**
-     * Loads font from the `assets/fonts` directory within the APK
-     *
-     * @param fontName The name of the font to load.
-     * @return A `Typeface` instance of the loaded font or `null` if an error occurs.
-     *
-     * Example usage:
-     * <pre>{@code
-     *   val typeface: TypeFace? = loadFont("filename.ttf")
-     * }</pre>
-     */
     private fun loadFont(fontName: String): Typeface? = try {
         this::class.java.classLoader!!
             .getResourceAsStream("assets/fonts/$fontName")
@@ -129,15 +118,9 @@ class ComposedImageInterceptor(
         return Typeface.createFromFile(fontFile)
     }
 
-    /**
-     * Adjust the text to the center of the dialog box when feasible.
-     */
     private fun getYAxis(textPaint: TextPaint, dialog: Dialog, dialogBox: StaticLayout): Float {
         val fontHeight = textPaint.fontMetrics.let { it.bottom - it.top }
-
         val dialogBoxLineCount = dialog.height / fontHeight
-
-        // Centers text in y for dialogues smaller than the dialog box
         return when {
             dialogBox.lineCount < dialogBoxLineCount -> dialog.centerY - dialogBox.lineCount / 2f * fontHeight
             else -> dialog.y
@@ -147,7 +130,6 @@ class ComposedImageInterceptor(
     private fun createDialogBox(dialog: Dialog, textPaint: TextPaint): StaticLayout {
         var dialogBox = createBoxLayout(dialog, textPaint)
 
-        // The best way I've found to adjust the text in the dialog box (Especially in long dialogues)
         while (dialogBox.height > dialog.height) {
             textPaint.textSize -= 0.5f
             dialogBox = createBoxLayout(dialog, textPaint)
@@ -205,12 +187,10 @@ class ComposedImageInterceptor(
         textPaint.style = style
     }
 
-    // https://pixelsconverter.com/pt-to-px
     private val Int.pt: Float get() = this / SCALED_DENSITY
 
     companion object {
-        // w3: Absolute Lengths [...](https://www.w3.org/TR/css3-values/#absolute-lengths)
-        const val SCALED_DENSITY = 0.75f // 1px = 0.75pt
+        const val SCALED_DENSITY = 0.75f
         val mediaType = "image/png".toMediaType()
     }
 }
