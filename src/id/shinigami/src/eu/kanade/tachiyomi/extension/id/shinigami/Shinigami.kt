@@ -92,13 +92,13 @@ class Shinigami : HttpSource(), ConfigurableSource {
     }
 
     private fun popularMangaFromObject(obj: ShinigamiBrowseDataDto): SManga? {
-        if (isExcluded(obj)) return null
-        return SManga.create().apply {
-            title = obj.title ?: ""
-            thumbnail_url = obj.thumbnail
-            url = obj.mangaId ?: ""
-        }
+    if (isExcluded(obj)) return null
+    return SManga.create().apply {
+        title = obj.title ?: ""
+        thumbnail_url = obj.thumbnailPortrait?.takeIf { it.isNotEmpty() } ?: obj.thumbnailLandscape
+        url = obj.mangaId ?: ""
     }
+}
 
     override fun latestUpdatesRequest(page: Int): Request {
         val url = "$apiUrl/v1/manga/list".toHttpUrl().newBuilder()
@@ -135,19 +135,19 @@ class Shinigami : HttpSource(), ConfigurableSource {
     }
 
     override fun mangaDetailsParse(response: Response): SManga {
-        val mangaDetailsResponse = response.parseAs<ShinigamiMangaDetailDto>()
-        val mangaDetails = mangaDetailsResponse.data
-        return SManga.create().apply {
-            thumbnail_url = mangaDetails.thumbnail
-            author = mangaDetails.taxonomy["Author"]?.joinToString { it.name }.orEmpty()
-            artist = mangaDetails.taxonomy["Artist"]?.joinToString { it.name }.orEmpty()
-            status = mangaDetails.status.toStatus()
-            description = mangaDetails.description
-            val genres = mangaDetails.taxonomy["Genre"]?.joinToString { it.name }.orEmpty()
-            val type = mangaDetails.taxonomy["Format"]?.joinToString { it.name }.orEmpty()
-            genre = listOf(genres, type).filter { it.isNotBlank() }.joinToString()
-        }
+    val mangaDetailsResponse = response.parseAs<ShinigamiMangaDetailDto>()
+    val mangaDetails = mangaDetailsResponse.data
+    return SManga.create().apply {
+        thumbnail_url = mangaDetails.thumbnailPortrait?.takeIf { it.isNotEmpty() } ?: mangaDetails.thumbnailLandscape
+        author = mangaDetails.taxonomy["Author"]?.joinToString { it.name }.orEmpty()
+        artist = mangaDetails.taxonomy["Artist"]?.joinToString { it.name }.orEmpty()
+        status = mangaDetails.status.toStatus()
+        description = mangaDetails.description
+        val genres = mangaDetails.taxonomy["Genre"]?.joinToString { it.name }.orEmpty()
+        val type = mangaDetails.taxonomy["Format"]?.joinToString { it.name }.orEmpty()
+        genre = listOf(genres, type).filter { it.isNotBlank() }.joinToString()
     }
+}
 
     private fun Int.toStatus(): Int {
         return when (this) {
