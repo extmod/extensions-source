@@ -100,15 +100,13 @@ class Shinigami : HttpSource(), ConfigurableSource {
     }
 
     private fun popularMangaFromObject(obj: ShinigamiBrowseDataDto): SManga? {
-        if (isExcluded(obj)) return null
-        return SManga.create().apply {
-            title = obj.title ?: ""
-            thumbnail_url = obj.thumbnail?.let {
-                "https://wsrv.nl/?w=150&h=110&url=$it"
-            }
-            url = obj.mangaId ?: ""
-        }
+    if (isExcluded(obj)) return null
+    return SManga.create().apply {
+        title = obj.title ?: ""
+        thumbnail_url = obj.thumbnail  // langsung tanpa wsrv
+        url = obj.mangaId ?: ""
     }
+}
 
     // -----------------------------------------------------------------------
     // Latest — pakai popularMangaParse, filter otomatis ikut
