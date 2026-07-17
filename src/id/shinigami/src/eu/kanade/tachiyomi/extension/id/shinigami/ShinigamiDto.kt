@@ -11,7 +11,8 @@ class ShinigamiBrowseDto(
 
 @Serializable
 class ShinigamiBrowseDataDto(
-    @SerialName("cover_portrait_url") val thumbnail: String? = null,
+    @SerialName("cover_portrait_url") val thumbnailPortrait: String? = null,
+    @SerialName("cover_image_url") val thumbnailLandscape: String? = null,
     @SerialName("manga_id") val mangaId: String? = null,
     val title: String? = null,
     val taxonomy: Map<String, List<ShinigamiTaxonomyItemDto>>? = null,
@@ -33,7 +34,8 @@ class ShinigamiMangaDetailDataDto(
     val status: Int = 0,
     val description: String? = null,
     val taxonomy: Map<String, List<ShinigamiTaxonomyItemDto>> = emptyMap(),
-    @SerialName("cover_portrait_url") val thumbnail: String? = null,
+    @SerialName("cover_portrait_url") val thumbnailPortrait: String? = null,
+    @SerialName("cover_image_url") val thumbnailLandscape: String? = null,
 )
 
 @Serializable
