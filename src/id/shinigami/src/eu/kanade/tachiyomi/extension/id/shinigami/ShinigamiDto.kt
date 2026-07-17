@@ -55,11 +55,9 @@ class ShinigamiChapterListDto(
 @Serializable
 class ShinigamiChapterListDataDto(
     @SerialName("chapter_id") val chapterId: String,
-    // Double karena kode melakukan .toString().replace(".0", "")
-    // → angka seperti 1.0 → "1", 1.5 → "1.5"
-    val name: Double? = null,
-    val title: String? = null,
-    val date: String? = null,
+    @SerialName("chapter_number") val name: Double? = null,
+    @SerialName("chapter_title") val title: String? = null,
+    @SerialName("release_date") val date: String? = null,
 )
 
 // ─── Page List ────────────────────────────────────────────────────────────────
@@ -71,11 +69,11 @@ class ShinigamiPageListDto(
 
 @Serializable
 class ShinigamiPageDataDto(
-    @SerialName("chapter_page") val chapterPage: ShinigamiChapterPageDto,
+    @SerialName("chapter") val chapterPage: ShinigamiChapterPageDto,
 )
 
 @Serializable
 class ShinigamiChapterPageDto(
-    val pages: List<String>,
+    @SerialName("data") val pages: List<String>,
     val path: String,
 )
