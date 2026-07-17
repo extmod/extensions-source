@@ -3,8 +3,6 @@ package eu.kanade.tachiyomi.extension.id.shinigami
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
-// ─── Browse (popular / latest / search) ─────────────────────────────────────
-
 @Serializable
 class ShinigamiBrowseDto(
     val data: List<ShinigamiBrowseDataDto>,
@@ -13,10 +11,9 @@ class ShinigamiBrowseDto(
 
 @Serializable
 class ShinigamiBrowseDataDto(
-    @SerialName("cover_image_url") val thumbnail: String? = null,
+    @SerialName("cover_portrait_url") val thumbnail: String? = null,
     @SerialName("manga_id") val mangaId: String? = null,
     val title: String? = null,
-    // Dipakai untuk filter genre; null kalau API tidak mengembalikan field ini
     val taxonomy: Map<String, List<ShinigamiTaxonomyItemDto>>? = null,
 )
 
@@ -25,8 +22,6 @@ class MetaDto(
     val page: Int,
     @SerialName("total_page") val totalPage: Int,
 )
-
-// ─── Manga Detail ─────────────────────────────────────────────────────────────
 
 @Serializable
 class ShinigamiMangaDetailDto(
@@ -38,15 +33,13 @@ class ShinigamiMangaDetailDataDto(
     val status: Int = 0,
     val description: String? = null,
     val taxonomy: Map<String, List<ShinigamiTaxonomyItemDto>> = emptyMap(),
-    @SerialName("cover_image_url") val thumbnail: String? = null,
+    @SerialName("cover_portrait_url") val thumbnail: String? = null,
 )
 
 @Serializable
 class ShinigamiTaxonomyItemDto(
     val name: String,
 )
-
-// ─── Chapter List ─────────────────────────────────────────────────────────────
 
 @Serializable
 class ShinigamiChapterListDto(
@@ -60,8 +53,6 @@ class ShinigamiChapterListDataDto(
     @SerialName("chapter_title") val title: String? = null,
     @SerialName("release_date") val date: String? = null,
 )
-
-// ─── Page List ────────────────────────────────────────────────────────────────
 
 @Serializable
 class ShinigamiPageListDto(
