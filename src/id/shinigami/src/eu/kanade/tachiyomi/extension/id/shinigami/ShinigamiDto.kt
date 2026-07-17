@@ -3,6 +3,8 @@ package eu.kanade.tachiyomi.extension.id.shinigami
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
+// ─── Browse (popular / latest / search) ─────────────────────────────────────
+
 @Serializable
 class ShinigamiBrowseDto(
     val data: List<ShinigamiBrowseDataDto>,
@@ -11,9 +13,11 @@ class ShinigamiBrowseDto(
 
 @Serializable
 class ShinigamiBrowseDataDto(
-    @SerialName("cover_image_url") val thumbnail: String? = "",
-    @SerialName("manga_id") val mangaId: String? = "",
-    val title: String? = "",
+    @SerialName("cover_image_url") val thumbnail: String? = null,
+    @SerialName("manga_id") val mangaId: String? = null,
+    val title: String? = null,
+    // Dipakai untuk filter genre; null kalau API tidak mengembalikan field ini
+    val taxonomy: Map<String, List<ShinigamiTaxonomyItemDto>>? = null,
 )
 
 @Serializable
@@ -22,6 +26,8 @@ class MetaDto(
     @SerialName("total_page") val totalPage: Int,
 )
 
+// ─── Manga Detail ─────────────────────────────────────────────────────────────
+
 @Serializable
 class ShinigamiMangaDetailDto(
     val data: ShinigamiMangaDetailDataDto,
@@ -29,16 +35,17 @@ class ShinigamiMangaDetailDto(
 
 @Serializable
 class ShinigamiMangaDetailDataDto(
-    val title: String = "",
-    val description: String = "",
     val status: Int = 0,
-    val taxonomy: Map<String, List<TaxonomyItemDto>> = emptyMap(),
+    val description: String? = null,
+    val taxonomy: Map<String, List<ShinigamiTaxonomyItemDto>> = emptyMap(),
 )
 
 @Serializable
-class TaxonomyItemDto(
+class ShinigamiTaxonomyItemDto(
     val name: String,
 )
+
+// ─── Chapter List ─────────────────────────────────────────────────────────────
 
 @Serializable
 class ShinigamiChapterListDto(
@@ -47,24 +54,28 @@ class ShinigamiChapterListDto(
 
 @Serializable
 class ShinigamiChapterListDataDto(
-    @SerialName("release_date") val date: String = "",
-    @SerialName("chapter_title") val title: String = "",
-    @SerialName("chapter_number") val name: Double = 0.0,
-    @SerialName("chapter_id") val chapterId: String = "",
+    @SerialName("chapter_id") val chapterId: String,
+    // Double karena kode melakukan .toString().replace(".0", "")
+    // → angka seperti 1.0 → "1", 1.5 → "1.5"
+    val name: Double? = null,
+    val title: String? = null,
+    val date: String? = null,
 )
+
+// ─── Page List ────────────────────────────────────────────────────────────────
 
 @Serializable
 class ShinigamiPageListDto(
-    @SerialName("data") val pageList: ShinigamiPagesDataDto,
+    @SerialName("data") val pageList: ShinigamiPageDataDto,
 )
 
 @Serializable
-class ShinigamiPagesDataDto(
-    @SerialName("chapter") val chapterPage: ShinigamiPagesData2Dto,
+class ShinigamiPageDataDto(
+    @SerialName("chapter_page") val chapterPage: ShinigamiChapterPageDto,
 )
 
 @Serializable
-class ShinigamiPagesData2Dto(
+class ShinigamiChapterPageDto(
+    val pages: List<String>,
     val path: String,
-    @SerialName("data") val pages: List<String> = emptyList(),
 )
