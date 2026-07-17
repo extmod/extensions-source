@@ -67,21 +67,13 @@ class Shinigami : HttpSource(), ConfigurableSource {
         .add("Origin", baseUrl)
         .add("Sec-GPC", "1")
 
-    // -----------------------------------------------------------------------
-    // Genre filter — cek apakah item harus dikecualikan
-    // -----------------------------------------------------------------------
-
     private fun isExcluded(obj: ShinigamiBrowseDataDto): Boolean {
         val tags = obj.taxonomy?.values
             ?.flatten()
             ?.map { it.name.trim().lowercase() }
-            ?: return false // taxonomy null → tidak ada data genre → lolos
+            ?: return false
         return tags.any { tag -> EXCLUDED_GENRES.any { excluded -> tag.contains(excluded) } }
     }
-
-    // -----------------------------------------------------------------------
-    // Popular
-    // -----------------------------------------------------------------------
 
     override fun popularMangaRequest(page: Int): Request {
         val url = "$apiUrl/v1/manga/list".toHttpUrl().newBuilder()
@@ -103,16 +95,10 @@ class Shinigami : HttpSource(), ConfigurableSource {
         if (isExcluded(obj)) return null
         return SManga.create().apply {
             title = obj.title ?: ""
-            thumbnail_url = obj.thumbnail?.let {
-                "https://wsrv.nl/?w=150&h=110&url=$it"
-            }
+            thumbnail_url = obj.thumbnail
             url = obj.mangaId ?: ""
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Latest — pakai popularMangaParse, filter otomatis ikut
-    // -----------------------------------------------------------------------
 
     override fun latestUpdatesRequest(page: Int): Request {
         val url = "$apiUrl/v1/manga/list".toHttpUrl().newBuilder()
@@ -125,10 +111,6 @@ class Shinigami : HttpSource(), ConfigurableSource {
 
     override fun latestUpdatesParse(response: Response): MangasPage = popularMangaParse(response)
 
-    // -----------------------------------------------------------------------
-    // Search — pakai popularMangaParse, filter otomatis ikut
-    // -----------------------------------------------------------------------
-
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
         val url = "$apiUrl/v1/manga/list".toHttpUrl().newBuilder()
             .addQueryParameter("page", page.toString())
@@ -140,10 +122,6 @@ class Shinigami : HttpSource(), ConfigurableSource {
     }
 
     override fun searchMangaParse(response: Response): MangasPage = popularMangaParse(response)
-
-    // -----------------------------------------------------------------------
-    // Manga detail
-    // -----------------------------------------------------------------------
 
     override fun getMangaUrl(manga: SManga): String {
         return "$baseUrl/series/${manga.url}"
@@ -179,10 +157,6 @@ class Shinigami : HttpSource(), ConfigurableSource {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Chapter list
-    // -----------------------------------------------------------------------
-
     override fun chapterListRequest(manga: SManga): Request {
         return GET("$apiUrl/v1/chapter/${manga.url}/list?page_size=3000", apiHeaders)
     }
@@ -197,10 +171,6 @@ class Shinigami : HttpSource(), ConfigurableSource {
         name = "Chapter ${obj.name.toString().replace(".0", "")} ${obj.title}"
         url = obj.chapterId
     }
-
-    // -----------------------------------------------------------------------
-    // Page list
-    // -----------------------------------------------------------------------
 
     override fun pageListRequest(chapter: SChapter): Request {
         if (chapter.url.startsWith("/series/")) {
@@ -237,10 +207,6 @@ class Shinigami : HttpSource(), ConfigurableSource {
         return GET(page.imageUrl!!, newHeaders)
     }
 
-    // -----------------------------------------------------------------------
-    // Preferences
-    // -----------------------------------------------------------------------
-
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
         val resizeServicePref = EditTextPreference(screen.context).apply {
             key = "resize_service_url"
@@ -268,27 +234,14 @@ class Shinigami : HttpSource(), ConfigurableSource {
         screen.addPreference(baseUrlPref)
     }
 
-    // -----------------------------------------------------------------------
-    // Companion
-    // -----------------------------------------------------------------------
-
     companion object {
         val dateFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.ENGLISH)
 
-        /**
-         * Genre yang dikecualikan dari semua daftar (popular, latest, search).
-         * Pencocokan pakai contains(), jadi "shoujo" akan cocok dengan "shoujo-ai", dll.
-         * Tambah atau hapus sesuai kebutuhan.
-         */
         private val EXCLUDED_GENRES = setOf(
-            // Shoujo
             "shoujo", "shojo", "shōjo",
-            // Josei
             "josei",
-            // BL / yaoi / gay male
             "yaoi", "boys love", "boy's love", "bl",
             "shounen ai", "shonen ai", "shōnen ai",
-            // GL / yuri
             "yuri", "girls love", "girl's love", "gl",
             "shoujo ai", "shojo ai", "shōjo ai",
         )
