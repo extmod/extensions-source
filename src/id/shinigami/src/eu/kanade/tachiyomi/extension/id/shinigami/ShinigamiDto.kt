@@ -38,6 +38,7 @@ class ShinigamiMangaDetailDataDto(
     val status: Int = 0,
     val description: String? = null,
     val taxonomy: Map<String, List<ShinigamiTaxonomyItemDto>> = emptyMap(),
+    @SerialName("cover_image_url") val thumbnail: String? = null,
 )
 
 @Serializable
